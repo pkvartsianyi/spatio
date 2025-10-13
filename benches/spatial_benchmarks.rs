@@ -57,8 +57,8 @@ fn benchmark_spatial_operations(c: &mut Criterion) {
     group.bench_function("spatial_point_insert", |b| {
         let mut counter = 0;
         b.iter(|| {
-            let lat = 40.7128 + (counter as f64 * 0.001);
-            let lon = -74.0060 + (counter as f64 * 0.001);
+            let lat = 40.7128 + ((counter % 1000) as f64 * 0.001);
+            let lon = -74.0060 + ((counter % 1000) as f64 * 0.001);
             let point = Point::new(lat, lon);
             let _key = format!("spatial:{}", counter);
             let data = format!("data:{}", counter);
@@ -112,7 +112,7 @@ fn benchmark_trajectory_operations(c: &mut Criterion) {
             let mut trajectory = Vec::new();
             let base_lat = 40.7128;
             let base_lon = -74.0060;
-            let base_time = 1640995200u64 + (counter as u64) * 1000;
+            let base_time = 1640995200u64 + ((counter % 10000) as u64) * 1000;
 
             for i in 0..100 {
                 let lat = base_lat + (i as f64 * 0.0001);
@@ -199,7 +199,7 @@ fn benchmark_ttl_operations(c: &mut Criterion) {
     group.bench_function("ttl_insert", |b| {
         let mut counter = 0;
         b.iter(|| {
-            let key = format!("ttl_key:{}", counter);
+            let key = format!("ttl_key:{}", counter % 100000);
             let value = format!("ttl_value:{}", counter);
             let opts = SetOptions::with_ttl(Duration::from_secs(60));
             counter += 1;

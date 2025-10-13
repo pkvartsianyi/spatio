@@ -3,14 +3,6 @@
   "target": "branch",
   "enforcement": "active",
 
-  "bypass_actors": [
-    {
-      "actor_id": 1,
-      "actor_type": "RepositoryRole",
-      "role_name": "admin"
-    }
-  ],
-
   "conditions": {
     "ref_name": {
       "include": ["refs/heads/main", "refs/heads/release/*"]
@@ -34,8 +26,17 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "Test Suite" },
-          { "context": "Examples" }
+          {
+            "context": "CI / Test Suite (ubuntu-latest, stable) (pull_request)"
+          },
+          {
+            "context": "CI / Test Suite (macos-latest, stable) (pull_request)"
+          },
+          {
+            "context": "CI / Test Suite (windows-latest, stable) (pull_request)"
+          },
+          { "context": "CI / Examples (pull_request)" },
+          { "context": "CI / Security Audit (pull_request)" }
         ]
       }
     },
