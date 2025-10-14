@@ -53,41 +53,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Store simple key-value data
     db.insert("user:123", b"John Doe", None)?;
-    
+
     // Store geographic points (automatically indexed)
     let nyc = Point::new(40.7128, -74.0060);
     let london = Point::new(51.5074, -0.1278);
-    
+
     db.insert_point("cities", &nyc, b"New York", None)?;
     db.insert_point("cities", &london, b"London", None)?;
-    
+
     // Find nearby points within 100km
     let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
     println!("Found {} cities nearby", nearby.len());
-    
+
     // Check if points exist in a region
     let has_cities = db.contains_point("cities", &nyc, 50_000.0)?;
     println!("Cities within 50km: {}", has_cities);
-    
+
     // Count points within distance
     let count = db.count_within_distance("cities", &nyc, 100_000.0)?;
     println!("City count within 100km: {}", count);
-    
+
     // Find points in bounding box
     let in_area = db.find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)?;
     println!("Cities in area: {}", in_area.len());
-    
+
     // Atomic batch operations
     db.atomic(|batch| {
         batch.insert("sensor:temp", b"22.5C", None)?;
         batch.insert("sensor:humidity", b"65%", None)?;
         Ok(())
     })?;
-    
+
     // Data with TTL (expires in 5 minutes)
     let opts = SetOptions::with_ttl(Duration::from_secs(300));
     db.insert("session:abc", b"user_data", Some(opts))?;
-    
+
     Ok(())
 }
 ```
@@ -299,11 +299,7 @@ cargo fmt
 
 ## License
 
-Licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+MIT License ([LICENSE-MIT](LICENSE-MIT))
 
 ## Acknowledgments
 
