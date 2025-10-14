@@ -306,9 +306,3 @@ MIT License ([LICENSE-MIT](LICENSE-MIT))
 - Built with the Rust ecosystem's excellent geospatial libraries
 - Inspired by modern embedded databases and spatial indexing research
 - Thanks to the Rust community for feedback and contributions
-
----
-
-<p align="center">
-Made with ❤️ for the Rust community
-</p>
