@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create an in-memory database
     let db = Spatio::memory()?;
-    println!("✓ Created spatial database");
+    println!("Created spatial database");
 
     // Add world cities with their coordinates
     let cities = vec![
@@ -26,14 +26,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, point) in &cities {
         db.insert_point("world_cities", point, name.as_bytes(), None)?;
     }
-    println!("✓ Added {} cities to spatial index", cities.len());
+    println!("Added {} cities to spatial index", cities.len());
 
     // Define a reference point (London)
     let reference_point = Point::new(51.5074, -0.1278);
-    println!("✓ Using London as reference point: {}", reference_point);
+    println!("Using London as reference point: {}", reference_point);
 
     // Find cities within 1000km of London
-    println!("\n🌍 Cities within 1000km of London:");
+    println!("\nCities within 1000km of London:");
     let nearby_cities = db.find_nearby("world_cities", &reference_point, 1_000_000.0, 10)?;
 
     for (point, data) in &nearby_cities {
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Find cities within 2000km of London
-    println!("\n🌍 Cities within 2000km of London:");
+    println!("\nCities within 2000km of London:");
     let medium_range_cities = db.find_nearby("world_cities", &reference_point, 2_000_000.0, 10)?;
 
     for (point, data) in &medium_range_cities {
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Find the 3 closest cities to London (regardless of distance)
-    println!("\n🌍 3 closest cities to London:");
+    println!("\n3 closest cities to London:");
     let closest_cities = db.find_nearby("world_cities", &reference_point, f64::INFINITY, 3)?;
 
     for (i, (point, data)) in closest_cities.iter().enumerate() {
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Demonstrate distance calculations between specific cities
-    println!("\n📏 Distance calculations:");
+    println!("\nDistance calculations:");
     let nyc = Point::new(40.7128, -74.0060);
     let tokyo = Point::new(35.6762, 139.6503);
     let sydney = Point::new(-33.8688, 151.2093);
@@ -93,11 +93,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, point) in &london_poi {
         db.insert_point("london_poi", point, name.as_bytes(), None)?;
     }
-    println!("\n✓ Added {} London points of interest", london_poi.len());
+    println!("\nAdded {} London points of interest", london_poi.len());
 
     // Find POI within 2km of Big Ben
     let big_ben = Point::new(51.4994, -0.1245);
-    println!("\n🏛️  Points of interest within 2km of Big Ben:");
+    println!("\nPoints of interest within 2km of Big Ben:");
     let nearby_poi = db.find_nearby("london_poi", &big_ben, 2000.0, 10)?;
 
     for (point, data) in &nearby_poi {
@@ -112,17 +112,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Database statistics
     let stats = db.stats()?;
-    println!("\n📊 Database statistics:");
+    println!("\nDatabase statistics:");
     println!("  - Total keys: {}", stats.key_count);
     println!("  - Operations performed: {}", stats.operations_count);
 
     // Demonstrate new spatial query methods
-    println!("\n🔍 Advanced Spatial Query Methods:");
+    println!("\nAdvanced Spatial Query Methods:");
 
     // Test contains_point - check if there are any cities within 1000km of London
     let has_nearby_cities = db.contains_point("world_cities", &reference_point, 1_000_000.0)?;
     println!(
-        "  ✓ Cities within 1000km of London exist: {}",
+        "  Cities within 1000km of London exist: {}",
         has_nearby_cities
     );
 
@@ -131,9 +131,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let count_1000km = db.count_within_distance("world_cities", &reference_point, 1_000_000.0)?;
     let count_2000km = db.count_within_distance("world_cities", &reference_point, 2_000_000.0)?;
 
-    println!("  📊 Cities within 500km: {}", count_500km);
-    println!("  📊 Cities within 1000km: {}", count_1000km);
-    println!("  📊 Cities within 2000km: {}", count_2000km);
+    println!("  Cities within 500km: {}", count_500km);
+    println!("  Cities within 1000km: {}", count_1000km);
+    println!("  Cities within 2000km: {}", count_2000km);
 
     // Test bounding box queries - European region
     let europe_bounds = (45.0, -10.0, 60.0, 30.0); // min_lat, min_lon, max_lat, max_lon
@@ -144,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         europe_bounds.2,
         europe_bounds.3,
     )?;
-    println!("  🌍 European cities exist: {}", has_european_cities);
+    println!("  European cities exist: {}", has_european_cities);
 
     // Find all cities in European region
     let european_cities = db.find_within_bounds(
@@ -156,7 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         10,
     )?;
 
-    println!("  🇪🇺 Cities in European region:");
+    println!("  Cities in European region:");
     for (point, data) in &european_cities {
         let city_name = String::from_utf8_lossy(data);
         println!("    - {} at {}", city_name, point);
@@ -173,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         5,
     )?;
 
-    println!("  🏴󠁧󠁢󠁥󠁮󠁧󠁿 Cities in London area:");
+    println!("  Cities in London area:");
     for (point, data) in &london_area_cities {
         let city_name = String::from_utf8_lossy(data);
         println!("    - {} at {}", city_name, point);
@@ -183,14 +183,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asia_pacific = BoundingBox::new(-50.0, 100.0, 50.0, 180.0);
     let europe_box = BoundingBox::new(35.0, -10.0, 70.0, 40.0);
 
-    println!("  📦 BoundingBox intersection test:");
+    println!("  BoundingBox intersection test:");
     println!(
         "    - Asia-Pacific and Europe intersect: {}",
         asia_pacific.intersects(&europe_box)
     );
 
     // Test point containment methods
-    println!("  🎯 Point containment tests:");
+    println!("  Point containment tests:");
     let central_london = Point::new(51.5074, -0.1278);
     let tower_bridge = Point::new(51.5055, -0.0754);
 
@@ -203,7 +203,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tower_bridge.contains_point(&central_london, 2000.0)
     );
 
-    println!("\n🎉 Enhanced spatial queries example completed successfully!");
+    println!("\nEnhanced spatial queries example completed successfully!");
     println!("\nNew spatial query features demonstrated:");
     println!("- contains_point: Check if points exist within a circular region");
     println!("- count_within_distance: Count points within a radius (efficient)");

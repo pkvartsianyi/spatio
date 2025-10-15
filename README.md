@@ -22,15 +22,15 @@
 
 ## Features
 
-- **🚀 Fast Key-Value Storage**: High-performance in-memory operations with optional persistence
-- **🗺️ Automatic Spatial Indexing**: Geographic points are automatically indexed for efficient queries
-- **📍 Spatial Queries**: Find nearby points, check intersections, and query bounding boxes
-- **🛣️ Trajectory Tracking**: Store and query movement paths over time
-- **⏰ TTL Support**: Built-in data expiration for temporary data
-- **⚛️ Atomic Operations**: Batch multiple operations for data consistency
-- **🔒 Thread-Safe**: Concurrent read/write access without blocking
-- **📦 Embedded**: No external dependencies or setup required
-- **🎯 Simple API**: Clean, focused interface that's easy to learn and use
+- **Fast Key-Value Storage**: High-performance in-memory operations with optional persistence
+- **Automatic Spatial Indexing**: Geographic points are automatically indexed for efficient queries
+- **Spatial Queries**: Find nearby points, check intersections, and query bounding boxes
+- **Trajectory Tracking**: Store and query movement paths over time
+- **TTL Support**: Built-in data expiration for temporary data
+- **Atomic Operations**: Batch multiple operations for data consistency
+- **Thread-Safe**: Concurrent read/write access without blocking
+- **Embedded**: No external dependencies or setup required
+- **Simple API**: Clean, focused interface that's easy to learn and use
 
 ## Installation
 
@@ -118,22 +118,22 @@ cargo run --example comprehensive_demo
 
 ## Use Cases
 
-### 🌐 Location-Based Services
+### Location-Based Services
 - **Geofencing**: Track when objects enter/leave geographic regions
 - **Proximity Search**: Find nearby points of interest, users, or services
 - **Location Analytics**: Analyze spatial patterns and relationships
 
-### 🚗 Vehicle & Asset Tracking
+### Vehicle & Asset Tracking
 - **Fleet Management**: Track vehicle locations and routes in real-time
 - **Delivery Optimization**: Find nearest drivers or optimal delivery routes
 - **Movement Analysis**: Analyze movement patterns and efficiency
 
-### 📡 IoT & Sensor Networks
+### IoT & Sensor Networks
 - **Environmental Monitoring**: Track sensor data with geographic context
 - **Smart Cities**: Manage spatially-distributed infrastructure
 - **Asset Management**: Monitor equipment locations and status
 
-### 📊 Real-time Analytics
+### Real-time Analytics
 - **Geospatial Dashboards**: Build real-time location-aware applications
 - **Event Processing**: Process location-based events with temporal context
 - **Spatial Aggregation**: Compute statistics over geographic regions
@@ -270,19 +270,19 @@ Spatio uses a layered architecture:
 Spatio is production-ready for embedded use cases. Current version: **0.1.0**
 
 ### Features
-- ✅ Key-value storage with spatial indexing
-- ✅ Geographic point operations
-- ✅ Trajectory tracking
-- ✅ TTL support
-- ✅ Atomic operations
-- ✅ Thread-safe concurrent access
-- ✅ Comprehensive spatial queries
+- Key-value storage with spatial indexing
+- Geographic point operations
+- Trajectory tracking
+- TTL support
+- Atomic operations
+- Thread-safe concurrent access
+- Comprehensive spatial queries
 
 ### Roadmap
-- 🔄 Enhanced persistence with full AOF replay
-- 🔄 Performance optimizations
-- 🔄 Additional spatial data types
-- 🔄 Query optimization
+- Enhanced persistence with full AOF replay
+- Performance optimizations
+- Additional spatial data types
+- Query optimization
 
 ## Contributing
 

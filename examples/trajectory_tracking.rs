@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create an in-memory database
     let db = Spatio::memory()?;
-    println!("✓ Created in-memory database");
+    println!("Created in-memory database");
 
     // === VEHICLE TRAJECTORY TRACKING ===
     println!("\n--- Vehicle Trajectory Tracking ---");
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     db.insert_trajectory("vehicle:truck001", &delivery_truck_route, None)?;
     println!(
-        "✓ Inserted delivery truck trajectory with {} waypoints",
+        "Inserted delivery truck trajectory with {} waypoints",
         delivery_truck_route.len()
     );
 
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     db.insert_trajectory("vehicle:taxi042", &taxi_route, None)?;
     println!(
-        "✓ Inserted taxi trajectory with {} high-frequency waypoints",
+        "Inserted taxi trajectory with {} high-frequency waypoints",
         taxi_route.len()
     );
 
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     db.insert_trajectory("drone:survey001", &drone_pattern, None)?;
     println!(
-        "✓ Inserted drone surveillance pattern with {} waypoints",
+        "Inserted drone surveillance pattern with {} waypoints",
         drone_pattern.len()
     );
 
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ttl_opts = Some(SetOptions::with_ttl(Duration::from_secs(3600))); // 1 hour TTL
     db.insert_trajectory("pedestrian:jogger123", &jogger_route, ttl_opts)?;
     println!(
-        "✓ Inserted jogger trajectory with {} waypoints (1-hour TTL)",
+        "Inserted jogger trajectory with {} waypoints (1-hour TTL)",
         jogger_route.len()
     );
 
@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(SetOptions::with_ttl(Duration::from_secs(1800))), // 30-minute TTL
         )?;
     }
-    println!("✓ Inserted real-time bike messenger updates");
+    println!("Inserted real-time bike messenger updates");
 
     // === GEOFENCING AND ALERTS ===
     println!("\n--- Geofencing and Alerts ---");
@@ -210,14 +210,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 violations += 1;
                 if violations == 1 {
                     println!(
-                        "⚠️  {} entered restricted zone at timestamp {}",
+                        "WARNING: {} entered restricted zone at timestamp {}",
                         vehicle_id, timestamp
                     );
                 }
             }
         }
         if violations == 0 {
-            println!("✓ {} stayed outside restricted zone", vehicle_id);
+            println!("{} stayed outside restricted zone", vehicle_id);
         } else {
             println!(
                 "   {} had {} geofence violations total",
@@ -264,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Note: In a real application, you could track trajectory keys separately
     println!("Trajectory-related operations completed successfully");
 
-    println!("\n🎉 Trajectory tracking example completed successfully!");
+    println!("\nTrajectory tracking example completed successfully!");
     println!("\nKey capabilities demonstrated:");
     println!("- Multi-vehicle trajectory storage and retrieval");
     println!("- Time-windowed trajectory queries");

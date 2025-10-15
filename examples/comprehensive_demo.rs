@@ -7,10 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create an in-memory database
     let db = Spatio::memory()?;
-    println!("✓ Created in-memory database");
+    println!("Created in-memory database");
 
     // === BASIC KEY-VALUE OPERATIONS ===
-    println!("\n🔑 Basic Key-Value Operations");
+    println!("\nBasic Key-Value Operations");
 
     // Simple string storage
     db.insert("app:name", b"Spatio Demo App", None)?;
@@ -22,12 +22,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  App: {}", String::from_utf8_lossy(&app_name));
 
     // === TTL (TIME-TO-LIVE) OPERATIONS ===
-    println!("\n⏰ TTL (Time-to-Live) Operations");
+    println!("\nTTL (Time-to-Live) Operations");
 
     // Short-lived session data
     let session_opts = SetOptions::with_ttl(Duration::from_secs(10));
     db.insert("session:user123", b"active", Some(session_opts))?;
-    println!("  ✓ Created session with 10-second TTL");
+    println!("  Created session with 10-second TTL");
 
     // Cache data with different TTL
     let cache_opts = SetOptions::with_ttl(Duration::from_secs(300)); // 5 minutes
@@ -37,10 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         b"Latest tech news...",
         Some(cache_opts.clone()),
     )?;
-    println!("  ✓ Cached data with 5-minute TTL");
+    println!("  Cached data with 5-minute TTL");
 
     // === ATOMIC BATCH OPERATIONS ===
-    println!("\n⚛️  Atomic Batch Operations");
+    println!("\nAtomic Batch Operations");
 
     // User profile creation (all-or-nothing)
     db.atomic(|batch| {
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         batch.insert("user:123:created", b"2024-01-01", None)?;
         Ok(())
     })?;
-    println!("  ✓ Created user profile atomically");
+    println!("  Created user profile atomically");
 
     // Sensor data batch insert
     db.atomic(|batch| {
@@ -60,10 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         batch.insert("sensor:timestamp", b"1640995200", None)?;
         Ok(())
     })?;
-    println!("  ✓ Recorded sensor readings atomically");
+    println!("  Recorded sensor readings atomically");
 
     // === SPATIAL POINT OPERATIONS ===
-    println!("\n🌍 Spatial Point Operations");
+    println!("\nSpatial Point Operations");
 
     // Major world cities
     let cities = vec![
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.insert_point("cities", point, name.as_bytes(), None)?;
     }
     println!(
-        "  ✓ Added {} cities with automatic spatial indexing",
+        "  Added {} cities with automatic spatial indexing",
         cities.len()
     );
 
@@ -90,11 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let london = Point::new(51.5074, -0.1278);
     let paris = Point::new(48.8566, 2.3522);
     let distance_km = london.distance_to(&paris) / 1000.0;
-    println!("  📏 London ↔ Paris: {:.0} km", distance_km);
+    println!("  London ↔ Paris: {:.0} km", distance_km);
 
     // Find cities near London (within 1000km)
     let nearby_london = db.find_nearby("cities", &london, 1_000_000.0, 5)?;
-    println!("  🔍 Cities within 1000km of London:");
+    println!("  Cities within 1000km of London:");
     for (point, data) in &nearby_london {
         let city_name = String::from_utf8_lossy(data);
         let distance = london.distance_to(point) / 1000.0;
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === RESTAURANT/POI DATA ===
-    println!("\n🍕 Points of Interest");
+    println!("\nPoints of Interest");
 
     let london_restaurants = vec![
         ("The Shard Restaurant", Point::new(51.5045, -0.0865)),
@@ -114,12 +114,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, point) in &london_restaurants {
         db.insert_point("london_food", point, name.as_bytes(), None)?;
     }
-    println!("  ✓ Added {} London restaurants", london_restaurants.len());
+    println!("  Added {} London restaurants", london_restaurants.len());
 
     // Find restaurants near a specific location (Covent Garden)
     let covent_garden = Point::new(51.5118, -0.1226);
     let nearby_food = db.find_nearby("london_food", &covent_garden, 2000.0, 10)?;
-    println!("  🔍 Restaurants within 2km of Covent Garden:");
+    println!("  Restaurants within 2km of Covent Garden:");
     for (point, data) in &nearby_food {
         let restaurant_name = String::from_utf8_lossy(data);
         let distance = covent_garden.distance_to(point);
@@ -127,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === TRAJECTORY TRACKING ===
-    println!("\n🚗 Trajectory Tracking");
+    println!("\nTrajectory Tracking");
 
     // Delivery truck route through London
     let delivery_route = vec![
@@ -141,7 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     db.insert_trajectory("delivery:truck001", &delivery_route, None)?;
     println!(
-        "  ✓ Stored delivery truck trajectory ({} waypoints)",
+        "  Stored delivery truck trajectory ({} waypoints)",
         delivery_route.len()
     );
 
@@ -153,23 +153,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     db.insert_trajectory("taxi:cab042", &taxi_route, None)?;
-    println!(
-        "  ✓ Stored taxi trajectory ({} waypoints)",
-        taxi_route.len()
-    );
+    println!("  Stored taxi trajectory ({} waypoints)", taxi_route.len());
 
     // Query trajectories for specific time ranges
     let truck_morning = db.query_trajectory("delivery:truck001", 1640995200, 1640995380)?;
     println!(
-        "  📊 Truck trajectory (first 3 minutes): {} points",
+        "  Truck trajectory (first 3 minutes): {} points",
         truck_morning.len()
     );
 
     let taxi_full = db.query_trajectory("taxi:cab042", 1640995200, 1640996200)?;
-    println!("  📊 Full taxi journey: {} points", taxi_full.len());
+    println!("  Full taxi journey: {} points", taxi_full.len());
 
     // === SENSOR NETWORK SIMULATION ===
-    println!("\n📡 IoT Sensor Network");
+    println!("\nIoT Sensor Network");
 
     // Simulate temperature sensors across London
     let sensors = vec![
@@ -188,12 +185,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             None,
         )?;
     }
-    println!("  ✓ Deployed {} temperature sensors", sensors.len());
+    println!("  Deployed {} temperature sensors", sensors.len());
 
     // Find sensors near a specific location
     let monitoring_center = Point::new(51.5100, -0.1200);
     let nearby_sensors = db.find_nearby("sensors", &monitoring_center, 5000.0, 10)?;
-    println!("  🔍 Sensors within 5km of monitoring center:");
+    println!("  Sensors within 5km of monitoring center:");
     for (point, data) in &nearby_sensors {
         let sensor_info = String::from_utf8_lossy(data);
         let distance = monitoring_center.distance_to(point);
@@ -201,7 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === REAL-TIME UPDATES ===
-    println!("\n🔄 Real-time Updates");
+    println!("\nReal-time Updates");
 
     // Simulate updating sensor readings
     db.insert_point(
@@ -210,7 +207,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         b"sensor001:24.2C",
         None,
     )?;
-    println!("  ✓ Updated sensor001 reading");
+    println!("  Updated sensor001 reading");
 
     // Add new vehicle to tracking
     let bus_route = vec![
@@ -218,10 +215,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (Point::new(51.5074, -0.1278), 1640995660), // Central London
     ];
     db.insert_trajectory("bus:route25", &bus_route, None)?;
-    println!("  ✓ Added new bus to tracking system");
+    println!("  Added new bus to tracking system");
 
     // === DATABASE STATISTICS ===
-    println!("\n📊 Database Statistics");
+    println!("\nDatabase Statistics");
 
     let stats = db.stats()?;
     println!("  Total keys: {}", stats.key_count);
@@ -241,34 +238,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // === CLEANUP DEMONSTRATION ===
-    println!("\n🧹 Cleanup & TTL Demo");
+    println!("\nCleanup & TTL Demo");
 
     // Check if session has expired (it should have by now)
     if let Some(_session) = db.get("session:user123")? {
         println!("  Session still active");
     } else {
-        println!("  ✓ Session expired as expected");
+        println!("  Session expired as expected");
     }
 
     // Delete specific items
     db.delete("app:version")?;
-    println!("  ✓ Removed app version info");
+    println!("  Removed app version info");
 
     // Final statistics
     let final_stats = db.stats()?;
     println!("  Final key count: {}", final_stats.key_count);
 
-    println!("\n🎉 Comprehensive demo completed successfully!");
+    println!("\nComprehensive demo completed successfully!");
     println!("\nFeatures demonstrated:");
-    println!("✅ Key-value storage with TTL");
-    println!("✅ Atomic batch operations");
-    println!("✅ Automatic spatial indexing");
-    println!("✅ Geographic point queries");
-    println!("✅ Distance calculations");
-    println!("✅ Trajectory tracking");
-    println!("✅ Multi-namespace organization");
-    println!("✅ Real-time updates");
-    println!("✅ Data expiration");
+    println!("- Key-value storage with TTL");
+    println!("- Atomic batch operations");
+    println!("- Automatic spatial indexing");
+    println!("- Geographic point queries");
+    println!("- Distance calculations");
+    println!("- Trajectory tracking");
+    println!("- Multi-namespace organization");
+    println!("- Real-time updates");
+    println!("- Data expiration");
 
     Ok(())
 }
