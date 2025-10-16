@@ -8,6 +8,7 @@ for better type safety and documentation.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from typing import Dict
 from typing import List
 from typing import Protocol
 from typing import Tuple
@@ -42,7 +43,7 @@ BoundingBoxResult = Tuple["Point", bytes]  # (point, value)
 BoundingBoxResults = List[BoundingBoxResult]
 
 # Database statistics
-DatabaseStats = dict[str, Union[int, float]]
+DatabaseStats = Dict[str, Union[int, float]]
 
 
 class PointProtocol(Protocol):
