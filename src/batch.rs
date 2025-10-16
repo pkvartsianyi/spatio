@@ -140,21 +140,24 @@ impl AtomicBatch {
         // Apply all operations atomically
         let mut inner = self.db.write()?;
 
-        for operation in self.operations {
+        for operation in &self.operations {
             match operation {
                 Operation::Insert { key, value, opts } => {
                     let item = match opts {
                         Some(SetOptions { ttl: Some(ttl), .. }) => {
-                            crate::types::DbItem::with_ttl(key.clone(), value, ttl)
+                            crate::types::DbItem::with_ttl(key.clone(), value.clone(), *ttl)
                         }
                         Some(SetOptions {
                             expires_at: Some(expires_at),
                             ..
-                        }) => crate::types::DbItem::with_expiration(key.clone(), value, expires_at),
-                        _ => crate::types::DbItem::new(key.clone(), value),
+                        }) => crate::types::DbItem::with_expiration(
+                            key.clone(),
+                            value.clone(),
+                            *expires_at,
+                        ),
+                        _ => crate::types::DbItem::new(key.clone(), value.clone()),
                     };
-
-                    inner.insert_item(key, item);
+                    inner.insert_item(key.clone(), item);
                 }
                 Operation::Delete { key } => {
                     inner.remove_item(&key);
@@ -162,8 +165,18 @@ impl AtomicBatch {
             }
         }
 
-        // Write to AOF if needed
-        inner.write_to_aof_if_needed()?;
+        // Write operations to AOF if needed
+        for operation in &self.operations {
+            match operation {
+                Operation::Insert { key, value, opts } => {
+                    inner.write_to_aof_if_needed(key, value.as_ref(), opts.as_ref())?;
+                }
+                Operation::Delete { key } => {
+                    inner.write_delete_to_aof_if_needed(key)?;
+                }
+            }
+        }
+
         Ok(())
     }
 }

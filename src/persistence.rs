@@ -14,6 +14,23 @@ pub struct AOFFile {
     size: u64,
 }
 
+impl Clone for AOFFile {
+    fn clone(&self) -> Self {
+        let file = self.file.try_clone().expect("Failed to clone file handle");
+        let writer_file = file
+            .try_clone()
+            .expect("Failed to clone file handle for writer");
+        let writer = BufWriter::new(writer_file);
+
+        Self {
+            file,
+            writer,
+            path: self.path.clone(),
+            size: self.size,
+        }
+    }
+}
+
 /// AOF command types
 #[derive(Debug, Clone)]
 pub enum AOFCommand {

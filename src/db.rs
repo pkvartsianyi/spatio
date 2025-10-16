@@ -1,7 +1,7 @@
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
 use crate::index::IndexManager;
-use crate::persistence::AOFFile;
+use crate::persistence::{AOFCommand, AOFFile};
 use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions};
 use bytes::Bytes;
@@ -75,13 +75,12 @@ pub(crate) struct DBInner {
     pub index_manager: IndexManager,
     /// Append-only file for persistence
     pub aof_file: Option<AOFFile>,
-    /// Database configuration
-    #[allow(dead_code)]
-    pub config: Config,
     /// Whether the database is closed
     pub closed: bool,
     /// Database statistics
     pub stats: DbStats,
+    /// Configuration
+    pub config: Config,
 }
 
 impl DB {
@@ -139,9 +138,9 @@ impl DB {
             expirations: BTreeMap::new(),
             index_manager: IndexManager::with_config(&config),
             aof_file: None,
-            config,
             closed: false,
             stats: DbStats::default(),
+            config: config.clone(),
         };
 
         // Initialize persistence if not in-memory
@@ -219,8 +218,8 @@ impl DB {
         };
 
         let mut inner = self.write()?;
-        let old = inner.insert_item(key_bytes, item);
-        inner.write_to_aof_if_needed()?;
+        let old = inner.insert_item(key_bytes.clone(), item);
+        inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref())?;
         Ok(old.map(|item| item.value))
     }
 
@@ -243,7 +242,7 @@ impl DB {
         let mut inner = self.write()?;
 
         if let Some(item) = inner.remove_item(&key_bytes) {
-            inner.write_to_aof_if_needed()?;
+            inner.write_delete_to_aof_if_needed(&key_bytes)?;
             Ok(Some(item.value))
         } else {
             Ok(None)
@@ -290,10 +289,10 @@ impl DB {
         &self,
         prefix: &str,
         point: &Point,
-        data: impl AsRef<[u8]>,
+        value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let data_bytes = data.as_ref();
+        let data_bytes = value;
         let data_ref = Bytes::copy_from_slice(data_bytes);
 
         // Generate geohash key for automatic indexing
@@ -318,12 +317,12 @@ impl DB {
             _ => DbItem::new(key_bytes.clone(), data_ref.clone()),
         };
 
-        inner.insert_item(key_bytes, item);
+        inner.insert_item(key_bytes.clone(), item);
 
         // Add to spatial index
         inner.index_manager.insert_point(prefix, point, &data_ref)?;
 
-        inner.write_to_aof_if_needed()?;
+        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref())?;
         Ok(())
     }
 
@@ -633,7 +632,7 @@ impl DB {
             .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)
     }
 
-    /// Force a sync to disk
+    /// Force sync to disk
     pub fn sync(&self) -> Result<()> {
         let mut inner = self.write()?;
         if let Some(ref mut aof_file) = inner.aof_file {
@@ -725,38 +724,122 @@ impl DBInner {
     }
 
     /// Load data from AOF file
-    pub fn load_from_aof(&mut self, _aof_file: &AOFFile) -> Result<()> {
-        // Implementation for loading from AOF
-        // This would replay all operations from the file
+    pub fn load_from_aof(&mut self, aof_file: &AOFFile) -> Result<()> {
+        let mut aof_file = aof_file.clone();
+        aof_file.replay(|command| {
+            match command {
+                AOFCommand::Set {
+                    key,
+                    value,
+                    expires_at,
+                } => {
+                    let item = DbItem {
+                        key: key.clone(),
+                        value: value.clone(),
+                        expires_at,
+                    };
+                    self.keys.insert(key.clone(), item);
+
+                    // Rebuild spatial index if this is a spatial key
+                    if let Ok(key_str) = std::str::from_utf8(&key) {
+                        if let Some((prefix, geohash)) = self.parse_spatial_key(key_str) {
+                            if let Ok(point) = self.decode_geohash_to_point(geohash) {
+                                let _ = self.index_manager.insert_point(prefix, &point, &value);
+                            }
+                        }
+                    }
+                }
+                AOFCommand::Delete { key } => {
+                    self.keys.remove(&key);
+
+                    // Remove from spatial index if this was a spatial key
+                    if let Ok(key_str) = std::str::from_utf8(&key) {
+                        if let Some((prefix, geohash)) = self.parse_spatial_key(key_str) {
+                            if let Ok(point) = self.decode_geohash_to_point(geohash) {
+                                let _ = self.index_manager.remove_point(prefix, &point);
+                            }
+                        }
+                    }
+                }
+                AOFCommand::Expire { key, expires_at } => {
+                    if let Some(item) = self.keys.get_mut(&key) {
+                        item.expires_at = Some(expires_at);
+                    }
+                }
+            }
+            Ok(())
+        })?;
+
+        self.stats.key_count = self.keys.len();
         Ok(())
+    }
+
+    /// Parse a spatial key to extract prefix and geohash
+    fn parse_spatial_key<'a>(&self, key: &'a str) -> Option<(&'a str, &'a str)> {
+        // Spatial keys have format: "prefix:gh:geohash" for geographic points
+        let parts: Vec<&str> = key.split(':').collect();
+        if parts.len() >= 3 && parts[1] == "gh" {
+            let prefix = parts[0];
+            let geohash = parts[2];
+            Some((prefix, geohash))
+        } else {
+            None
+        }
+    }
+
+    /// Decode a geohash back to a Point
+    fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
+        let (coord, _lat_err, _lon_err) =
+            geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
+        Ok(Point::new(coord.y, coord.x))
     }
 
     /// Write to AOF file if needed
-    pub fn write_to_aof_if_needed(&mut self) -> Result<()> {
-        // Implementation for writing to AOF based on sync policy
+    pub fn write_to_aof_if_needed(
+        &mut self,
+        key: &Bytes,
+        value: &[u8],
+        options: Option<&SetOptions>,
+    ) -> Result<()> {
+        if let Some(ref mut aof_file) = self.aof_file {
+            let value_bytes = Bytes::copy_from_slice(value);
+            aof_file.write_set(key, &value_bytes, options)?;
+
+            // Flush based on sync policy
+            match self.config.sync_policy {
+                crate::types::SyncPolicy::Always => {
+                    aof_file.sync()?;
+                }
+                crate::types::SyncPolicy::EverySecond => {
+                    aof_file.flush()?;
+                }
+                crate::types::SyncPolicy::Never => {
+                    // Don't flush
+                }
+            }
+        }
         Ok(())
     }
 
-    /// Clean up expired items
-    #[allow(dead_code)]
-    pub fn cleanup_expired(&mut self) {
-        let now = SystemTime::now();
-        let mut expired_times = Vec::new();
+    /// Write delete operation to AOF if needed
+    pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
+        if let Some(ref mut aof_file) = self.aof_file {
+            aof_file.write_delete(key)?;
 
-        for (&expires_at, keys) in &self.expirations {
-            if expires_at <= now {
-                for key in keys {
-                    self.keys.remove(key);
+            // Flush based on sync policy
+            match self.config.sync_policy {
+                crate::types::SyncPolicy::Always => {
+                    aof_file.sync()?;
                 }
-                expired_times.push(expires_at);
+                crate::types::SyncPolicy::EverySecond => {
+                    aof_file.flush()?;
+                }
+                crate::types::SyncPolicy::Never => {
+                    // Don't flush
+                }
             }
         }
-
-        for expires_at in expired_times {
-            self.expirations.remove(&expires_at);
-        }
-
-        self.stats.key_count = self.keys.len();
+        Ok(())
     }
 }
 

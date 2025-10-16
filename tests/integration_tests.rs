@@ -133,19 +133,39 @@ fn test_persistence() {
         let point = Point::new(40.7128, -74.0060);
         db.insert_point("cities", &point, b"NYC", None).unwrap();
 
-        // Force sync to ensure data is written
+        // Insert trajectory data
+        let trajectory = vec![
+            (Point::new(40.7128, -74.0060), 1640995200),
+            (Point::new(40.7150, -74.0040), 1640995260),
+        ];
+        db.insert_trajectory("vehicle:car1", &trajectory, None)
+            .unwrap();
+
+        // Force sync to ensure data is written to AOF
         db.sync().unwrap();
     }
 
-    // For now, just test that we can create and use persistent databases
-    // Full AOF replay functionality would be implemented later
+    // Reopen database and verify data persistence via AOF replay
     {
         let db = Spatio::open(db_path).unwrap();
 
-        // Verify we can still use the database (even if data doesn't persist yet)
-        db.insert("new_key", b"new_value", None).unwrap();
-        let value = db.get("new_key").unwrap().unwrap();
-        assert_eq!(value.as_ref(), b"new_value");
+        // Verify basic key-value data
+        let value = db.get("persistent_key").unwrap().unwrap();
+        assert_eq!(value.as_ref(), b"persistent_value");
+
+        // Verify geographic point data
+        let point = Point::new(40.7128, -74.0060);
+        let nearby = db.find_nearby("cities", &point, 1000.0, 10).unwrap();
+        assert_eq!(nearby.len(), 1);
+        assert_eq!(nearby[0].1.as_ref(), b"NYC");
+
+        // Verify trajectory data
+        let trajectory_data = db
+            .query_trajectory("vehicle:car1", 1640995200, 1640995260)
+            .unwrap();
+        assert_eq!(trajectory_data.len(), 2);
+        assert_eq!(trajectory_data[0].1, 1640995200);
+        assert_eq!(trajectory_data[1].1, 1640995260);
     }
 }
 
