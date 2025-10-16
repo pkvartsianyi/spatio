@@ -21,7 +21,7 @@ def main():
     # 1. Create an in-memory database
     print("1. Creating in-memory database...")
     db = spatio.Spatio.memory()
-    print("✓ Database created")
+    print("[OK] Database created")
 
     # 2. Basic key-value operations
     print("\n2. Basic key-value operations...")
@@ -33,11 +33,11 @@ def main():
 
     # Retrieve data
     user = db.get(b"user:123")
-    print(f"✓ Retrieved user: {user.decode()}")
+    print(f"[OK] Retrieved user: {user.decode()}")
 
     # Check for non-existent key
     missing = db.get(b"user:999")
-    print(f"✓ Missing user: {missing}")
+    print(f"[OK] Missing user: {missing}")
 
     # 3. Geographic point operations
     print("\n3. Geographic point operations...")
@@ -48,7 +48,7 @@ def main():
     tokyo = spatio.Point(35.6762, 139.6503)
     paris = spatio.Point(48.8566, 2.3522)
 
-    print(f"✓ Created points: NYC {nyc}, London {london}")
+    print(f"[OK] Created points: NYC {nyc}, London {london}")
 
     # Insert points with spatial indexing
     db.insert_point("cities", nyc, b"New York City")
@@ -56,14 +56,14 @@ def main():
     db.insert_point("cities", tokyo, b"Tokyo")
     db.insert_point("cities", paris, b"Paris")
 
-    print("✓ Inserted 4 cities with spatial indexing")
+    print("[OK] Inserted 4 cities with spatial indexing")
 
     # 4. Spatial queries
     print("\n4. Spatial queries...")
 
     # Find cities near NYC (within 6000km to include European cities)
     nearby = db.find_nearby("cities", nyc, 6000000.0, 10)
-    print(f"✓ Found {len(nearby)} cities within 6000km of NYC:")
+    print(f"[OK] Found {len(nearby)} cities within 6000km of NYC:")
 
     for _point, city_name, distance in nearby:
         distance_km = distance / 1000
@@ -71,15 +71,15 @@ def main():
 
     # Count points within a smaller radius
     local_count = db.count_within_distance("cities", nyc, 1000000.0)  # 1000km
-    print(f"✓ Cities within 1000km of NYC: {local_count}")
+    print(f"[OK] Cities within 1000km of NYC: {local_count}")
 
     # Check if any points exist in a region
     has_european_cities = db.intersects_bounds("cities", 40.0, -10.0, 60.0, 10.0)
-    print(f"✓ European cities exist: {has_european_cities}")
+    print(f"[OK] European cities exist: {has_european_cities}")
 
     # Find all points in a bounding box (Europe)
     european_cities = db.find_within_bounds("cities", 40.0, -10.0, 60.0, 10.0, 10)
-    print(f"✓ Found {len(european_cities)} European cities:")
+    print(f"[OK] Found {len(european_cities)} European cities:")
     for point, city_name in european_cities:
         print(f"  - {city_name.decode()} at ({point.lat:.2f}, {point.lon:.2f})")
 
@@ -92,14 +92,16 @@ def main():
 
     # Verify it exists
     temp_data = db.get(b"session:temp")
-    print(f"✓ Temporary data: {temp_data.decode() if temp_data else 'None'}")
+    print(f"[OK] Temporary data: {temp_data.decode() if temp_data else 'None'}")
 
-    print("⏳ Waiting 3 seconds for TTL expiration...")
+    print("[WAIT] Waiting 3 seconds for TTL expiration...")
     time.sleep(3)
 
     # Check if expired (note: manual cleanup might be needed)
     expired_data = db.get(b"session:temp")
-    print(f"✓ After TTL: {expired_data.decode() if expired_data else 'Expired/None'}")
+    print(
+        f"[OK] After TTL: {expired_data.decode() if expired_data else 'Expired/None'}"
+    )
 
     # 6. Multiple sequential operations
     print("\n6. Multiple sequential operations...")
@@ -112,18 +114,18 @@ def main():
     sf = spatio.Point(37.7749, -122.4194)
     db.insert_point("cities", sf, b"San Francisco")
 
-    print("✓ Sequential operations completed")
+    print("[OK] Sequential operations completed")
 
     # Verify operations
     batch_value = db.get(b"batch:key1")
     sf_cities = db.find_nearby("cities", spatio.Point(37.7749, -122.4194), 10000.0, 5)
-    print(f"✓ Sequential value: {batch_value.decode()}")
-    print(f"✓ SF area cities: {len(sf_cities)}")
+    print(f"[OK] Sequential value: {batch_value.decode()}")
+    print(f"[OK] SF area cities: {len(sf_cities)}")
 
     # 7. Database statistics
     print("\n7. Database statistics...")
     stats = db.stats()
-    print("✓ Database stats:")
+    print("[OK] Database stats:")
     print(f"  - Key count: {stats['key_count']}")
     print(f"  - Operations count: {stats['operations_count']}")
     print(f"  - Expired count: {stats['expired_count']}")
@@ -133,8 +135,8 @@ def main():
     distance_ny_london = nyc.distance_to(london)
     distance_london_paris = london.distance_to(paris)
 
-    print(f"✓ NYC to London: {distance_ny_london / 1000:.0f}km")
-    print(f"✓ London to Paris: {distance_london_paris / 1000:.0f}km")
+    print(f"[OK] NYC to London: {distance_ny_london / 1000:.0f}km")
+    print(f"[OK] London to Paris: {distance_london_paris / 1000:.0f}km")
 
     print("\n=== Example completed successfully! ===")
 

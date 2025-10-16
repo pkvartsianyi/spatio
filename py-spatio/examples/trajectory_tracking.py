@@ -118,7 +118,7 @@ def main():
     # Create database
     print("1. Creating database...")
     db = spatio.Spatio.memory()
-    print("✓ Database created")
+    print("[OK] Database created")
 
     # 2. Generate and store multiple vehicle trajectories
     print("\n2. Generating vehicle trajectories...")
@@ -147,7 +147,7 @@ def main():
         db.insert_trajectory(vehicle_id, trajectory)
         all_trajectories[vehicle_id] = trajectory
 
-        print(f"    ✓ Stored {len(trajectory)} points for {vehicle_id}")
+        print(f"    [OK] Stored {len(trajectory)} points for {vehicle_id}")
 
     # 3. Query trajectory data
     print("\n3. Querying trajectory data...")
@@ -157,7 +157,7 @@ def main():
     start_time = current_time - 7200  # Last 2 hours
 
     truck_path = db.query_trajectory("truck_001", start_time, current_time)
-    print(f"✓ Retrieved {len(truck_path)} points for truck_001 in last 2 hours")
+    print(f"[OK] Retrieved {len(truck_path)} points for truck_001 in last 2 hours")
 
     if truck_path:
         first_point, first_time = truck_path[0]
@@ -255,7 +255,7 @@ def main():
         extended_trajectory = last_trajectory + new_points
         db.insert_trajectory(f"{vehicle_id}_extended", extended_trajectory)
 
-        print(f"  ✓ Extended trajectory now has {len(extended_trajectory)} points")
+        print(f"  [OK] Extended trajectory now has {len(extended_trajectory)} points")
 
     # 6. Spatial queries on trajectory data
     print("\n6. Spatial queries on trajectory data...")
@@ -276,7 +276,7 @@ def main():
                 )
                 break  # Just find the first occurrence
 
-    print(f"✓ Found {len(vehicles_near_times_square)} vehicles near Times Square:")
+    print(f"[OK] Found {len(vehicles_near_times_square)} vehicles near Times Square:")
     for vehicle_id, _point, timestamp, distance in vehicles_near_times_square:
         print(f"  - {vehicle_id}: {distance:.0f}m away at timestamp {timestamp}")
 
@@ -301,14 +301,14 @@ def main():
         if points_in_window:
             active_vehicles.append((vehicle_id, len(points_in_window)))
 
-    print(f"✓ Vehicles active between {analysis_start} and {analysis_end}:")
+    print(f"[OK] Vehicles active between {analysis_start} and {analysis_end}:")
     for vehicle_id, point_count in active_vehicles:
         print(f"  - {vehicle_id}: {point_count} data points")
 
     # 8. Database statistics
     print("\n8. Database statistics...")
     stats = db.stats()
-    print("✓ Final database stats:")
+    print("[OK] Final database stats:")
     print(f"  - Total keys: {stats['key_count']}")
     print(f"  - Operations: {stats['operations_count']}")
 

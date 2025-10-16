@@ -23,9 +23,9 @@ def format_number(num: float) -> str:
 
 
 def format_time(seconds: float) -> str:
-    """Format time with appropriate units."""
+    """Format time duration in human-readable format."""
     if seconds < 0.001:
-        return f"{seconds * 1_000_000:.1f}μs"
+        return f"{seconds * 1_000_000:.1f}us"
     elif seconds < 1:
         return f"{seconds * 1000:.1f}ms"
     else:
@@ -61,7 +61,7 @@ def benchmark_operation(func, *args, iterations: int = 100, warmup: int = 10):
 
 def benchmark_key_value_operations():
     """Benchmark basic key-value operations."""
-    print("🔑 Key-Value Operations Benchmark")
+    print("[KEY] Key-Value Operations Benchmark")
     print("=" * 50)
 
     db = spatio.Spatio.memory()
@@ -114,7 +114,7 @@ def benchmark_key_value_operations():
 
 def benchmark_bulk_operations():
     """Benchmark bulk operations."""
-    print("📦 Bulk Operations Benchmark")
+    print("[BULK] Bulk Operations Benchmark")
     print("=" * 50)
 
     db = spatio.Spatio.memory()
@@ -141,7 +141,7 @@ def benchmark_bulk_operations():
 
 def benchmark_spatial_operations():
     """Benchmark spatial operations."""
-    print("🗺️  Spatial Operations Benchmark")
+    print("[MAP] Spatial Operations Benchmark")
     print("=" * 50)
 
     db = spatio.Spatio.memory()
@@ -222,7 +222,7 @@ def benchmark_spatial_operations():
 
 def benchmark_trajectory_operations():
     """Benchmark trajectory operations."""
-    print("🛣️  Trajectory Operations Benchmark")
+    print("[ROAD] Trajectory Operations Benchmark")
     print("=" * 50)
 
     db = spatio.Spatio.memory()
@@ -282,7 +282,7 @@ def benchmark_trajectory_operations():
 
 def benchmark_configuration_impact():
     """Benchmark different configuration settings."""
-    print("⚙️  Configuration Impact Benchmark")
+    print("[CONFIG] Configuration Impact Benchmark")
     print("=" * 50)
 
     precisions = [6, 8, 10, 12]
@@ -324,7 +324,7 @@ def benchmark_configuration_impact():
 
 def benchmark_memory_usage():
     """Benchmark memory usage patterns."""
-    print("💾 Memory Usage Benchmark")
+    print("[MEMORY] Memory Usage Benchmark")
     print("=" * 50)
 
     db = spatio.Spatio.memory()
@@ -368,7 +368,7 @@ def benchmark_memory_usage():
 
 def performance_comparison():
     """Compare performance with different scenarios."""
-    print("📊 Performance Comparison")
+    print("[STATS] Performance Comparison")
     print("=" * 50)
 
     # Scenario 1: Small frequent operations
@@ -429,7 +429,7 @@ def performance_comparison():
 
 def main():
     """Run comprehensive performance demonstration."""
-    print("🚀 Spatio Performance Demonstration")
+    print("[DEMO] Spatio Performance Demonstration")
     print("=" * 60)
     print(f"Using Spatio version: {spatio.__version__}")
     print(f"Test started at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -444,7 +444,7 @@ def main():
         benchmark_memory_usage()
         performance_comparison()
 
-        print("✅ Performance demonstration completed successfully!")
+        print("[SUCCESS] Performance demonstration completed successfully!")
         print()
         print("Key Takeaways:")
         print("- Spatio provides excellent performance for spatial operations")
@@ -456,7 +456,7 @@ def main():
         print("- Mixed workloads maintain consistent performance")
 
     except Exception as e:
-        print(f"❌ Error during performance testing: {e}")
+        print(f"[ERROR] Error during performance testing: {e}")
         raise
 
 
