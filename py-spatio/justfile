@@ -1,0 +1,198 @@
+# Default recipe - show available commands
+default:
+    @just --list
+
+# Set up development environment
+setup:
+    python3 -m venv .venv
+    .venv/bin/pip install --upgrade pip
+    .venv/bin/pip install -r requirements-dev.txt
+
+# Install requirements only
+install-deps:
+    .venv/bin/pip install --upgrade pip
+    .venv/bin/pip install -r requirements-dev.txt
+
+# Build the package in development mode
+build:
+    .venv/bin/maturin develop
+
+# Build optimized release version
+build-release:
+    .venv/bin/maturin develop --release
+
+# Build with debug symbols
+build-debug:
+    .venv/bin/maturin develop --profile dev
+
+# Install package in development mode
+install: build
+    .venv/bin/pip install -e .
+
+# Run all tests
+test: build
+    .venv/bin/pytest -n auto --tb=short
+
+# Run tests with verbose output
+test-verbose: build
+    .venv/bin/pytest -v
+
+# Run only unit tests
+test-unit: build
+    .venv/bin/pytest -n auto --tb=short -m "unit"
+
+# Run only integration tests
+test-integration: build
+    .venv/bin/pytest -n auto --tb=short -m "integration"
+
+# Run performance benchmarks
+bench: build-release
+    .venv/bin/pytest --benchmark-only -v
+
+# Run tests with coverage
+coverage: build
+    .venv/bin/pytest --cov=spatio --cov-report=html --cov-report=term-missing
+    @echo "Coverage report generated in htmlcov/"
+
+# Format Python code
+fmt:
+    .venv/bin/ruff check --fix src/ tests/ examples/
+    .venv/bin/ruff format src/ tests/ examples/
+
+# Run linting checks
+lint:
+    .venv/bin/ruff check src/ tests/ examples/
+    .venv/bin/mypy src/
+
+# Run type checking only
+typecheck:
+    .venv/bin/mypy src/
+
+# Run security checks
+security:
+    .venv/bin/bandit -r src/
+
+# Format Rust code
+fmt-rust:
+    cargo fmt --all
+
+# Run clippy on Rust code
+clippy:
+    cargo clippy -- -D warnings -D clippy::dbg_macro
+
+# Run all code quality checks
+check: lint typecheck security
+
+# Run pre-commit checks (format + check)
+pre-commit: fmt clippy fmt-rust check
+
+# Run all examples
+examples: build
+    @echo "Running basic usage example..."
+    .venv/bin/python examples/basic_usage.py
+    @echo "Running trajectory example..."
+    .venv/bin/python examples/trajectory_tracking.py
+    @echo "Running performance demo..."
+    .venv/bin/python examples/performance_demo.py
+
+# Run specific example
+example name: build
+    .venv/bin/python examples/{{name}}.py
+
+# Build wheel for distribution
+wheel:
+    .venv/bin/maturin build --release
+    @echo "Wheel built in target/wheels/"
+
+# Build source distribution
+sdist:
+    .venv/bin/maturin sdist
+    @echo "Source distribution built in target/wheels/"
+
+# Publish to Test PyPI
+publish-test: wheel
+    .venv/bin/twine upload --repository testpypi target/wheels/*
+
+# Publish to PyPI
+publish: wheel
+    .venv/bin/twine upload target/wheels/*
+
+# Clean up build artifacts and caches
+clean:
+    rm -rf .pytest_cache/
+    rm -rf .mypy_cache/
+    rm -rf .ruff_cache/
+    rm -rf htmlcov/
+    rm -rf dist/
+    rm -rf *.egg-info/
+    rm -f .coverage
+    rm -f coverage.xml
+    rm -f profile.svg
+    find . -type f -name '*.py[co]' -delete
+    find . -type d -name __pycache__ -exec rm -r {} +
+    find . -name "*.so" -delete
+    find . -name "*.pyd" -delete
+    cargo clean
+
+# Clean everything including virtual environment
+clean-all: clean
+    rm -rf .venv
+
+# Show current version
+version: build
+    .venv/bin/python -c "import spatio; print(f'spatio {spatio.__version__}')"
+
+# Show development environment info
+info:
+    @echo "Python: $(python3 --version)"
+    @echo "Rust: $(rustc --version)"
+    @echo "Cargo: $(cargo --version)"
+    @echo "Virtual env: .venv"
+    @if [ -f ".venv/bin/python" ]; then echo "Virtual env Python: $(.venv/bin/python --version)"; fi
+
+# Run full CI pipeline locally
+ci: check test coverage
+    @echo "All CI checks passed!"
+
+# Complete development setup from scratch
+dev-setup: setup build
+    @echo "Development environment ready!"
+    @echo "Activate with: source .venv/bin/activate"
+
+# Watch and rebuild on file changes (requires cargo-watch)
+watch:
+    cargo watch -x "build" -s "just build"
+
+# Profile performance (requires py-spy)
+profile script="examples/performance_demo.py": build-release
+    .venv/bin/py-spy record -o profile.svg -- .venv/bin/python {{script}}
+    @echo "Profile saved to profile.svg"
+
+# Generate flame graph (requires py-spy)
+flamegraph script="examples/performance_demo.py": build-release
+    .venv/bin/py-spy record --format flamegraph -o flamegraph.svg -- .venv/bin/python {{script}}
+    @echo "Flame graph saved to flamegraph.svg"
+
+# Run comprehensive benchmark suite
+benchmark-suite: build-release
+    .venv/bin/python examples/benchmark_suite.py
+
+# Serve documentation locally (if using mkdocs)
+docs-serve:
+    .venv/bin/mkdocs serve
+
+# Build documentation
+docs-build:
+    .venv/bin/mkdocs build
+
+# Run a Python REPL with the package loaded
+repl: build
+    .venv/bin/python -c "import spatio; print('Spatio loaded. Try: db = spatio.Spatio.memory()')" -i
+
+# Run Jupyter notebook (if jupyter is installed)
+notebook: build
+    .venv/bin/jupyter notebook
+
+# Quick test - just basic functionality
+quick-test: build
+    .venv/bin/python -c "import spatio; db = spatio.Spatio.memory(); db.insert(b'test', b'value'); assert db.get(b'test') == b'value'; print('✓ Basic functionality works')"

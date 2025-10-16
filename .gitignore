@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target/
+py-spatio/target/
 
 # Cargo.lock is excluded for library crates
 # Include it for applications, exclude for libraries
@@ -64,3 +65,59 @@ lcov.info
 
 # Generated files
 *.generated.rs
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+.python-version
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+.eggs/
+
+# Python testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Python tools
+.mypy_cache/
+.ruff_cache/
+.black/
+.isort.cfg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Python packaging
+pip-log.txt
+pip-delete-this-directory.txt
+
+# maturin build artifacts
+target/wheels/
+
+# Development and debugging
+profile.svg
+py-spy.svg
+flamegraph.svg
+
+# Local configuration files
+.local/
+local_config.toml

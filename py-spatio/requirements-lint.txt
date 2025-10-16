@@ -1,0 +1,22 @@
+# Linting and formatting tools for spatio-py
+
+# Fast Python linter and formatter
+ruff>=0.1.0
+
+# Type checking
+mypy>=1.0.0
+
+# Pre-commit hooks
+pre-commit>=3.0.0
+
+# Spell checking
+typos>=1.0.0
+
+# Security linting
+bandit>=1.7.0
+
+# Import sorting (fallback if ruff isn't available)
+isort>=5.0.0
+
+# Code formatting (fallback if ruff isn't available)
+black>=22.0.0

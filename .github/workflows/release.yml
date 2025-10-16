@@ -1,4 +1,4 @@
-name: Release
+name: Release Rust Crate
 
 on:
   push:
@@ -17,7 +17,7 @@ env:
 
 jobs:
   check:
-    name: Pre-release checks
+    name: Pre-release checks (Rust)
     runs-on: ubuntu-latest
 
     steps:
@@ -57,7 +57,7 @@ jobs:
         run: cargo package --allow-dirty
 
   create-release:
-    name: Create GitHub Release
+    name: Create GitHub Release (Rust)
     needs: check
     runs-on: ubuntu-latest
 
@@ -102,7 +102,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish-crates:
-    name: Publish to crates.io
+    name: Publish Rust crate to crates.io
     needs: check
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')

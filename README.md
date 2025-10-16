@@ -34,15 +34,50 @@
 
 ## Installation
 
-Add Spatio to your `Cargo.toml`:
+### Python
+
+```bash
+pip install spatio-py
+```
+
+### Rust
+
+Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 spatio = "0.1"
 ```
 
+## Language Support
+
+Spatio is available for multiple languages:
+
+- 🦀 **Rust** (native): High-performance, zero-cost abstractions
+- 🐍 **Python**: Easy-to-use bindings via PyO3
+
 ## Quick Start
 
+### Python
+```python
+import spatio
+
+# Create an in-memory database
+db = spatio.Spatio.memory()
+
+# Store a simple key-value pair
+db.insert(b"user:123", b"John Doe")
+
+# Store a geographic point (automatically indexed)
+nyc = spatio.Point(40.7128, -74.0060)
+db.insert_point("cities", nyc, b"New York City")
+
+# Find nearby points within 100km
+nearby = db.find_nearby("cities", nyc, 100_000.0, 10)
+print(f"Found {len(nearby)} cities nearby")
+```
+
+### Rust
 ```rust
 use spatio::{Point, SetOptions, Spatio};
 use std::time::Duration;
@@ -51,15 +86,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an in-memory database
     let db = Spatio::memory()?;
 
-    // Store simple key-value data
+    // Store a simple key-value pair
     db.insert("user:123", b"John Doe", None)?;
 
-    // Store geographic points (automatically indexed)
+    // Store a geographic point (automatically indexed)
     let nyc = Point::new(40.7128, -74.0060);
-    let london = Point::new(51.5074, -0.1278);
-
-    db.insert_point("cities", &nyc, b"New York", None)?;
-    db.insert_point("cities", &london, b"London", None)?;
+    db.insert_point("cities", &nyc, b"New York City", None)?;
 
     // Find nearby points within 100km
     let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
@@ -68,6 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check if points exist in a region
     let has_cities = db.contains_point("cities", &nyc, 50_000.0)?;
     println!("Cities within 50km: {}", has_cities);
+
+    Ok(())
+}
+```
 
     // Count points within distance
     let count = db.count_within_distance("cities", &nyc, 100_000.0)?;

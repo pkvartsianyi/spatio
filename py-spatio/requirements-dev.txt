@@ -1,0 +1,45 @@
+# Development dependencies for spatio-py
+
+# Testing
+pytest>=7.0.0
+pytest-benchmark>=4.0.0
+pytest-cov>=4.0.0
+pytest-xdist>=3.0.0
+pytest-mock>=3.0.0
+
+# Linting and formatting
+ruff>=0.1.0
+mypy>=1.0.0
+pre-commit>=3.0.0
+
+# Build tools
+maturin>=1.0,<2.0
+build>=0.10.0
+twine>=4.0.0
+
+# Documentation
+mkdocs>=1.4.0
+mkdocs-material>=9.0.0
+mkdocstrings>=0.20.0
+
+# Interop testing
+numpy>=1.19.0
+pandas>=1.0.0
+geopandas>=0.10.0
+pyarrow>=7.0.0
+
+# Visualization (for examples)
+matplotlib>=3.0.0
+folium>=0.12.0
+
+# Jupyter notebooks (for examples)
+jupyter>=1.0.0
+ipython>=7.0.0
+
+# Performance profiling
+py-spy>=0.3.0
+memory-profiler>=0.60.0
+
+# Security scanning
+bandit>=1.7.0
+safety>=2.0.0

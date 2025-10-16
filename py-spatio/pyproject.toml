@@ -1,0 +1,184 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "spatio"
+description = "Blazingly fast spatial database library"
+readme = "README.md"
+authors = [
+  { name = "Petro Kvartsianyi", email = "pkvartsianyi@example.com" },
+]
+dynamic = ["version"]
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+
+keywords = ["spatial", "database", "geospatial", "embedded", "temporal", "gis"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "Topic :: Database",
+  "Topic :: Scientific/Engineering :: GIS",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/pkvartsianyi/spatio"
+Documentation = "https://github.com/pkvartsianyi/spatio#readme"
+Repository = "https://github.com/pkvartsianyi/spatio"
+Changelog = "https://github.com/pkvartsianyi/spatio/releases"
+Issues = "https://github.com/pkvartsianyi/spatio/issues"
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+  "pytest>=7.0.0",
+  "pytest-benchmark>=4.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-xdist>=3.0.0",
+]
+
+# Interop
+numpy = ["numpy >= 1.19.0"]
+pandas = ["pandas >= 1.0.0", "spatio[numpy]"]
+geopandas = ["geopandas >= 0.10.0", "spatio[pandas]"]
+
+# Visualization
+plot = ["matplotlib >= 3.0.0", "folium >= 0.12.0"]
+
+# I/O
+parquet = ["pyarrow >= 7.0.0"]
+csv = ["pandas >= 1.0.0"]
+
+# Performance
+async = ["asyncio"]
+
+# All optional dependencies
+all = [
+  "spatio[dev,numpy,pandas,geopandas,plot,parquet,csv,async]",
+]
+
+[tool.maturin]
+module-name = "spatio._spatio"
+python-source = "src"
+strip = true
+
+[tool.ruff]
+line-length = 88
+fix = true
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "W",    # pycodestyle warnings
+  "I",    # isort
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "C4",   # flake8-comprehensions
+  "SIM",  # flake8-simplify
+  "TCH",  # flake8-type-checking
+  "TID",  # flake8-tidy-imports
+  "RUF",  # ruff-specific rules
+]
+
+ignore = [
+  "E501",    # Line length regulated by formatter
+  "B018",    # Found useless expression (for assert statements)
+  "TID252",  # Relative imports are allowed in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401", "F811"]  # Allow unused imports in tests
+"examples/**/*.py" = ["F401", "T201"]  # Allow prints and unused imports in examples
+"src/spatio/types.py" = ["TC004", "F821"]  # TYPE_CHECKING imports and forward references for avoiding circular imports
+
+[tool.ruff.lint.isort]
+known-first-party = ["spatio"]
+force-single-line = true
+
+[tool.mypy]
+files = ["src", "tests"]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+
+[[tool.mypy.overrides]]
+module = [
+  "spatio._spatio",  # PyO3 module
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["spatio.*"]
+# We exclude spatio from warn_return_any because PyO3 doesn't have type annotations
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+# Be less strict for test files
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+  "--strict-markers",
+  "--strict-config",
+  "--tb=short",
+  "-v",
+]
+markers = [
+  "slow: Tests with longer runtime",
+  "benchmark: Performance benchmark tests",
+  "integration: Integration tests",
+  "unit: Unit tests",
+]
+filterwarnings = [
+  "error",
+  "ignore::UserWarning",
+  "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 60
+exclude_lines = [
+  "pragma: no cover",
+  "@overload",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "except ImportError:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

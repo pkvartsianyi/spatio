@@ -156,7 +156,7 @@ pub use batch::AtomicBatch;
 // Geohash configuration constants
 pub use index::{DEFAULT_GEOHASH_PRECISION, DEFAULT_SEARCH_PRECISIONS};
 
-// Version information
+/// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Prelude module for common imports
