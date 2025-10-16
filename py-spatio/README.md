@@ -14,8 +14,6 @@ Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a blazingl
 **TTL Support**: Automatic data expiration with time-to-live
 **Thread-Safe**: Concurrent access with atomic operations
 **Persistent Storage**: Optional file-based persistence
-**Atomic Batches**: Multiple operations in a single transaction
-
 ## Installation
 
 ### From PyPI (Recommended)
@@ -87,9 +85,6 @@ count = db.count_within_distance(prefix, center, radius_meters)
 # Trajectory operations
 db.insert_trajectory(object_id, trajectory, options=None)
 path = db.query_trajectory(object_id, start_time, end_time)
-
-# Atomic operations
-result = db.atomic(lambda batch: batch.insert(b"key", b"value"))
 ```
 
 ### Point

@@ -90,13 +90,18 @@ check: lint typecheck security
 # Run pre-commit checks (format + check)
 pre-commit: fmt clippy fmt-rust check
 
-# Run all examples
+# Run all examples (performance demo runs locally but is skipped in CI)
 examples: build
     @echo "Running basic usage example..."
     .venv/bin/python examples/basic_usage.py
     @echo "Running trajectory example..."
     .venv/bin/python examples/trajectory_tracking.py
     @echo "Running performance demo..."
+    .venv/bin/python examples/performance_demo.py
+
+# Run performance demo only (resource-intensive, skipped in CI)
+performance-demo: build-release
+    @echo "Running performance demonstration..."
     .venv/bin/python examples/performance_demo.py
 
 # Run specific example

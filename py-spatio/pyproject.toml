@@ -55,8 +55,8 @@ dev = [
 
 # Interop
 numpy = ["numpy >= 1.19.0"]
-pandas = ["pandas >= 1.0.0", "spatio[numpy]"]
-geopandas = ["geopandas >= 0.10.0", "spatio[pandas]"]
+pandas = ["pandas >= 1.0.0", "numpy >= 1.19.0"]
+geopandas = ["geopandas >= 0.10.0", "pandas >= 1.0.0", "numpy >= 1.19.0"]
 
 # Visualization
 plot = ["matplotlib >= 3.0.0", "folium >= 0.12.0"]
@@ -65,12 +65,20 @@ plot = ["matplotlib >= 3.0.0", "folium >= 0.12.0"]
 parquet = ["pyarrow >= 7.0.0"]
 csv = ["pandas >= 1.0.0"]
 
-# Performance
-async = ["asyncio"]
+
 
 # All optional dependencies
 all = [
-  "spatio[dev,numpy,pandas,geopandas,plot,parquet,csv,async]",
+  "pytest>=7.0.0",
+  "pytest-benchmark>=4.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-xdist>=3.0.0",
+  "numpy >= 1.19.0",
+  "pandas >= 1.0.0",
+  "geopandas >= 0.10.0",
+  "matplotlib >= 3.0.0",
+  "folium >= 0.12.0",
+  "pyarrow >= 7.0.0",
 ]
 
 [tool.maturin]

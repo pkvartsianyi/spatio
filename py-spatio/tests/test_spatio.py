@@ -5,7 +5,6 @@ Comprehensive tests for Spatio Python bindings
 import os
 import tempfile
 import time
-from pathlib import Path
 
 import pytest
 

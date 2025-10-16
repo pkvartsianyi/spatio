@@ -295,7 +295,8 @@ impl PySpatio {
                 ));
             }
 
-            let point: PyPoint = tuple.get_item(0)?.extract()?;
+            let point_ref: PyRef<PyPoint> = tuple.get_item(0)?.extract()?;
+            let point = point_ref.clone();
             let timestamp: f64 = tuple.get_item(1)?.extract()?;
 
             rust_trajectory.push((point.inner, timestamp as u64));

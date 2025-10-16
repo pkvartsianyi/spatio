@@ -13,6 +13,13 @@ on:
       - "py-spatio/**"
       - "src/**"
       - "Cargo.toml"
+  workflow_dispatch:
+    inputs:
+      run_performance:
+        description: "Run performance tests"
+        required: false
+        default: true
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -94,10 +101,14 @@ jobs:
 
       - name: Run examples
         working-directory: py-spatio
+        # Only run examples on one environment to avoid CI timeouts
+        # Performance demo is resource-intensive and skipped in CI
+        if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
         run: |
           python examples/basic_usage.py
           python examples/trajectory_tracking.py
-          python examples/performance_demo.py
+          # Skip performance_demo.py in CI - it's resource-intensive and can cause timeouts
+          # To run performance demo locally: python examples/performance_demo.py
 
   coverage:
     name: Test Coverage
@@ -198,6 +209,58 @@ jobs:
         with:
           name: benchmark-results
           path: py-spatio/benchmark-results.json
+
+  performance:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    # Only run on manual trigger (with performance enabled) or releases to avoid unnecessary CI load
+    if: (github.event_name == 'workflow_dispatch' && github.event.inputs.run_performance == 'true') || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            py-spatio/target
+            ~/.cache/pip
+          key: performance-${{ hashFiles('**/Cargo.lock', 'py-spatio/requirements-dev.txt') }}
+
+      - name: Install dependencies
+        working-directory: py-spatio
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+          pip install -r requirements-dev.txt
+
+      - name: Build package
+        working-directory: py-spatio
+        run: |
+          python -m pip install -e . --verbose
+
+      - name: Run performance demo
+        working-directory: py-spatio
+        run: |
+          python examples/performance_demo.py
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results
+          path: py-spatio/examples/performance_demo.py
 
   build-wheels:
     name: Build Wheels

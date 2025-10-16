@@ -37,7 +37,7 @@
 ### Python
 
 ```bash
-pip install spatio-py
+pip install spatio
 ```
 
 ### Rust
@@ -100,10 +100,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check if points exist in a region
     let has_cities = db.contains_point("cities", &nyc, 50_000.0)?;
     println!("Cities within 50km: {}", has_cities);
-
-    Ok(())
-}
-```
 
     // Count points within distance
     let count = db.count_within_distance("cities", &nyc, 100_000.0)?;
