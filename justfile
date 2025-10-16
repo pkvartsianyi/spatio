@@ -11,10 +11,6 @@ lint:
     cargo fmt -- --check
     cargo clippy -- -D warnings
 
-# Automatically fix formatting
-fmt:
-    cargo fmt
-
 # Run the same tests as GitHub Actions
 ci:
     act -j test

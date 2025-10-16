@@ -204,30 +204,32 @@ impl DB {
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        let key = Bytes::copy_from_slice(key.as_ref());
-        let value = Bytes::copy_from_slice(value.as_ref());
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
+        let value_bytes = Bytes::copy_from_slice(value.as_ref());
 
         let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => DbItem::with_ttl(key.clone(), value, ttl),
+            Some(SetOptions { ttl: Some(ttl), .. }) => {
+                DbItem::with_ttl(key_bytes.clone(), value_bytes, ttl)
+            }
             Some(SetOptions {
                 expires_at: Some(expires_at),
                 ..
-            }) => DbItem::with_expiration(key.clone(), value, expires_at),
-            _ => DbItem::new(key.clone(), value),
+            }) => DbItem::with_expiration(key_bytes.clone(), value_bytes, expires_at),
+            _ => DbItem::new(key_bytes.clone(), value_bytes),
         };
 
         let mut inner = self.write()?;
-        let old = inner.insert_item(key, item);
+        let old = inner.insert_item(key_bytes, item);
         inner.write_to_aof_if_needed()?;
         Ok(old.map(|item| item.value))
     }
 
     /// Get a value by key
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key = Bytes::copy_from_slice(key.as_ref());
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let inner = self.read()?;
 
-        if let Some(item) = inner.get_item(&key) {
+        if let Some(item) = inner.get_item(&key_bytes) {
             if !item.is_expired() {
                 return Ok(Some(item.value.clone()));
             }
@@ -237,10 +239,10 @@ impl DB {
 
     /// Delete a key atomically
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key = Bytes::copy_from_slice(key.as_ref());
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let mut inner = self.write()?;
 
-        if let Some(item) = inner.remove_item(&key) {
+        if let Some(item) = inner.remove_item(&key_bytes) {
             inner.write_to_aof_if_needed()?;
             Ok(Some(item.value))
         } else {
@@ -291,20 +293,37 @@ impl DB {
         data: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<()> {
+        let data_bytes = data.as_ref();
+        let data_ref = Bytes::copy_from_slice(data_bytes);
+
         // Generate geohash key for automatic indexing
         let geohash = point
             .to_geohash(8)
             .map_err(|_| SpatioError::InvalidGeohash)?;
         let key = SpatialKey::geohash(prefix, &geohash);
+        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
-        self.insert(key.as_bytes(), data.as_ref(), opts)?;
-
-        // Add to spatial index for efficient queries
+        // Single lock acquisition for both operations
         let mut inner = self.write()?;
-        inner
-            .index_manager
-            .insert_point(prefix, point, &Bytes::copy_from_slice(data.as_ref()))?;
 
+        // Insert into main storage
+        let item = match opts {
+            Some(SetOptions { ttl: Some(ttl), .. }) => {
+                DbItem::with_ttl(key_bytes.clone(), data_ref.clone(), ttl)
+            }
+            Some(SetOptions {
+                expires_at: Some(expires_at),
+                ..
+            }) => DbItem::with_expiration(key_bytes.clone(), data_ref.clone(), expires_at),
+            _ => DbItem::new(key_bytes.clone(), data_ref.clone()),
+        };
+
+        inner.insert_item(key_bytes, item);
+
+        // Add to spatial index
+        inner.index_manager.insert_point(prefix, point, &data_ref)?;
+
+        inner.write_to_aof_if_needed()?;
         Ok(())
     }
 

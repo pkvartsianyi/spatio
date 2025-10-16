@@ -86,14 +86,25 @@ impl Point {
     /// ```
     pub fn distance_to(&self, other: &Point) -> f64 {
         const EARTH_RADIUS_M: f64 = 6_371_000.0;
+        const TO_RAD: f64 = std::f64::consts::PI / 180.0;
 
-        let lat1_rad = self.lat.to_radians();
-        let lat2_rad = other.lat.to_radians();
-        let delta_lat = (other.lat - self.lat).to_radians();
-        let delta_lon = (other.lon - self.lon).to_radians();
+        // Fast path for identical points
+        if self.lat == other.lat && self.lon == other.lon {
+            return 0.0;
+        }
 
-        let a = (delta_lat / 2.0).sin().powi(2)
-            + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+        let lat1 = self.lat * TO_RAD;
+        let lat2 = other.lat * TO_RAD;
+        let dlat = (other.lat - self.lat) * TO_RAD;
+        let dlon = (other.lon - self.lon) * TO_RAD;
+
+        let half_dlat = dlat * 0.5;
+        let half_dlon = dlon * 0.5;
+        let sin_half_dlat = half_dlat.sin();
+        let sin_half_dlon = half_dlon.sin();
+
+        let a =
+            sin_half_dlat * sin_half_dlat + lat1.cos() * lat2.cos() * sin_half_dlon * sin_half_dlon;
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         EARTH_RADIUS_M * c
@@ -216,6 +227,27 @@ impl Point {
     /// assert!(within_1km);
     /// ```
     pub fn within_distance(&self, center: &Point, radius_meters: f64) -> bool {
+        // Fast path for identical points
+        if self.lat == center.lat && self.lon == center.lon {
+            return true;
+        }
+
+        // For very small distances, use simple approximation to avoid expensive trig
+        if radius_meters < 100.0 {
+            const TO_RAD: f64 = std::f64::consts::PI / 180.0;
+            const EARTH_RADIUS_M: f64 = 6_371_000.0;
+
+            let dlat = (self.lat - center.lat) * TO_RAD;
+            let dlon = (self.lon - center.lon) * TO_RAD;
+            let avg_lat = (self.lat + center.lat) * 0.5 * TO_RAD;
+
+            let x = dlon * avg_lat.cos();
+            let y = dlat;
+            let distance_approx = EARTH_RADIUS_M * (x * x + y * y).sqrt();
+
+            return distance_approx <= radius_meters;
+        }
+
         self.distance_to(center) <= radius_meters
     }
 

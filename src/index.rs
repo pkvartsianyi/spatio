@@ -3,7 +3,8 @@ use crate::spatial::Point;
 use crate::types::Config;
 use bytes::Bytes;
 use geohash;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 /// Threshold for large search radius in meters
 const LARGE_RADIUS_THRESHOLD: f64 = 100_000.0;
@@ -23,7 +24,7 @@ pub const DEFAULT_SEARCH_PRECISIONS: &[usize] = &[6, 7, 8];
 /// It automatically handles geohash-based indexing for points.
 pub struct IndexManager {
     /// Spatial indexes organized by prefix
-    spatial_indexes: HashMap<String, SpatialIndex>,
+    spatial_indexes: FxHashMap<String, SpatialIndex>,
     /// Geohash precision for indexing
     geohash_precision: usize,
     /// Geohash precisions to use for neighbor search
@@ -33,14 +34,14 @@ pub struct IndexManager {
 /// A spatial index for a specific prefix/namespace
 struct SpatialIndex {
     /// Points stored with their geohash keys
-    points: HashMap<String, (Point, Bytes)>,
+    points: FxHashMap<String, (Point, Bytes)>,
 }
 
 impl IndexManager {
     /// Create a new index manager with default configuration
     pub fn new() -> Self {
         Self {
-            spatial_indexes: HashMap::new(),
+            spatial_indexes: FxHashMap::default(),
             geohash_precision: DEFAULT_GEOHASH_PRECISION,
             search_precisions: DEFAULT_SEARCH_PRECISIONS.to_vec(),
         }
@@ -49,7 +50,7 @@ impl IndexManager {
     /// Create a new index manager with custom configuration
     pub fn with_config(config: &Config) -> Self {
         Self {
-            spatial_indexes: HashMap::new(),
+            spatial_indexes: FxHashMap::default(),
             geohash_precision: config.geohash_precision,
             search_precisions: config.geohash_search_precisions.clone(),
         }
@@ -93,12 +94,15 @@ impl IndexManager {
             None => return Ok(Vec::new()),
         };
 
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(limit.min(1000));
 
         // For large search radii or small datasets, use full scan instead of geohash optimization
         if self.should_use_full_scan(prefix, radius_meters) {
             // Check all points in the index
             for (point, data) in index.points.values() {
+                if results.len() >= limit {
+                    break;
+                }
                 let distance = center.distance_to(point);
                 if distance <= radius_meters {
                     results.push((*point, data.clone()));
@@ -106,12 +110,14 @@ impl IndexManager {
             }
         } else {
             // Use geohash-based search for efficiency
-            let mut candidates = std::collections::HashSet::new();
+            let mut candidates: SmallVec<[String; 27]> = SmallVec::new();
 
             // Try multiple precision levels for better coverage
             for precision in &self.search_precisions {
                 if let Ok(center_geohash) = center.to_geohash(*precision) {
-                    candidates.insert(center_geohash.clone());
+                    if !candidates.contains(&center_geohash) {
+                        candidates.push(center_geohash.clone());
+                    }
 
                     // Add neighbors at this precision
                     for direction in &[
@@ -125,22 +131,30 @@ impl IndexManager {
                         geohash::Direction::SW,
                     ] {
                         if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
-                            candidates.insert(neighbor);
+                            if !candidates.contains(&neighbor) {
+                                candidates.push(neighbor);
+                            }
                         }
                     }
                 }
             }
 
             // Check all candidate geohashes
-            for geohash in candidates {
+            for geohash in &candidates {
                 // Check if any point starts with this geohash prefix
                 for (stored_geohash, (point, data)) in &index.points {
-                    if stored_geohash.starts_with(&geohash) || geohash.starts_with(stored_geohash) {
+                    if stored_geohash.starts_with(geohash) || geohash.starts_with(stored_geohash) {
                         let distance = center.distance_to(point);
                         if distance <= radius_meters {
                             results.push((*point, data.clone()));
+                            if results.len() >= limit {
+                                break;
+                            }
                         }
                     }
+                }
+                if results.len() >= limit {
+                    break;
                 }
             }
 
@@ -395,7 +409,7 @@ impl IndexManager {
 impl SpatialIndex {
     fn new() -> Self {
         Self {
-            points: HashMap::new(),
+            points: FxHashMap::default(),
         }
     }
 }
