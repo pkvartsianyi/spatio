@@ -25,6 +25,10 @@ build-release:
 build-debug:
     .venv/bin/maturin develop --profile dev
 
+# CI-friendly build (works without pre-existing venv)
+build-ci:
+    python -m pip install -e . --verbose
+
 # Install package in development mode
 install: build
     .venv/bin/pip install -e .
