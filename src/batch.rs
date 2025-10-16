@@ -160,7 +160,7 @@ impl AtomicBatch {
                     inner.insert_item(key.clone(), item);
                 }
                 Operation::Delete { key } => {
-                    inner.remove_item(&key);
+                    inner.remove_item(key);
                 }
             }
         }
