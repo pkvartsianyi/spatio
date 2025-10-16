@@ -88,11 +88,6 @@ impl Point {
         const EARTH_RADIUS_M: f64 = 6_371_000.0;
         const TO_RAD: f64 = std::f64::consts::PI / 180.0;
 
-        // Fast path for identical points
-        if self.lat == other.lat && self.lon == other.lon {
-            return 0.0;
-        }
-
         let lat1 = self.lat * TO_RAD;
         let lat2 = other.lat * TO_RAD;
         let dlat = (other.lat - self.lat) * TO_RAD;
@@ -227,11 +222,6 @@ impl Point {
     /// assert!(within_1km);
     /// ```
     pub fn within_distance(&self, center: &Point, radius_meters: f64) -> bool {
-        // Fast path for identical points
-        if self.lat == center.lat && self.lon == center.lon {
-            return true;
-        }
-
         // For very small distances, use simple approximation to avoid expensive trig
         if radius_meters < 100.0 {
             const TO_RAD: f64 = std::f64::consts::PI / 180.0;

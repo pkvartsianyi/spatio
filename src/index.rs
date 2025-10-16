@@ -3,8 +3,7 @@ use crate::spatial::Point;
 use crate::types::Config;
 use bytes::Bytes;
 use geohash;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Threshold for large search radius in meters
 const LARGE_RADIUS_THRESHOLD: f64 = 100_000.0;
@@ -110,14 +109,13 @@ impl IndexManager {
             }
         } else {
             // Use geohash-based search for efficiency
-            let mut candidates: SmallVec<[String; 27]> = SmallVec::new();
+            let mut candidates = FxHashSet::default();
+            candidates.reserve(27); // 9 directions * 3 precisions
 
             // Try multiple precision levels for better coverage
             for precision in &self.search_precisions {
                 if let Ok(center_geohash) = center.to_geohash(*precision) {
-                    if !candidates.contains(&center_geohash) {
-                        candidates.push(center_geohash.clone());
-                    }
+                    candidates.insert(center_geohash.clone());
 
                     // Add neighbors at this precision
                     for direction in &[
@@ -131,13 +129,14 @@ impl IndexManager {
                         geohash::Direction::SW,
                     ] {
                         if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
-                            if !candidates.contains(&neighbor) {
-                                candidates.push(neighbor);
-                            }
+                            candidates.insert(neighbor);
                         }
                     }
                 }
             }
+
+            // Collect candidates with distances for sorting
+            let mut candidates_with_distance = Vec::new();
 
             // Check all candidate geohashes
             for geohash in &candidates {
@@ -146,15 +145,25 @@ impl IndexManager {
                     if stored_geohash.starts_with(geohash) || geohash.starts_with(stored_geohash) {
                         let distance = center.distance_to(point);
                         if distance <= radius_meters {
-                            results.push((*point, data.clone()));
-                            if results.len() >= limit {
-                                break;
-                            }
+                            candidates_with_distance.push((distance, *point, data.clone()));
                         }
                     }
                 }
-                if results.len() >= limit {
-                    break;
+            }
+
+            // Sort by distance and take closest results, naturally handling duplicates
+            candidates_with_distance
+                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Take unique points (deduplicate by point coordinates) up to limit
+            let mut seen_points = FxHashSet::default();
+            for (_, point, data) in candidates_with_distance {
+                let point_key = (point.lat.to_bits(), point.lon.to_bits());
+                if seen_points.insert(point_key) {
+                    results.push((point, data));
+                    if results.len() >= limit {
+                        break;
+                    }
                 }
             }
 
