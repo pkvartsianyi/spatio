@@ -46,8 +46,3 @@ strip = "symbols"
 [profile.dev]
 debug = true
 opt-level = 0
-
-# Maturin configuration
-[tool.maturin]
-module-name = "spatio._spatio"
-python-source = "src"

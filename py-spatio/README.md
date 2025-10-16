@@ -278,6 +278,25 @@ Basic performance characteristics (your results may vary):
 
 ## Development
 
+### Development Tools
+
+This project uses [`just`](https://github.com/casey/just) as the primary task runner for all development workflows. Just provides a more powerful and expressive alternative to Make.
+
+```bash
+# Install just (if not already installed)
+cargo install just
+
+# See all available commands
+just --list
+
+# Common development tasks
+just setup          # Set up development environment
+just build           # Build the package
+just test            # Run tests
+just check           # Run all quality checks (lint, format, typecheck)
+just ci              # Run full CI pipeline locally
+```
+
 ### Building from Source
 
 ```bash
@@ -292,7 +311,7 @@ cd spatio/py-spatio
 maturin develop
 
 # Run tests
-make test
+just test
 
 # Run examples
 python examples/basic_usage.py
@@ -302,26 +321,26 @@ python examples/basic_usage.py
 
 ```bash
 # Run all tests
-make test
+just test
 
 # Run with coverage
-make coverage
+just coverage
 
 # Run performance tests
-make test-benchmark
+just bench
 ```
 
 ### Code Formatting
 
 ```bash
 # Format Python code
-make fmt
+just fmt
 
 # Type checking
-make typecheck
+just typecheck
 
 # Run all checks
-make check
+just check
 ```
 
 ## API Reference
