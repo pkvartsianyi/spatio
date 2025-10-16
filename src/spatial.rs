@@ -231,9 +231,9 @@ impl Point {
             let dlon = (self.lon - center.lon) * TO_RAD;
             let avg_lat = (self.lat + center.lat) * 0.5 * TO_RAD;
 
-            let x = dlon * avg_lat.cos();
-            let y = dlat;
-            let distance_approx = EARTH_RADIUS_M * (x * x + y * y).sqrt();
+            let x = dlon * avg_lat.cos() * EARTH_RADIUS_M;
+            let y = dlat * EARTH_RADIUS_M;
+            let distance_approx = (x * x + y * y).sqrt();
 
             return distance_approx <= radius_meters;
         }
