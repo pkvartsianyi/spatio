@@ -97,6 +97,25 @@ py-dev-setup:
 py-ci:
     cd py-spatio && just ci
 
+# Version management
+# ==================
+
+# Check version consistency across all packages
+check-version:
+    ./scripts/check-version.sh
+
+# Bump version in all packages and create git tag
+bump-version VERSION:
+    ./scripts/bump-version.sh {{VERSION}}
+
+# Dry run version bump to see what would change
+bump-version-dry VERSION:
+    ./scripts/bump-version.sh {{VERSION}} --dry-run
+
+# Bump version without creating git tag
+bump-version-no-tag VERSION:
+    ./scripts/bump-version.sh {{VERSION}} --no-tag
+
 # Combined commands
 # ================
 
