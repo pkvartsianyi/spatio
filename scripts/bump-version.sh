@@ -286,8 +286,7 @@ elif [[ "$NO_COMMIT" == true ]]; then
 else
     print_info "Changes committed."
     print_info ""
-    print_info "Next step: Push changes to trigger auto-release"
-    print_info "  git push origin main"
+    print_info "Next step: Merge changes to trigger auto-release"
 fi
 
 print_info ""
