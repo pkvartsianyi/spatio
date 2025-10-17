@@ -202,14 +202,62 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin
           pip install -r requirements-dev.txt
+        env:
+          # Windows-specific environment for build tools
+          CARGO_BUILD_TARGET: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-msvc' || '' }}
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
 
       - name: Build and test Python package
         working-directory: py-spatio
         run: |
           # Build wheel and install it
-          maturin build --out dist
+          maturin build --out dist --interpreter python
           pip install dist/*.whl --force-reinstall --no-deps
-          pytest -v
+          pytest -v --tb=short -x --maxfail=5
+        env:
+          # Windows-specific environment variables
+          PYTHONIOENCODING: utf-8
+          # Increase timeout for Windows builds
+          PYTEST_TIMEOUT: 300
+          # Rust build flags for Windows
+          CARGO_BUILD_TARGET: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-msvc' || '' }}
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
+
+      - name: Run Windows compatibility test
+        if: matrix.os == 'windows-latest'
+        working-directory: py-spatio
+        run: |
+          python test_windows_compatibility.py
+        env:
+          PYTHONIOENCODING: utf-8
+        continue-on-error: true
+
+      - name: Run Windows debug script
+        if: matrix.os == 'windows-latest' && failure()
+        working-directory: py-spatio
+        run: |
+          powershell -ExecutionPolicy Bypass -File debug_windows.ps1 -Verbose
+        continue-on-error: true
+
+      - name: Debug Windows environment
+        if: matrix.os == 'windows-latest' && failure()
+        working-directory: py-spatio
+        run: |
+          echo "Python version: $(python --version)"
+          echo "Pip version: $(pip --version)"
+          echo "Rust version: $(rustc --version)"
+          echo "Cargo version: $(cargo --version)"
+          echo "Maturin version: $(maturin --version)"
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
+          echo "Dist contents:"
+          ls -la dist/ || echo "No dist directory"
+          echo "Target contents:"
+          ls -la target/ || echo "No target directory"
+          python -c "import sys; print('Python path:', sys.path)"
+          python -c "import platform; print('Platform:', platform.platform())"
+        shell: bash
 
       - name: Run Python linting (Python 3.11, Ubuntu only)
         if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'

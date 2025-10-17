@@ -3,6 +3,7 @@ Comprehensive tests for Spatio Python bindings
 """
 
 import os
+import platform
 import tempfile
 import time
 
@@ -128,9 +129,16 @@ class TestSpatio:
         """Test creating persistent database"""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
+            # Normalize path for Windows compatibility
+            db_path = os.path.normpath(db_path)
             db = spatio.Spatio.open(db_path)
             assert db is not None
             db.close()
+            # On Windows, ensure file is properly released
+            if platform.system() == "Windows":
+                import gc
+
+                gc.collect()
 
     def test_basic_key_value_operations(self):
         """Test basic key-value operations"""
@@ -167,8 +175,9 @@ class TestSpatio:
         result = db.get(b"temp_key")
         assert result == b"temp_value"
 
-        # Wait for expiration
-        time.sleep(0.2)
+        # Wait for expiration - use longer timeout on Windows due to timing differences
+        sleep_time = 0.3 if platform.system() == "Windows" else 0.2
+        time.sleep(sleep_time)
 
         # Should be gone (or might still exist depending on cleanup timing)
         # We can't guarantee timing in tests, so we just verify the operation worked
@@ -298,6 +307,12 @@ class TestSpatio:
         # Should not raise any errors
         db.close()
 
+        # On Windows, force garbage collection to ensure proper cleanup
+        if platform.system() == "Windows":
+            import gc
+
+            gc.collect()
+
     def test_database_repr(self):
         """Test database string representation"""
         db = spatio.Spatio.memory()
@@ -311,6 +326,12 @@ class TestErrorHandling:
         """Test operations on a closed database still work (limitation)"""
         db = spatio.Spatio.memory()
         db.close()
+
+        # On Windows, ensure proper cleanup after close
+        if platform.system() == "Windows":
+            import gc
+
+            gc.collect()
 
         # Current implementation allows operations after close
         # This is a limitation of the current API
@@ -348,8 +369,9 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Inserted 1000 items in {elapsed:.3f} seconds")
 
-        # Basic sanity check
-        assert elapsed < 5.0  # Should be much faster than 5 seconds
+        # Basic sanity check - allow more time on Windows
+        max_time = 10.0 if platform.system() == "Windows" else 5.0
+        assert elapsed < max_time  # Should be faster than expected time
 
     def test_spatial_query_performance(self):
         """Test spatial query performance"""
@@ -378,8 +400,9 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Performed 100 spatial queries in {elapsed:.3f} seconds")
 
-        # Basic sanity check
-        assert elapsed < 2.0  # Should be much faster than 2 seconds
+        # Basic sanity check - allow more time on Windows
+        max_time = 4.0 if platform.system() == "Windows" else 2.0
+        assert elapsed < max_time  # Should be faster than expected time
 
 
 if __name__ == "__main__":

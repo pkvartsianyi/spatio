@@ -204,4 +204,4 @@ notebook: build
 
 # Quick test - just basic functionality
 quick-test: build
-    .venv/bin/python -c "import spatio; db = spatio.Spatio.memory(); db.insert(b'test', b'value'); assert db.get(b'test') == b'value'; print('✓ Basic functionality works')"
+    .venv/bin/python -c "import spatio; db = spatio.Spatio.memory(); db.insert(b'test', b'value'); assert db.get(b'test') == b'value'; print('Basic functionality works')"
