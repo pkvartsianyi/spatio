@@ -85,26 +85,7 @@ all = [
 module-name = "spatio._spatio"
 python-source = "src"
 strip = true
-include = [
-    { path = "README.md", format = "sdist" },
-    { path = "LICENSE", format = "sdist" },
-    { path = "pyproject.toml", format = "sdist" },
-    { path = "Cargo.toml", format = "sdist" },
-    { path = "Cargo.lock", format = "sdist" },
-    { path = "src/**/*.py", format = "sdist" },
-    { path = "src/**/*.pyi", format = "sdist" },
-]
-exclude = [
-    "target/**",
-    ".venv/**",
-    ".pytest_cache/**",
-    ".mypy_cache/**",
-    ".ruff_cache/**",
-    "htmlcov/**",
-    "dist/**",
-    "*.egg-info/**",
-    "__pycache__/**"
-]
+manifest-path = "Cargo.toml"
 
 [tool.ruff]
 line-length = 88

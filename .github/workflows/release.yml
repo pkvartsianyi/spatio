@@ -60,6 +60,48 @@ jobs:
       - name: Verify package can be built
         run: cargo package --allow-dirty
 
+      - name: Verify version matches tag
+        run: |
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG_VERSION="${{ github.event.inputs.version }}"
+          else
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          TAG_VERSION=${TAG_VERSION#v}  # Remove 'v' prefix if present
+
+          echo "Cargo.toml version: $CARGO_VERSION"
+          echo "Tag version: $TAG_VERSION"
+
+          if [[ "$CARGO_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Version mismatch! Cargo.toml has $CARGO_VERSION but tag is $TAG_VERSION"
+            echo "Please update Cargo.toml version to match the tag"
+            exit 1
+          fi
+          echo "Version verification passed"
+
+      - name: Verify Python version matches tag
+        working-directory: py-spatio
+        run: |
+          # Extract version from py-spatio Cargo.toml (maturin uses this for Python package version)
+          PYTHON_CARGO_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG_VERSION="${{ github.event.inputs.version }}"
+          else
+            TAG_VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          TAG_VERSION=${TAG_VERSION#v}  # Remove 'v' prefix if present
+
+          echo "Python Cargo.toml version: $PYTHON_CARGO_VERSION"
+          echo "Tag version: $TAG_VERSION"
+
+          if [[ "$PYTHON_CARGO_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Python version mismatch! py-spatio/Cargo.toml has $PYTHON_CARGO_VERSION but tag is $TAG_VERSION"
+            echo "Please update py-spatio/Cargo.toml version to match the tag"
+            exit 1
+          fi
+          echo "Python version verification passed"
+
   create-release:
     name: Create GitHub Release (Rust)
     needs: check
@@ -177,13 +219,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin twine
 
+      - name: Debug maturin environment
+        working-directory: py-spatio
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Files in py-spatio:"
+          ls -la
+          echo "LICENSE files found:"
+          find . -name "LICENSE" -type f
+          find .. -name "LICENSE" -type f
+          echo "README files found:"
+          find . -name "README.md" -type f
+          find .. -name "README.md" -type f
+
       - name: Build Python wheels
         working-directory: py-spatio
         run: maturin build --release --out dist
 
       - name: Build source distribution
         working-directory: py-spatio
-        run: maturin sdist --out dist
+        run: |
+          echo "Attempting to build source distribution..."
+          maturin sdist --out dist --verbose
 
       - name: Verify package metadata
         working-directory: py-spatio
