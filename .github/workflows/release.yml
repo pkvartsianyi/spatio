@@ -15,6 +15,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: write
+  pull-requests: read
+  actions: read
+  id-token: write
+
 jobs:
   check:
     name: Pre-release checks (Rust)
@@ -60,6 +66,9 @@ jobs:
     name: Create GitHub Release (Rust)
     needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
 
     steps:
       - name: Checkout code
@@ -91,21 +100,23 @@ jobs:
           fi
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.version }}
           name: Release ${{ steps.get_version.outputs.version }}
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fail_on_unmatched_files: true
 
   publish-crates:
     name: Publish Rust crate to crates.io
     needs: check
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc')
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
