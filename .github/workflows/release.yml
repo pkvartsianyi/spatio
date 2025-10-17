@@ -16,16 +16,14 @@ env:
   RUST_BACKTRACE: 1
 
 permissions:
-  contents: write
-  pull-requests: read
-  actions: read
-  id-token: write
+  contents: read
 
 jobs:
   check:
     name: Pre-release checks (Rust)
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -68,7 +66,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: read
 
     steps:
       - name: Checkout code
@@ -107,8 +104,7 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fail_on_unmatched_files: true
+          token: ${{ github.token }}
 
   publish-crates:
     name: Publish Rust crate to crates.io
