@@ -255,7 +255,14 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             ;;
     esac
 
-    git add "${FILES_TO_ADD[@]}"
+    # Add files, using -f for potentially ignored lock files
+    for file in "${FILES_TO_ADD[@]}"; do
+        if [[ "$file" == *"Cargo.lock" ]]; then
+            git add -f "$file" 2>/dev/null || print_warning "Could not add $file (might be ignored)"
+        else
+            git add "$file"
+        fi
+    done
 
     COMMIT_MSG="bump $PACKAGE version to $NEW_VERSION"
     if git commit -m "$COMMIT_MSG"; then

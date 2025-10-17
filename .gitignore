@@ -2,9 +2,9 @@
 /target/
 py-spatio/target/
 
-# Cargo.lock is excluded for library crates
-# Include it for applications, exclude for libraries
-Cargo.lock
+# Cargo.lock is excluded for the main library crate
+# but included for the Python bindings (application-like)
+/Cargo.lock
 
 # Database files
 *.aof
