@@ -179,11 +179,17 @@ jobs:
 
       - name: Build Python wheels
         working-directory: py-spatio
-        run: maturin build --release --out dist
+        run: maturin build --release --out dist --manifest-path Cargo.toml
 
       - name: Build source distribution
         working-directory: py-spatio
-        run: maturin sdist --out dist
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Files in current directory:"
+          ls -la
+          echo "README files found:"
+          find . -name "README.md" -type f
+          maturin sdist --out dist --manifest-path Cargo.toml
 
       - name: Verify package metadata
         working-directory: py-spatio
