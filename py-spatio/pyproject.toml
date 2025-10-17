@@ -93,7 +93,6 @@ include = [
     { path = "Cargo.lock", format = "sdist" },
     { path = "src/**/*.py", format = "sdist" },
     { path = "src/**/*.pyi", format = "sdist" },
-    { path = "src/**/*.rs", format = "sdist" }
 ]
 exclude = [
     "target/**",
