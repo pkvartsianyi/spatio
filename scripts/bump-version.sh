@@ -120,10 +120,14 @@ if [[ "$PACKAGE" != "rust" && "$PACKAGE" != "python" && "$PACKAGE" != "both" ]];
     exit 1
 fi
 
+# Remove 'v' prefix if present
+NEW_VERSION=${NEW_VERSION#v}
+
 # Validate version format
 if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[0-9]+)?)?$ ]]; then
     print_error "Invalid version format: $NEW_VERSION"
     print_error "Expected format: X.Y.Z or X.Y.Z-prerelease (e.g., 1.0.0, 1.0.0-alpha.1)"
+    print_error "Note: 'v' prefix is automatically removed if present"
     exit 1
 fi
 
