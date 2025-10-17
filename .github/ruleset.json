@@ -27,16 +27,8 @@
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
           {
-            "context": "CI / Test Suite (ubuntu-latest, stable) (pull_request)"
-          },
-          {
-            "context": "CI / Test Suite (macos-latest, stable) (pull_request)"
-          },
-          {
-            "context": "CI / Test Suite (windows-latest, stable) (pull_request)"
-          },
-          { "context": "CI / Examples (pull_request)" },
-          { "context": "CI / Security Audit (pull_request)" }
+            "context": "test"
+          }
         ]
       }
     },

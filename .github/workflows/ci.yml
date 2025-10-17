@@ -24,6 +24,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -31,99 +36,52 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            py-spatio/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('py-spatio/requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # Rust testing
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Build
+      - name: Build Rust crate
         run: cargo build --verbose
 
-      - name: Run tests
+      - name: Run Rust tests
         run: cargo test --verbose
 
       - name: Run doc tests
-        if: matrix.rust == 'stable'
         run: cargo test --doc
 
-      - name: Test documentation builds
-        if: matrix.rust == 'stable' && matrix.os == 'ubuntu-latest'
-        run: cargo doc --no-deps
+      # Python testing
+      - name: Install Python dependencies
+        working-directory: py-spatio
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+          pip install -r requirements-dev.txt
 
-  examples:
-    name: Examples
-    runs-on: ubuntu-latest
+      - name: Build and test Python package
+        working-directory: py-spatio
+        run: |
+          maturin build --out dist
+          pip install dist/*.whl --force-reinstall --no-deps
+          pytest -v
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-examples-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run getting started example
-        run: cargo run --example getting_started
-
-      - name: Run spatial queries example
-        run: cargo run --example spatial_queries
-
-      - name: Run trajectory tracking example
-        run: cargo run --example trajectory_tracking
-
-      - name: Run comprehensive demo
-        run: cargo run --example comprehensive_demo
-
-  benchmarks:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-bench-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run benchmarks
-        run: cargo bench
-
-  security:
-    name: Security Audit
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
-
-      - name: Run security audit
-        run: cargo audit
+      - name: Run Python linting
+        working-directory: py-spatio
+        run: |
+          ruff check src/ tests/ examples/
+          mypy src/

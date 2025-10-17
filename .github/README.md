@@ -4,16 +4,17 @@ This directory contains the CI/CD workflows for SpatioLite, implementing a pragm
 
 ## Workflows Overview
 
-### `ci.yml` - Daily Development CI
+### `ci.yml` - Unified CI
 **Triggers:** Every push and pull request  
-**Purpose:** Fast feedback for development  
+**Purpose:** Fast feedback for both Rust and Python development  
 **Runs on:** Linux only (Ubuntu)  
-**Duration:** ~5-10 minutes  
+**Duration:** ~10-15 minutes  
 
 **What it does:**
-- Rust: Format, lint, test, documentation checks
-- Uses stable Rust toolchain only
-- Optimized for speed and quick feedback
+- Rust: Format, lint, build, test, documentation checks
+- Python: Build bindings, run tests, linting (ruff, mypy)
+- Uses stable Rust toolchain and Python 3.11
+- Single job tests both languages efficiently
 
 ### `auto-release.yml` - Version-Driven Releases
 **Triggers:** Version changes in `Cargo.toml` files  
@@ -28,17 +29,7 @@ This directory contains the CI/CD workflows for SpatioLite, implementing a pragm
 4. **Publishes packages** to crates.io and PyPI
 5. **Only releases if all tests pass**
 
-### `python.yml` - Python Package CI
-**Triggers:** Changes to Python package files  
-**Purpose:** Fast Python-specific testing  
-**Runs on:** Linux only (Ubuntu)  
-**Duration:** ~10-15 minutes  
 
-**What it does:**
-- Tests Python bindings across Python 3.9-3.13
-- Builds wheels and runs pytest
-- Code quality checks (ruff, mypy)
-- Performance benchmarks
 
 ### `docs.yml` - Documentation
 **Triggers:** Documentation changes  
@@ -51,7 +42,8 @@ This directory contains the CI/CD workflows for SpatioLite, implementing a pragm
 
 We use a **two-tier approach**:
 
-#### Tier 1: Fast Daily CI
+#### Tier 1: Fast Unified CI
+- **Single job** tests both Rust and Python
 - **Linux-only testing** for speed
 - **Catches 95% of issues** in development
 - **Quick feedback** to keep developers productive
@@ -79,7 +71,7 @@ We use a **two-tier approach**:
 git add .
 git commit -m "feat: add new feature"
 git push origin feature-branch
-# → Fast Linux CI runs (~5 minutes)
+# → Unified CI runs Rust + Python tests (~10-15 minutes)
 ```
 
 ### Creating a Release
