@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'Cargo.toml'
-      - 'py-spatio/Cargo.toml'
+      - "Cargo.toml"
+      - "py-spatio/Cargo.toml"
   workflow_dispatch:
 
 env:
@@ -176,7 +176,9 @@ jobs:
       - name: Build and test Python package
         working-directory: py-spatio
         run: |
-          maturin develop
+          # Build wheel and install it
+          maturin build --out dist
+          pip install dist/*.whl
           pytest -v
 
   release-rust:
@@ -219,22 +221,22 @@ jobs:
           VERSION="${{ needs.detect-changes.outputs.rust-version }}"
           PREVIOUS="${{ needs.detect-changes.outputs.rust-previous }}"
 
-          echo "# Rust Crate Release v$VERSION" > rust-release-notes.md
-          echo "" >> rust-release-notes.md
+          echo "# Rust Crate Release v$VERSION" > /tmp/rust-release-notes.md
+          echo "" >> /tmp/rust-release-notes.md
 
           if [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> rust-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> /tmp/rust-release-notes.md || true
           fi
 
-          if [ ! -s rust-release-notes.md ] || [ $(wc -l < rust-release-notes.md) -le 2 ]; then
-            echo "# Rust Crate Release v$VERSION" > rust-release-notes.md
-            echo "" >> rust-release-notes.md
-            echo "## What's Changed" >> rust-release-notes.md
-            echo "" >> rust-release-notes.md
-            echo "* Updated from version $PREVIOUS to $VERSION" >> rust-release-notes.md
-            echo "* See commit history for detailed changes" >> rust-release-notes.md
-            echo "" >> rust-release-notes.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> rust-release-notes.md
+          if [ ! -s /tmp/rust-release-notes.md ] || [ $(wc -l < /tmp/rust-release-notes.md) -le 2 ]; then
+            echo "# Rust Crate Release v$VERSION" > /tmp/rust-release-notes.md
+            echo "" >> /tmp/rust-release-notes.md
+            echo "## What's Changed" >> /tmp/rust-release-notes.md
+            echo "" >> /tmp/rust-release-notes.md
+            echo "* Updated from version $PREVIOUS to $VERSION" >> /tmp/rust-release-notes.md
+            echo "* See commit history for detailed changes" >> /tmp/rust-release-notes.md
+            echo "" >> /tmp/rust-release-notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> /tmp/rust-release-notes.md
           fi
 
       - name: Create GitHub Release for Rust
@@ -242,15 +244,15 @@ jobs:
         with:
           tag_name: rust-v${{ needs.detect-changes.outputs.rust-version }}
           name: "Rust Crate v${{ needs.detect-changes.outputs.rust-version }}"
-          body_path: rust-release-notes.md
+          body_path: /tmp/rust-release-notes.md
           draft: false
           prerelease: ${{ contains(needs.detect-changes.outputs.rust-version, 'alpha') || contains(needs.detect-changes.outputs.rust-version, 'beta') || contains(needs.detect-changes.outputs.rust-version, 'rc') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to crates.io
         run: |
-          cargo publish --dry-run
-          cargo publish
+          cargo publish --dry-run --allow-dirty
+          cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -307,25 +309,25 @@ jobs:
           VERSION="${{ needs.detect-changes.outputs.python-version }}"
           PREVIOUS="${{ needs.detect-changes.outputs.python-previous }}"
 
-          echo "# Python Package Release v$VERSION" > python-release-notes.md
-          echo "" >> python-release-notes.md
+          echo "# Python Package Release v$VERSION" > /tmp/python-release-notes.md
+          echo "" >> /tmp/python-release-notes.md
 
           if [ -f "py-spatio/CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> python-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> /tmp/python-release-notes.md || true
           elif [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> python-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> /tmp/python-release-notes.md || true
           fi
 
-          if [ ! -s python-release-notes.md ] || [ $(wc -l < python-release-notes.md) -le 2 ]; then
-            echo "# Python Package Release v$VERSION" > python-release-notes.md
-            echo "" >> python-release-notes.md
-            echo "## What's Changed" >> python-release-notes.md
-            echo "" >> python-release-notes.md
-            echo "* Updated from version $PREVIOUS to $VERSION" >> python-release-notes.md
-            echo "* Python bindings improvements and updates" >> python-release-notes.md
-            echo "* See commit history for detailed changes" >> python-release-notes.md
-            echo "" >> python-release-notes.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> python-release-notes.md
+          if [ ! -s /tmp/python-release-notes.md ] || [ $(wc -l < /tmp/python-release-notes.md) -le 2 ]; then
+            echo "# Python Package Release v$VERSION" > /tmp/python-release-notes.md
+            echo "" >> /tmp/python-release-notes.md
+            echo "## What's Changed" >> /tmp/python-release-notes.md
+            echo "" >> /tmp/python-release-notes.md
+            echo "* Updated from version $PREVIOUS to $VERSION" >> /tmp/python-release-notes.md
+            echo "* Python bindings improvements and updates" >> /tmp/python-release-notes.md
+            echo "* See commit history for detailed changes" >> /tmp/python-release-notes.md
+            echo "" >> /tmp/python-release-notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> /tmp/python-release-notes.md
           fi
 
       - name: Create GitHub Release for Python
@@ -333,7 +335,7 @@ jobs:
         with:
           tag_name: python-v${{ needs.detect-changes.outputs.python-version }}
           name: "Python Package v${{ needs.detect-changes.outputs.python-version }}"
-          body_path: python-release-notes.md
+          body_path: /tmp/python-release-notes.md
           draft: false
           prerelease: ${{ contains(needs.detect-changes.outputs.python-version, 'alpha') || contains(needs.detect-changes.outputs.python-version, 'beta') || contains(needs.detect-changes.outputs.python-version, 'rc') }}
           token: ${{ secrets.GITHUB_TOKEN }}
