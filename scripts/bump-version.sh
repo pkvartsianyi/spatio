@@ -33,44 +33,43 @@ print_error() {
 # Function to show usage
 show_usage() {
     cat << EOF
-Usage: $0 <new_version> [options]
+Usage: $0 <package> <new_version> [options]
 
 ARGUMENTS:
+    <package>        Which package to bump: 'rust', 'python', or 'both'
     <new_version>    The new version to set (e.g., 0.1.1, 0.2.0-alpha.1, 1.0.0-beta.2)
 
 OPTIONS:
     --dry-run       Show what would be changed without making actual changes
-    --no-tag        Update versions but don't create git tag
     --no-commit     Update versions but don't commit changes
     --help, -h      Show this help message
 
 EXAMPLES:
-    $0 0.1.1                    # Bump to version 0.1.1 and create tag
-    $0 0.2.0-alpha.1 --dry-run # Show what would change for pre-release
-    $0 0.1.2 --no-tag          # Update versions but don't create tag
+    $0 rust 0.1.1                    # Bump Rust crate to 0.1.1
+    $0 python 0.2.0                  # Bump Python package to 0.2.0
+    $0 both 0.1.5                    # Bump both to same version
+    $0 python 0.2.0-alpha.1 --dry-run # Show what would change for Python pre-release
 
 The script will update versions in:
-    - Cargo.toml (main project)
-    - py-spatio/Cargo.toml (Python bindings)
-    - Any other version references found
+    - rust: Cargo.toml (main project)
+    - python: py-spatio/Cargo.toml (Python bindings)
+    - both: Both Cargo.toml files (same version)
+
+Note: GitHub Actions will automatically detect version changes and create releases.
 
 EOF
 }
 
 # Parse command line arguments
+PACKAGE=""
 NEW_VERSION=""
 DRY_RUN=false
-NO_TAG=false
 NO_COMMIT=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run)
             DRY_RUN=true
-            shift
-            ;;
-        --no-tag)
-            NO_TAG=true
             shift
             ;;
         --no-commit)
@@ -87,10 +86,12 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            if [[ -z "$NEW_VERSION" ]]; then
+            if [[ -z "$PACKAGE" ]]; then
+                PACKAGE="$1"
+            elif [[ -z "$NEW_VERSION" ]]; then
                 NEW_VERSION="$1"
             else
-                print_error "Too many arguments. Version already set to '$NEW_VERSION'"
+                print_error "Too many arguments"
                 show_usage
                 exit 1
             fi
@@ -100,8 +101,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate arguments
+if [[ -z "$PACKAGE" ]]; then
+    print_error "Package is required (rust, python, or both)"
+    show_usage
+    exit 1
+fi
+
 if [[ -z "$NEW_VERSION" ]]; then
     print_error "New version is required"
+    show_usage
+    exit 1
+fi
+
+# Validate package argument
+if [[ "$PACKAGE" != "rust" && "$PACKAGE" != "python" && "$PACKAGE" != "both" ]]; then
+    print_error "Invalid package: $PACKAGE. Must be 'rust', 'python', or 'both'"
     show_usage
     exit 1
 fi
@@ -139,19 +153,22 @@ print_info "Current versions:"
 print_info "  Rust crate: $CURRENT_RUST_VERSION"
 print_info "  Python package: $CURRENT_PYTHON_VERSION"
 print_info ""
+print_info "Updating: $PACKAGE"
 print_info "New version: $NEW_VERSION"
 
-# Check if tag already exists
-if git tag -l | grep -q "^v${NEW_VERSION}$"; then
-    print_error "Tag v${NEW_VERSION} already exists"
-    exit 1
-fi
-
-# Files to update
-declare -a FILES_TO_UPDATE=(
-    "Cargo.toml"
-    "py-spatio/Cargo.toml"
-)
+# Files to update based on package
+declare -a FILES_TO_UPDATE=()
+case "$PACKAGE" in
+    "rust")
+        FILES_TO_UPDATE=("Cargo.toml")
+        ;;
+    "python")
+        FILES_TO_UPDATE=("py-spatio/Cargo.toml")
+        ;;
+    "both")
+        FILES_TO_UPDATE=("Cargo.toml" "py-spatio/Cargo.toml")
+        ;;
+esac
 
 # Function to update version in file
 update_version_in_file() {
@@ -175,7 +192,7 @@ update_version_in_file() {
 
         # Update version
         if sed -i.tmp "s/^version = \".*\"/version = \"$new_version\"/" "$file"; then
-            rm "$file.tmp" 2>/dev/null || true
+            rm "${file}.tmp" 2>/dev/null || true
             rm "$file.backup"
         else
             print_error "Failed to update $file"
@@ -195,28 +212,49 @@ done
 if [[ "$DRY_RUN" == false ]]; then
     print_info "Updating Cargo.lock files..."
 
-    # Update main Cargo.lock
-    if cargo update --workspace --quiet; then
-        print_success "Updated main Cargo.lock"
-    else
-        print_warning "Failed to update main Cargo.lock"
-    fi
+    case "$PACKAGE" in
+        "rust"|"both")
+            if cargo update --workspace --quiet; then
+                print_success "Updated main Cargo.lock"
+            else
+                print_warning "Failed to update main Cargo.lock"
+            fi
+            ;;
+    esac
 
-    # Update Python Cargo.lock
-    if (cd py-spatio && cargo update --quiet); then
-        print_success "Updated py-spatio/Cargo.lock"
-    else
-        print_warning "Failed to update py-spatio/Cargo.lock"
-    fi
+    case "$PACKAGE" in
+        "python"|"both")
+            if (cd py-spatio && cargo update --quiet); then
+                print_success "Updated py-spatio/Cargo.lock"
+            else
+                print_warning "Failed to update py-spatio/Cargo.lock"
+            fi
+            ;;
+    esac
 fi
 
 # Commit changes
 if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     print_info "Committing version changes..."
 
-    git add Cargo.toml Cargo.lock py-spatio/Cargo.toml py-spatio/Cargo.lock
+    # Add files based on what was updated
+    declare -a FILES_TO_ADD=()
+    case "$PACKAGE" in
+        "rust")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock")
+            ;;
+        "python")
+            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
+            ;;
+        "both")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
+            ;;
+    esac
 
-    if git commit -m "bump version to $NEW_VERSION"; then
+    git add "${FILES_TO_ADD[@]}"
+
+    COMMIT_MSG="bump $PACKAGE version to $NEW_VERSION"
+    if git commit -m "$COMMIT_MSG"; then
         print_success "Committed version changes"
     else
         print_error "Failed to commit changes"
@@ -224,41 +262,37 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     fi
 fi
 
-# Create git tag
-if [[ "$DRY_RUN" == false && "$NO_TAG" == false ]]; then
-    print_info "Creating git tag v$NEW_VERSION..."
-
-    if git tag "v$NEW_VERSION" -m "Release version $NEW_VERSION"; then
-        print_success "Created tag v$NEW_VERSION"
-    else
-        print_error "Failed to create tag"
-        exit 1
-    fi
-fi
-
 # Summary
 print_info ""
 print_success "Version bump completed!"
+print_info "Package: $PACKAGE"
 print_info "Version: $NEW_VERSION"
 
 if [[ "$DRY_RUN" == true ]]; then
     print_info "This was a dry run. No files were actually modified."
 elif [[ "$NO_COMMIT" == true ]]; then
     print_warning "Files updated but not committed. Don't forget to commit your changes!"
-elif [[ "$NO_TAG" == true ]]; then
-    print_warning "Changes committed but no tag created."
-    print_info "To create the tag manually: git tag v$NEW_VERSION"
 else
-    print_info "Changes committed and tag created."
+    print_info "Changes committed."
     print_info ""
-    print_info "Next steps:"
-    print_info "  1. Push changes: git push origin main"
-    print_info "  2. Push tag: git push origin v$NEW_VERSION"
-    print_info "  3. Or push both: git push origin main v$NEW_VERSION"
+    print_info "Next step: Push changes to trigger auto-release"
+    print_info "  git push origin main"
 fi
 
 print_info ""
-print_info "The release workflow will automatically:"
-print_info "  - Create GitHub release"
-print_info "  - Publish Rust crate to crates.io"
-print_info "  - Publish Python package to PyPI"
+print_info "GitHub Actions will automatically detect the version change and:"
+case "$PACKAGE" in
+    "rust")
+        print_info "  - Create GitHub release with rust-v$NEW_VERSION tag"
+        print_info "  - Publish Rust crate to crates.io"
+        ;;
+    "python")
+        print_info "  - Create GitHub release with python-v$NEW_VERSION tag"
+        print_info "  - Publish Python package to PyPI"
+        ;;
+    "both")
+        print_info "  - Create GitHub releases for both packages"
+        print_info "  - Publish Rust crate to crates.io"
+        print_info "  - Publish Python package to PyPI"
+        ;;
+esac

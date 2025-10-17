@@ -53,36 +53,58 @@ fi
 RUST_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 PYTHON_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
-# Get latest git tag
-LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
-LATEST_TAG_VERSION=${LATEST_TAG#v}  # Remove 'v' prefix
+# Get latest git tags
+LATEST_RUST_TAG=$(git tag -l "rust-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_PYTHON_TAG=$(git tag -l "python-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_COMBINED_TAG=$(git tag -l "v*" | grep -v "rust-v" | grep -v "python-v" | sort -V | tail -1 2>/dev/null || echo "none")
+
+LATEST_RUST_TAG_VERSION=${LATEST_RUST_TAG#rust-v}
+LATEST_PYTHON_TAG_VERSION=${LATEST_PYTHON_TAG#python-v}
+LATEST_COMBINED_TAG_VERSION=${LATEST_COMBINED_TAG#v}
 
 print_info "Version Check Report"
 print_info "==================="
 print_info ""
-print_info "Rust crate version:    $RUST_VERSION"
+print_info "Rust crate version:     $RUST_VERSION"
 print_info "Python package version: $PYTHON_VERSION"
-print_info "Latest git tag:        $LATEST_TAG"
+print_info ""
+print_info "Latest Rust tag:        $LATEST_RUST_TAG"
+print_info "Latest Python tag:      $LATEST_PYTHON_TAG"
+print_info "Latest combined tag:    $LATEST_COMBINED_TAG"
 print_info ""
 
-# Check version consistency
+# Check version consistency - packages can have different versions
 VERSIONS_CONSISTENT=true
 
-if [[ "$RUST_VERSION" != "$PYTHON_VERSION" ]]; then
-    print_error "Version mismatch between Rust and Python packages!"
-    print_error "  Rust:   $RUST_VERSION"
-    print_error "  Python: $PYTHON_VERSION"
-    VERSIONS_CONSISTENT=false
+print_info "Version Status:"
+print_info "--------------"
+
+# Check Rust version against its tag
+if [[ "$LATEST_RUST_TAG" != "none" ]]; then
+    if [[ "$RUST_VERSION" == "$LATEST_RUST_TAG_VERSION" ]]; then
+        print_success "Rust version matches latest Rust tag"
+    elif [[ "$RUST_VERSION" > "$LATEST_RUST_TAG_VERSION" ]]; then
+        print_info "Rust version ($RUST_VERSION) is newer than latest Rust tag ($LATEST_RUST_TAG_VERSION)"
+        print_info "Ready for new Rust release"
+    else
+        print_warning "Rust version ($RUST_VERSION) is older than latest Rust tag ($LATEST_RUST_TAG_VERSION)"
+    fi
+else
+    print_info "No Rust-specific tags found. Ready for first Rust release."
 fi
 
-if [[ "$LATEST_TAG" != "none" && "$RUST_VERSION" != "$LATEST_TAG_VERSION" ]]; then
-    if [[ "$RUST_VERSION" > "$LATEST_TAG_VERSION" ]]; then
-        print_info "Rust version ($RUST_VERSION) is newer than latest tag ($LATEST_TAG_VERSION)"
-        print_info "This is normal if you're preparing a new release"
+# Check Python version against its tag
+if [[ "$LATEST_PYTHON_TAG" != "none" ]]; then
+    if [[ "$PYTHON_VERSION" == "$LATEST_PYTHON_TAG_VERSION" ]]; then
+        print_success "Python version matches latest Python tag"
+    elif [[ "$PYTHON_VERSION" > "$LATEST_PYTHON_TAG_VERSION" ]]; then
+        print_info "Python version ($PYTHON_VERSION) is newer than latest Python tag ($LATEST_PYTHON_TAG_VERSION)"
+        print_info "Ready for new Python release"
     else
-        print_warning "Rust version ($RUST_VERSION) is older than latest tag ($LATEST_TAG_VERSION)"
-        print_warning "This might indicate a problem"
+        print_warning "Python version ($PYTHON_VERSION) is older than latest Python tag ($LATEST_PYTHON_TAG_VERSION)"
     fi
+else
+    print_info "No Python-specific tags found. Ready for first Python release."
 fi
 
 # Check for uncommitted changes
@@ -93,21 +115,11 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 # Summary
-if [[ "$VERSIONS_CONSISTENT" == true ]]; then
-    print_success "All versions are consistent!"
-
-    if [[ "$LATEST_TAG" == "none" ]]; then
-        print_info "No tags found. Ready to create first release with version $RUST_VERSION"
-    elif [[ "$RUST_VERSION" == "$LATEST_TAG_VERSION" ]]; then
-        print_info "Current version matches latest tag. No release needed unless changes were made."
-    else
-        print_info "Ready to create new release with version $RUST_VERSION"
-    fi
-else
-    print_error "Version inconsistencies found! Please fix before releasing."
-    exit 1
-fi
-
+print_success "Version check completed!"
 print_info ""
-print_info "To bump version: ./scripts/bump-version.sh <new_version>"
-print_info "To see what would change: ./scripts/bump-version.sh <new_version> --dry-run"
+print_info "Available commands:"
+print_info "  Rust only:   ./scripts/bump-version.sh rust <version>"
+print_info "  Python only: ./scripts/bump-version.sh python <version>"
+print_info "  Both:        ./scripts/bump-version.sh both <version>"
+print_info ""
+print_info "Dry run:       ./scripts/bump-version.sh <package> <version> --dry-run"

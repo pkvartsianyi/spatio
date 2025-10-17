@@ -100,21 +100,38 @@ py-ci:
 # Version management
 # ==================
 
-# Check version consistency across all packages
+# Check version status of all packages
 check-version:
     ./scripts/check-version.sh
 
-# Bump version in all packages and create git tag
-bump-version VERSION:
-    ./scripts/bump-version.sh {{VERSION}}
+# Bump Rust crate version
+bump-rust VERSION:
+    ./scripts/bump-version.sh rust {{VERSION}}
+
+# Bump Python package version
+bump-python VERSION:
+    ./scripts/bump-version.sh python {{VERSION}}
+
+# Bump both packages to same version
+bump-both VERSION:
+    ./scripts/bump-version.sh both {{VERSION}}
 
 # Dry run version bump to see what would change
-bump-version-dry VERSION:
-    ./scripts/bump-version.sh {{VERSION}} --dry-run
+bump-rust-dry VERSION:
+    ./scripts/bump-version.sh rust {{VERSION}} --dry-run
 
-# Bump version without creating git tag
-bump-version-no-tag VERSION:
-    ./scripts/bump-version.sh {{VERSION}} --no-tag
+bump-python-dry VERSION:
+    ./scripts/bump-version.sh python {{VERSION}} --dry-run
+
+bump-both-dry VERSION:
+    ./scripts/bump-version.sh both {{VERSION}} --dry-run
+
+# Bump version without committing
+bump-rust-no-commit VERSION:
+    ./scripts/bump-version.sh rust {{VERSION}} --no-commit
+
+bump-python-no-commit VERSION:
+    ./scripts/bump-version.sh python {{VERSION}} --no-commit
 
 # Combined commands
 # ================

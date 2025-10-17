@@ -1,0 +1,389 @@
+name: Auto Release on Version Change
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'py-spatio/Cargo.toml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    name: Detect Version Changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust-changed: ${{ steps.check-rust.outputs.changed }}
+      python-changed: ${{ steps.check-python.outputs.changed }}
+      rust-version: ${{ steps.check-rust.outputs.version }}
+      python-version: ${{ steps.check-python.outputs.version }}
+      rust-previous: ${{ steps.check-rust.outputs.previous }}
+      python-previous: ${{ steps.check-python.outputs.previous }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Rust version changes
+        id: check-rust
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+          # Get previous version from last commit that changed Cargo.toml
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 Cargo.toml | tail -1)
+          if [[ -n "$PREVIOUS_COMMIT" ]]; then
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          else
+            PREVIOUS_VERSION=""
+          fi
+
+          echo "Current Rust version: $CURRENT_VERSION"
+          echo "Previous Rust version: $PREVIOUS_VERSION"
+
+          if [[ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" && -n "$PREVIOUS_VERSION" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Rust version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Rust version unchanged"
+          fi
+
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check Python version changes
+        id: check-python
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+          # Get previous version from last commit that changed py-spatio/Cargo.toml
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 py-spatio/Cargo.toml | tail -1)
+          if [[ -n "$PREVIOUS_COMMIT" ]]; then
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:py-spatio/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          else
+            PREVIOUS_VERSION=""
+          fi
+
+          echo "Current Python version: $CURRENT_VERSION"
+          echo "Previous Python version: $PREVIOUS_VERSION"
+
+          if [[ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" && -n "$PREVIOUS_VERSION" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Python version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Python version unchanged"
+          fi
+
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "Version Change Detection Summary:"
+          echo "================================"
+          echo "Rust: ${{ steps.check-rust.outputs.previous }} -> ${{ steps.check-rust.outputs.version }} (Changed: ${{ steps.check-rust.outputs.changed }})"
+          echo "Python: ${{ steps.check-python.outputs.previous }} -> ${{ steps.check-python.outputs.version }} (Changed: ${{ steps.check-python.outputs.changed }})"
+
+  test-rust:
+    name: Test Rust Changes
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Run doc tests
+        run: cargo test --doc
+
+      - name: Check documentation
+        run: cargo doc --no-deps
+
+      - name: Verify package can be built
+        run: cargo package --allow-dirty
+
+  test-python:
+    name: Test Python Changes
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            py-spatio/target
+          key: test-python-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
+
+      - name: Install Python dependencies
+        working-directory: py-spatio
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+          pip install -r requirements-dev.txt
+
+      - name: Build and test Python package
+        working-directory: py-spatio
+        run: |
+          maturin develop
+          pytest -v
+
+  release-rust:
+    name: Release Rust Crate
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-rust]
+    if: needs.detect-changes.outputs.rust-changed == 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Create Rust release tag
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.rust-version }}"
+          TAG_NAME="rust-v$VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$TAG_NAME" -m "Release Rust crate version $VERSION"
+          git push origin "$TAG_NAME"
+
+      - name: Generate Rust changelog
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.rust-version }}"
+          PREVIOUS="${{ needs.detect-changes.outputs.rust-previous }}"
+
+          echo "# Rust Crate Release v$VERSION" > rust-release-notes.md
+          echo "" >> rust-release-notes.md
+
+          if [ -f "CHANGELOG.md" ]; then
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> rust-release-notes.md || true
+          fi
+
+          if [ ! -s rust-release-notes.md ] || [ $(wc -l < rust-release-notes.md) -le 2 ]; then
+            echo "# Rust Crate Release v$VERSION" > rust-release-notes.md
+            echo "" >> rust-release-notes.md
+            echo "## What's Changed" >> rust-release-notes.md
+            echo "" >> rust-release-notes.md
+            echo "* Updated from version $PREVIOUS to $VERSION" >> rust-release-notes.md
+            echo "* See commit history for detailed changes" >> rust-release-notes.md
+            echo "" >> rust-release-notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> rust-release-notes.md
+          fi
+
+      - name: Create GitHub Release for Rust
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rust-v${{ needs.detect-changes.outputs.rust-version }}
+          name: "Rust Crate v${{ needs.detect-changes.outputs.rust-version }}"
+          body_path: rust-release-notes.md
+          draft: false
+          prerelease: ${{ contains(needs.detect-changes.outputs.rust-version, 'alpha') || contains(needs.detect-changes.outputs.rust-version, 'beta') || contains(needs.detect-changes.outputs.rust-version, 'rc') }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to crates.io
+        run: |
+          cargo publish --dry-run
+          cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release-python:
+    name: Release Python Package
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-python]
+    if: needs.detect-changes.outputs.python-changed == 'true'
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            py-spatio/target
+          key: python-release-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
+
+      - name: Install Python build tools
+        working-directory: py-spatio
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin twine
+
+      - name: Create Python release tag
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.python-version }}"
+          TAG_NAME="python-v$VERSION"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$TAG_NAME" -m "Release Python package version $VERSION"
+          git push origin "$TAG_NAME"
+
+      - name: Generate Python changelog
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.python-version }}"
+          PREVIOUS="${{ needs.detect-changes.outputs.python-previous }}"
+
+          echo "# Python Package Release v$VERSION" > python-release-notes.md
+          echo "" >> python-release-notes.md
+
+          if [ -f "py-spatio/CHANGELOG.md" ]; then
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> python-release-notes.md || true
+          elif [ -f "CHANGELOG.md" ]; then
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> python-release-notes.md || true
+          fi
+
+          if [ ! -s python-release-notes.md ] || [ $(wc -l < python-release-notes.md) -le 2 ]; then
+            echo "# Python Package Release v$VERSION" > python-release-notes.md
+            echo "" >> python-release-notes.md
+            echo "## What's Changed" >> python-release-notes.md
+            echo "" >> python-release-notes.md
+            echo "* Updated from version $PREVIOUS to $VERSION" >> python-release-notes.md
+            echo "* Python bindings improvements and updates" >> python-release-notes.md
+            echo "* See commit history for detailed changes" >> python-release-notes.md
+            echo "" >> python-release-notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> python-release-notes.md
+          fi
+
+      - name: Create GitHub Release for Python
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: python-v${{ needs.detect-changes.outputs.python-version }}
+          name: "Python Package v${{ needs.detect-changes.outputs.python-version }}"
+          body_path: python-release-notes.md
+          draft: false
+          prerelease: ${{ contains(needs.detect-changes.outputs.python-version, 'alpha') || contains(needs.detect-changes.outputs.python-version, 'beta') || contains(needs.detect-changes.outputs.python-version, 'rc') }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Python wheels
+        working-directory: py-spatio
+        run: maturin build --release --out dist
+
+      - name: Verify package metadata
+        working-directory: py-spatio
+        run: |
+          twine check dist/*
+          echo "Package verification completed successfully"
+
+      - name: Publish to PyPI
+        working-directory: py-spatio
+        run: twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, release-rust, release-python]
+    if: always() && (needs.detect-changes.outputs.rust-changed == 'true' || needs.detect-changes.outputs.python-changed == 'true')
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "Release Summary"
+          echo "==============="
+
+          if [[ "${{ needs.detect-changes.outputs.rust-changed }}" == "true" ]]; then
+            if [[ "${{ needs.release-rust.result }}" == "success" ]]; then
+              echo "✅ Rust crate v${{ needs.detect-changes.outputs.rust-version }} released successfully"
+            else
+              echo "❌ Rust crate release failed"
+            fi
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.python-changed }}" == "true" ]]; then
+            if [[ "${{ needs.release-python.result }}" == "success" ]]; then
+              echo "✅ Python package v${{ needs.detect-changes.outputs.python-version }} released successfully"
+            else
+              echo "❌ Python package release failed"
+            fi
+          fi
+
+          echo ""
+          echo "Releases are automatically triggered when version numbers change in:"
+          echo "  - Cargo.toml (Rust crate)"
+          echo "  - py-spatio/Cargo.toml (Python package)"
