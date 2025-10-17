@@ -31,9 +31,6 @@ from spatio._spatio import SetOptions as _SetOptions
 from spatio._spatio import Spatio as _Spatio
 from spatio._spatio import __version__
 
-# Convenience imports for common use cases
-from spatio.types import *  # noqa: F403
-
 # Re-export main classes
 __all__ = [
     "Config",

@@ -87,12 +87,7 @@ python-source = "src"
 strip = true
 manifest-path = "Cargo.toml"
 
-# Windows-specific build configuration
-[tool.maturin.windows]
-# Use static CRT linking on Windows for better compatibility
-rustc-link-arg = ["-C", "target-feature=+crt-static"]
-# Specify explicit target for Windows
-target = "x86_64-pc-windows-msvc"
+
 
 [tool.ruff]
 line-length = 88
@@ -168,8 +163,7 @@ addopts = [
   "--tb=short",
   "-v",
 ]
-# Windows-specific timeout for slower CI
-timeout = 300
+
 markers = [
   "slow: Tests with longer runtime",
   "benchmark: Performance benchmark tests",
@@ -182,12 +176,7 @@ filterwarnings = [
   "ignore::DeprecationWarning",
   "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
-# Windows-specific settings
-[tool.pytest.ini_options.windows]
-# Increase timeouts for Windows CI
-timeout = 600
-# Use longer sleep intervals for timing tests
-sleep_multiplier = 2.0
+
 
 [tool.coverage.run]
 source = ["src"]
