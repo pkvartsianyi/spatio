@@ -449,7 +449,7 @@ jobs:
             if [[ "${{ needs.release-rust.result }}" == "success" ]]; then
               echo "Rust crate v${{ needs.detect-changes.outputs.rust-version }} released successfully"
             else
-              echo "❌ Rust crate release failed"
+              echo "Rust crate release failed"
             fi
           fi
 
@@ -457,7 +457,7 @@ jobs:
             if [[ "${{ needs.release-python.result }}" == "success" ]]; then
               echo "Python package v${{ needs.detect-changes.outputs.python-version }} released successfully"
             else
-              echo "❌ Python package release failed"
+              echo "Python package release failed"
             fi
           fi
 
