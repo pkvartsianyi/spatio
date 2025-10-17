@@ -53,8 +53,8 @@ spatio = "0.1"
 
 Spatio is available for multiple languages:
 
-- 🦀 **Rust** (native): High-performance, zero-cost abstractions
-- 🐍 **Python**: Easy-to-use bindings via PyO3
+- **Rust** (native): High-performance, zero-cost abstractions
+- **Python**: Easy-to-use bindings via PyO3
 
 ## Quick Start
 

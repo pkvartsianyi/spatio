@@ -8,13 +8,14 @@ This project uses **version-driven releases** with **independent versioning** fo
 - **Python package** (`spatio`): Python bindings for the Rust library
 - **Independent versions**: Each can be released separately with different version numbers
 - **Automatic releases**: GitHub Actions detects version changes and creates releases automatically
+- **Release-time testing**: Cross-platform testing happens automatically before each release
 
 ## How It Works
 
 1. **Update version** using the bump script
 2. **Commit and push** to main branch
-3. **GitHub Actions detects** version changes
-4. **Automatic release** is created and published
+3. **GitHub Actions detects** version changes and runs cross-platform tests
+4. **Automatic release** is created and published if all tests pass
 
 No manual tag creation needed!
 
@@ -124,9 +125,9 @@ The GitHub workflow automatically detects version changes and publishes accordin
 
 | Version Change | Rust Publish | Python Publish | GitHub Release |
 |----------------|--------------|----------------|----------------|
-| `Cargo.toml`   | ✅           | ❌             | ✅ (rust-v*)   |
-| `py-spatio/Cargo.toml` | ❌   | ✅             | ✅ (python-v*) |
-| Both files     | ✅           | ✅             | ✅ (both tags) |
+| `Cargo.toml`   | Yes          | No             | Yes (rust-v*)  |
+| `py-spatio/Cargo.toml` | No   | Yes            | Yes (python-v*) |
+| Both files     | Yes          | Yes            | Yes (both tags) |
 
 ## Manual Workflow Trigger
 
@@ -226,7 +227,7 @@ just check-version
 just bump-rust-dry 0.2.1  # preview
 just bump-rust 0.2.1      # actual bump
 git push origin main
-# → Auto-release triggered, rust-v0.2.1 created and published
+# Auto-release triggered, rust-v0.2.1 created and published
 
 # 4. Later: update Python bindings
 # ... edit py-spatio/src/ files ...
@@ -234,7 +235,7 @@ git push origin main
 # 5. Release new Python version
 just bump-python 0.1.3
 git push origin main
-# → Auto-release triggered, python-v0.1.3 created and published
+# Auto-release triggered, python-v0.1.3 created and published
 ```
 
 ### Coordinated Release
@@ -244,7 +245,7 @@ git push origin main
 just bump-both-dry 1.0.0  # preview
 just bump-both 1.0.0      # actual bump  
 git push origin main
-# → Auto-release triggered, both packages released
+# Auto-release triggered, both packages released
 ```
 
 ### Version-Driven Workflow Benefits
@@ -254,5 +255,33 @@ git push origin main
 - **Failed releases don't create tags** - Only successful builds get released
 - **Clear audit trail** - Easy to see what triggered each release
 - **Prevents forgotten releases** - Can't forget to create a release after version bump
+- **Fast daily CI** - Linux-only testing for quick development feedback
+- **Thorough releases** - Cross-platform testing ensures release quality
+- **Cost efficient** - Full testing only when it matters
+
+## CI Strategy
+
+### Daily Development CI
+**Runs on every push/PR:**
+- Linux-only testing (Ubuntu)
+- Rust stable toolchain
+- Python 3.9-3.13
+- Quick feedback (~5-10 minutes)
+
+### Release CI
+**Runs automatically when versions change:**
+- **Cross-platform testing**: Linux, Windows, macOS
+- **Multiple Python versions**: 3.9-3.13 across platforms
+- **Comprehensive validation** before release
+- **Only releases if all tests pass**
+
+### Local Testing
+```bash
+# Security and performance testing
+just security-audit  
+just benchmarks
+just coverage
+just test-examples
+```
 
 This version-driven approach gives you maximum flexibility while maintaining clear separation between the Rust library and Python bindings release cycles. The automatic detection ensures that every version change results in a proper release without manual intervention.

@@ -97,10 +97,14 @@ jobs:
           echo "Python: ${{ steps.check-python.outputs.previous }} -> ${{ steps.check-python.outputs.version }} (Changed: ${{ steps.check-python.outputs.changed }})"
 
   test-rust:
-    name: Test Rust Changes
-    runs-on: ubuntu-latest
+    name: Test Rust Changes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     needs: detect-changes
     if: needs.detect-changes.outputs.rust-changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -118,13 +122,20 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Check formatting
+      - name: Check formatting (Linux only)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
 
-      - name: Run clippy
+      - name: Run clippy (Linux only)
+        if: matrix.os == 'ubuntu-latest'
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --verbose
 
       - name: Run tests
         run: cargo test --verbose
@@ -133,25 +144,42 @@ jobs:
         run: cargo test --doc
 
       - name: Check documentation
+        if: matrix.os == 'ubuntu-latest'
         run: cargo doc --no-deps
 
       - name: Verify package can be built
+        if: matrix.os == 'ubuntu-latest'
         run: cargo package --allow-dirty
 
   test-python:
-    name: Test Python Changes
-    runs-on: ubuntu-latest
+    name: Test Python Changes (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     needs: detect-changes
     if: needs.detect-changes.outputs.python-changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        exclude:
+          # Reduce matrix size for efficiency
+          - os: windows-latest
+            python-version: "3.9"
+          - os: windows-latest
+            python-version: "3.10"
+          - os: macos-latest
+            python-version: "3.9"
+          - os: macos-latest
+            python-version: "3.10"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -164,7 +192,9 @@ jobs:
             ~/.cargo/git
             target
             py-spatio/target
-          key: test-python-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
+          key: ${{ runner.os }}-python${{ matrix.python-version }}-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-python${{ matrix.python-version }}-
 
       - name: Install Python dependencies
         working-directory: py-spatio
@@ -178,8 +208,15 @@ jobs:
         run: |
           # Build wheel and install it
           maturin build --out dist
-          pip install dist/*.whl
+          pip install dist/*.whl --force-reinstall --no-deps
           pytest -v
+
+      - name: Run Python linting (Python 3.11, Ubuntu only)
+        if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
+        working-directory: py-spatio
+        run: |
+          ruff check src/ tests/ examples/
+          mypy src/
 
   release-rust:
     name: Release Rust Crate
@@ -217,42 +254,59 @@ jobs:
           git push origin "$TAG_NAME"
 
       - name: Generate Rust changelog
+        id: changelog
         run: |
           VERSION="${{ needs.detect-changes.outputs.rust-version }}"
           PREVIOUS="${{ needs.detect-changes.outputs.rust-previous }}"
 
-          echo "# Rust Crate Release v$VERSION" > /tmp/rust-release-notes.md
-          echo "" >> /tmp/rust-release-notes.md
+          # Create changelog in tmp to avoid dirtying working directory
+          CHANGELOG_FILE="/tmp/rust-release-notes.md"
+          echo "# Rust Crate Release v$VERSION" > "$CHANGELOG_FILE"
+          echo "" >> "$CHANGELOG_FILE"
 
           if [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> /tmp/rust-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> "$CHANGELOG_FILE" || true
           fi
 
-          if [ ! -s /tmp/rust-release-notes.md ] || [ $(wc -l < /tmp/rust-release-notes.md) -le 2 ]; then
-            echo "# Rust Crate Release v$VERSION" > /tmp/rust-release-notes.md
-            echo "" >> /tmp/rust-release-notes.md
-            echo "## What's Changed" >> /tmp/rust-release-notes.md
-            echo "" >> /tmp/rust-release-notes.md
-            echo "* Updated from version $PREVIOUS to $VERSION" >> /tmp/rust-release-notes.md
-            echo "* See commit history for detailed changes" >> /tmp/rust-release-notes.md
-            echo "" >> /tmp/rust-release-notes.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> /tmp/rust-release-notes.md
+          if [ ! -s "$CHANGELOG_FILE" ] || [ $(wc -l < "$CHANGELOG_FILE") -le 2 ]; then
+            echo "# Rust Crate Release v$VERSION" > "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "## What's Changed" >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "* Updated from version $PREVIOUS to $VERSION" >> "$CHANGELOG_FILE"
+            echo "* See commit history for detailed changes" >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> "$CHANGELOG_FILE"
           fi
+
+          echo "changelog_file=$CHANGELOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release for Rust
         uses: softprops/action-gh-release@v2
         with:
           tag_name: rust-v${{ needs.detect-changes.outputs.rust-version }}
           name: "Rust Crate v${{ needs.detect-changes.outputs.rust-version }}"
-          body_path: /tmp/rust-release-notes.md
+          body_path: ${{ steps.changelog.outputs.changelog_file }}
           draft: false
           prerelease: ${{ contains(needs.detect-changes.outputs.rust-version, 'alpha') || contains(needs.detect-changes.outputs.rust-version, 'beta') || contains(needs.detect-changes.outputs.rust-version, 'rc') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Clean working directory
+        run: |
+          # Remove any temporary files that might have been created
+          rm -f rust-release-notes.md python-release-notes.md
+          # Ensure working directory is clean
+          git status --porcelain
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Working directory is not clean:"
+            git status --short
+            exit 1
+          fi
+
       - name: Publish to crates.io
         run: |
-          cargo publish --dry-run --allow-dirty
-          cargo publish --allow-dirty
+          cargo publish --dry-run
+          cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -305,50 +359,72 @@ jobs:
           git push origin "$TAG_NAME"
 
       - name: Generate Python changelog
+        id: py-changelog
         run: |
           VERSION="${{ needs.detect-changes.outputs.python-version }}"
           PREVIOUS="${{ needs.detect-changes.outputs.python-previous }}"
 
-          echo "# Python Package Release v$VERSION" > /tmp/python-release-notes.md
-          echo "" >> /tmp/python-release-notes.md
+          # Create changelog in tmp to avoid dirtying working directory
+          CHANGELOG_FILE="/tmp/python-release-notes.md"
+          echo "# Python Package Release v$VERSION" > "$CHANGELOG_FILE"
+          echo "" >> "$CHANGELOG_FILE"
 
           if [ -f "py-spatio/CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> /tmp/python-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> "$CHANGELOG_FILE" || true
           elif [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> /tmp/python-release-notes.md || true
+            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> "$CHANGELOG_FILE" || true
           fi
 
-          if [ ! -s /tmp/python-release-notes.md ] || [ $(wc -l < /tmp/python-release-notes.md) -le 2 ]; then
-            echo "# Python Package Release v$VERSION" > /tmp/python-release-notes.md
-            echo "" >> /tmp/python-release-notes.md
-            echo "## What's Changed" >> /tmp/python-release-notes.md
-            echo "" >> /tmp/python-release-notes.md
-            echo "* Updated from version $PREVIOUS to $VERSION" >> /tmp/python-release-notes.md
-            echo "* Python bindings improvements and updates" >> /tmp/python-release-notes.md
-            echo "* See commit history for detailed changes" >> /tmp/python-release-notes.md
-            echo "" >> /tmp/python-release-notes.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> /tmp/python-release-notes.md
+          if [ ! -s "$CHANGELOG_FILE" ] || [ $(wc -l < "$CHANGELOG_FILE") -le 2 ]; then
+            echo "# Python Package Release v$VERSION" > "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "## What's Changed" >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "* Updated from version $PREVIOUS to $VERSION" >> "$CHANGELOG_FILE"
+            echo "* Python bindings improvements and updates" >> "$CHANGELOG_FILE"
+            echo "* See commit history for detailed changes" >> "$CHANGELOG_FILE"
+            echo "" >> "$CHANGELOG_FILE"
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> "$CHANGELOG_FILE"
           fi
+
+          echo "changelog_file=$CHANGELOG_FILE" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release for Python
         uses: softprops/action-gh-release@v2
         with:
           tag_name: python-v${{ needs.detect-changes.outputs.python-version }}
           name: "Python Package v${{ needs.detect-changes.outputs.python-version }}"
-          body_path: /tmp/python-release-notes.md
+          body_path: ${{ steps.py-changelog.outputs.changelog_file }}
           draft: false
           prerelease: ${{ contains(needs.detect-changes.outputs.python-version, 'alpha') || contains(needs.detect-changes.outputs.python-version, 'beta') || contains(needs.detect-changes.outputs.python-version, 'rc') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Python wheels
         working-directory: py-spatio
-        run: maturin build --release --out dist
+        run: |
+          maturin build --release --out dist
+          echo "Built wheels:"
+          ls -la dist/
 
       - name: Verify package metadata
         working-directory: py-spatio
         run: |
+          # Check all built packages
           twine check dist/*
           echo "Package verification completed successfully"
+          echo "Packages to upload:"
+          ls -la dist/
+
+      - name: Clean working directory
+        run: |
+          # Remove any temporary files
+          rm -f rust-release-notes.md python-release-notes.md
+          # Ensure working directory is clean
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Working directory is not clean:"
+            git status --short
+            exit 1
+          fi
 
       - name: Publish to PyPI
         working-directory: py-spatio

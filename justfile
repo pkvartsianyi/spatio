@@ -133,6 +133,32 @@ bump-rust-no-commit VERSION:
 bump-python-no-commit VERSION:
     ./scripts/bump-version.sh python {{VERSION}} --no-commit
 
+# CI and Testing
+# ==============
+
+# Run security audit
+security-audit:
+    cargo audit
+    cd py-spatio && bandit -r src/ && safety check
+
+# Run performance benchmarks
+benchmarks:
+    cargo bench
+    cd py-spatio && just bench
+
+# Run code coverage
+coverage:
+    cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out html
+    cd py-spatio && just coverage
+
+# Run all examples to test functionality
+test-examples:
+    cargo run --example getting_started
+    cargo run --example spatial_queries
+    cargo run --example trajectory_tracking
+    cargo run --example comprehensive_demo
+    cd py-spatio && just examples
+
 # Combined commands
 # ================
 

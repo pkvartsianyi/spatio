@@ -156,14 +156,14 @@ The scripts automatically update:
 
 Ensure versions follow semantic versioning:
 ```bash
-# ✅ Valid formats
+# Valid formats
 0.1.0
 1.2.3
 2.0.0-alpha.1
 1.0.0-beta.2
 1.0.0-rc.1
 
-# ❌ Invalid formats
+# Invalid formats
 v0.1.0        # No 'v' prefix
 0.1           # Missing patch version
 1.0.0-ALPHA   # Uppercase prerelease
