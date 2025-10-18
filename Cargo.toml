@@ -6,6 +6,8 @@ rust-version = "1.90.0"
 description = "A high-performance, embedded spatio-temporal database for modern applications"
 license = "MIT"
 repository = "https://github.com/pkvartsianyi/spatio"
+homepage = "https://github.com/pkvartsianyi/spatio"
+documentation = "https://docs.rs/spatio"
 keywords = ["spatial", "database", "geospatial", "embedded", "temporal"]
 categories = ["database-implementations", "science::geo"]
 

@@ -120,10 +120,12 @@ sdist:
 
 # Publish to Test PyPI
 publish-test: wheel
+    @echo "Publishing to Test PyPI: https://test.pypi.org/project/spatio"
     .venv/bin/twine upload --repository testpypi target/wheels/*
 
 # Publish to PyPI
 publish: wheel
+    @echo "Publishing to PyPI: https://pypi.org/project/spatio"
     .venv/bin/twine upload target/wheels/*
 
 # Clean up build artifacts and caches

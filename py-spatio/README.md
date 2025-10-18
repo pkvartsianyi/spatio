@@ -1,6 +1,6 @@
 # Spatio: Python Bindings for High-Performance Spatial Database
 
-[![PyPI version](https://badge.fury.io/py/spatio.svg)](https://badge.fury.io/py/spatio)
+[![PyPI version](https://badge.fury.io/py/spatio.svg)](https://pypi.org/project/spatio)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -21,6 +21,8 @@ Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a blazingl
 ```bash
 pip install spatio
 ```
+
+📦 **PyPI Repository**: https://pypi.org/project/spatio
 
 ### From Source
 

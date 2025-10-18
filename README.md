@@ -13,6 +13,9 @@
   <a href="https://crates.io/crates/spatio">
     <img src="https://img.shields.io/crates/v/spatio.svg" alt="Crates.io">
   </a>
+  <a href="https://pypi.org/project/spatio">
+    <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
+  </a>
   <a href="https://docs.rs/spatio">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
   </a>
@@ -40,6 +43,8 @@
 pip install spatio
 ```
 
+📦 **PyPI**: https://pypi.org/project/spatio
+
 ### Rust
 
 Add this to your `Cargo.toml`:
@@ -48,6 +53,8 @@ Add this to your `Cargo.toml`:
 [dependencies]
 spatio = "0.1"
 ```
+
+📦 **Crates.io**: https://crates.io/crates/spatio
 
 ## Language Support
 
@@ -328,6 +335,21 @@ cargo test
 cargo clippy
 cargo fmt
 ```
+
+## Links & Resources
+
+### Package Repositories
+- **PyPI**: https://pypi.org/project/spatio
+- **Crates.io**: https://crates.io/crates/spatio
+
+### Documentation & Source
+- **GitHub Repository**: https://github.com/pkvartsianyi/spatio
+- **Rust Documentation**: https://docs.rs/spatio
+- **Python Documentation**: https://github.com/pkvartsianyi/spatio/tree/main/py-spatio
+
+### Community
+- **Issues & Bug Reports**: https://github.com/pkvartsianyi/spatio/issues
+- **Releases & Changelog**: https://github.com/pkvartsianyi/spatio/releases
 
 ## License
 

@@ -213,7 +213,7 @@ impl PySpatio {
         let result = handle_error(self.db.get(key_bytes))?;
 
         Python::with_gil(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new_bound(py, &bytes).into())),
+            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).into())),
             None => Ok(None),
         })
     }
@@ -224,7 +224,7 @@ impl PySpatio {
         let result = handle_error(self.db.delete(key_bytes))?;
 
         Python::with_gil(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new_bound(py, &bytes).into())),
+            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).into())),
             None => Ok(None),
         })
     }
@@ -262,15 +262,15 @@ impl PySpatio {
             )?;
 
         Python::with_gil(|py| {
-            let py_list = PyList::empty_bound(py);
+            let py_list = PyList::empty(py);
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new_bound(py, &value);
+                let py_value = PyBytes::new(py, &value);
                 let distance = center.inner.distance_to(&point);
-                let tuple = PyTuple::new_bound(
+                let tuple = PyTuple::new(
                     py,
                     [py_point.into_py(py), py_value.into(), distance.into_py(py)],
-                );
+                )?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
@@ -320,11 +320,11 @@ impl PySpatio {
         ))?;
 
         Python::with_gil(|py| {
-            let py_list = PyList::empty_bound(py);
+            let py_list = PyList::empty(py);
             for (point, timestamp) in results {
                 let py_point = PyPoint { inner: point };
                 let tuple =
-                    PyTuple::new_bound(py, [py_point.into_py(py), (timestamp as f64).into_py(py)]);
+                    PyTuple::new(py, [py_point.into_py(py), (timestamp as f64).into_py(py)])?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
@@ -380,11 +380,11 @@ impl PySpatio {
         )?;
 
         Python::with_gil(|py| {
-            let py_list = PyList::empty_bound(py);
+            let py_list = PyList::empty(py);
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new_bound(py, &value);
-                let tuple = PyTuple::new_bound(py, [py_point.into_py(py), py_value.into()]);
+                let py_value = PyBytes::new(py, &value);
+                let tuple = PyTuple::new(py, [py_point.into_py(py), py_value.into()])?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
@@ -401,7 +401,7 @@ impl PySpatio {
         let stats = handle_error(self.db.stats())?;
 
         Python::with_gil(|py| {
-            let dict = pyo3::types::PyDict::new_bound(py);
+            let dict = pyo3::types::PyDict::new(py);
             dict.set_item("key_count", stats.key_count)?;
             dict.set_item("expired_count", stats.expired_count)?;
             dict.set_item("operations_count", stats.operations_count)?;

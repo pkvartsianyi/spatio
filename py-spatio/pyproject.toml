@@ -41,6 +41,8 @@ classifiers = [
 Homepage = "https://github.com/pkvartsianyi/spatio"
 Documentation = "https://github.com/pkvartsianyi/spatio#readme"
 Repository = "https://github.com/pkvartsianyi/spatio"
+"PyPI" = "https://pypi.org/project/spatio"
+"Crates.io" = "https://crates.io/crates/spatio"
 Changelog = "https://github.com/pkvartsianyi/spatio/releases"
 Issues = "https://github.com/pkvartsianyi/spatio/issues"
 
