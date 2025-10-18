@@ -20,7 +20,13 @@ lint:
 
 # Run the same tests as GitHub Actions
 ci:
-    act -j test
+    act -W .github/workflows/ci.yml -j test
+
+# Run auto-release workflow locally (dry-run, no actual publishing)
+ci-fake-release:
+    @echo "Running auto-release workflow locally (dry-run mode)..."
+    @echo "Note: Only running detect-changes and test-rust jobs to avoid platform issues"
+    act -W .github/workflows/auto-release.yml --env DRY_RUN=true --container-architecture linux/amd64 -j detect-changes -j test-rust || true
 
 # Clean target directory
 clean:

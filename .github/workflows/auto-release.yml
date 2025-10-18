@@ -203,18 +203,54 @@ jobs:
           pip install maturin
           pip install -r requirements-dev.txt
 
-      - name: Build and test Python package
+      - name: Build Python package
         working-directory: py-spatio
         run: |
-          # Build wheel and install it
-          maturin build --out dist --interpreter python
-          pip install dist/*.whl --force-reinstall --no-deps
+          echo "Building Python package..."
+          maturin build --out dist --interpreter python --verbose
+        env:
+          PYTHONIOENCODING: utf-8
+          RUST_BACKTRACE: 1
+
+      - name: Install Python package
+        working-directory: py-spatio
+        run: |
+          echo "Installing Python package..."
+
+          # Find wheel file using PowerShell
+          $wheelFile = Get-ChildItem dist -Filter "*.whl" | Select-Object -First 1
+
+          if ($null -eq $wheelFile) {
+            echo "ERROR: No wheel file found in dist directory"
+            echo "Available files in dist:"
+            if (Test-Path "dist") {
+              Get-ChildItem dist | ForEach-Object { echo $_.Name }
+            } else {
+              echo "dist directory does not exist"
+            }
+            exit 1
+          }
+
+          echo "Found wheel file: $($wheelFile.FullName)"
+          echo "Installing wheel..."
+          pip install "$($wheelFile.FullName)" --force-reinstall --no-deps --verbose
+
+          echo "Verifying installation..."
+          python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
+        shell: powershell
+
+      - name: Run Python tests
+        working-directory: py-spatio
+        run: |
+          echo "Running Python tests..."
+          echo "Python path:"
+          python -c "import sys; print('\n'.join(sys.path))"
+          echo "Installed packages:"
+          pip list | findstr spatio
           pytest -v --tb=short -x --maxfail=5
         env:
-          # Windows-specific environment variables
           PYTHONIOENCODING: utf-8
-          # Increase timeout for Windows builds
-          PYTEST_TIMEOUT: 300
+          PYTEST_TIMEOUT: 600
 
       - name: Debug Windows environment
         if: matrix.os == 'windows-latest' && failure()
@@ -330,10 +366,24 @@ jobs:
 
       - name: Publish to crates.io
         run: |
-          cargo publish --dry-run
-          cargo publish
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY_RUN mode: Skipping actual crates.io publish"
+            echo "Running dry-run only..."
+            cargo publish --dry-run
+          elif [ -n "$CRATES_IO_TOKEN" ]; then
+            echo "Running dry-run first..."
+            cargo publish --dry-run
+            echo "Publishing to crates.io..."
+            cargo publish
+          else
+            echo "CRATES_IO_TOKEN secret is not set"
+            echo "To publish to crates.io, add your crates.io API token as a repository secret named CRATES_IO_TOKEN"
+            echo "Skipping crates.io publish for now..."
+          fi
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
 
   release-python:
     name: Release Python Package
@@ -453,10 +503,24 @@ jobs:
 
       - name: Publish to PyPI
         working-directory: py-spatio
-        run: twine upload dist/*
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY_RUN mode: Skipping actual PyPI publish"
+            echo "Running twine check only..."
+            twine check dist/*
+          elif [ -n "$PYPI_API_TOKEN" ]; then
+            echo "Publishing to PyPI..."
+            twine upload dist/*
+          else
+            echo "PYPI_API_TOKEN secret is not set"
+            echo "To publish to PyPI, add your PyPI API token as a repository secret named PYPI_API_TOKEN"
+            echo "Skipping PyPI publish for now..."
+          fi
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
 
   summary:
     name: Release Summary

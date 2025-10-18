@@ -71,11 +71,31 @@ jobs:
           pip install maturin
           pip install -r requirements-dev.txt
 
-      - name: Build and test Python package
+      - name: Build Python package
         working-directory: py-spatio
         run: |
-          maturin build --out dist
-          pip install dist/*.whl --force-reinstall --no-deps
+          echo "Building Python package..."
+          maturin build --out dist --verbose
+
+      - name: Install Python package
+        working-directory: py-spatio
+        run: |
+          echo "Installing Python package..."
+          wheel_file=$(find dist -name "*.whl" -type f | head -1)
+          if [ -z "$wheel_file" ]; then
+            echo "ERROR: No wheel file found in dist directory"
+            ls -la dist/
+            exit 1
+          fi
+          echo "Found wheel file: $wheel_file"
+          pip install "$wheel_file" --force-reinstall --no-deps --verbose
+          echo "Verifying installation..."
+          python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
+
+      - name: Run Python tests
+        working-directory: py-spatio
+        run: |
+          echo "Running Python tests..."
           pytest -v
 
       - name: Run Python linting
