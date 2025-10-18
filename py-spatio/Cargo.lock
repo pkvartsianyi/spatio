@@ -673,7 +673,7 @@ dependencies = [
 
 [[package]]
 name = "spatio"
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 dependencies = [
  "bincode",
  "bytes",
@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-py"
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 dependencies = [
  "pyo3",
  "spatio",
