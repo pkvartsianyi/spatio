@@ -1,6 +1,6 @@
 [package]
 name = "spatio"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 edition = "2021"
 rust-version = "1.90.0"
 description = "A high-performance, embedded spatio-temporal database for modern applications"
