@@ -212,8 +212,10 @@ jobs:
           PYTHONIOENCODING: utf-8
           RUST_BACKTRACE: 1
 
-      - name: Install Python package
+      - name: Install Python package (Windows)
+        if: matrix.os == 'windows-latest'
         working-directory: py-spatio
+        shell: powershell
         run: |
           echo "Installing Python package..."
 
@@ -237,9 +239,32 @@ jobs:
 
           echo "Verifying installation..."
           python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
-        shell: powershell
 
-      - name: Run Python tests
+      - name: Install Python package (Unix)
+        if: matrix.os != 'windows-latest'
+        working-directory: py-spatio
+        run: |
+          echo "Installing Python package..."
+
+          # Find wheel file
+          wheel_file=$(find dist -name "*.whl" -type f | head -1)
+
+          if [ -z "$wheel_file" ]; then
+            echo "ERROR: No wheel file found in dist directory"
+            echo "Available files in dist:"
+            ls -la dist/ || echo "dist directory does not exist"
+            exit 1
+          fi
+
+          echo "Found wheel file: $wheel_file"
+          echo "Installing wheel..."
+          pip install "$wheel_file" --force-reinstall --no-deps --verbose
+
+          echo "Verifying installation..."
+          python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
+
+      - name: Run Python tests (Windows)
+        if: matrix.os == 'windows-latest'
         working-directory: py-spatio
         run: |
           echo "Running Python tests..."
@@ -247,6 +272,20 @@ jobs:
           python -c "import sys; print('\n'.join(sys.path))"
           echo "Installed packages:"
           pip list | findstr spatio
+          pytest -v --tb=short -x --maxfail=5
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTEST_TIMEOUT: 600
+
+      - name: Run Python tests (Unix)
+        if: matrix.os != 'windows-latest'
+        working-directory: py-spatio
+        run: |
+          echo "Running Python tests..."
+          echo "Python path:"
+          python -c "import sys; print('\n'.join(sys.path))"
+          echo "Installed packages:"
+          pip list | grep spatio || echo "spatio not found in pip list"
           pytest -v --tb=short -x --maxfail=5
         env:
           PYTHONIOENCODING: utf-8
