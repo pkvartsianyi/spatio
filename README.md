@@ -158,24 +158,24 @@ cargo run --example comprehensive_demo
 ## Use Cases
 
 ### Local Spatial Analytics
-- **Proximity Search**: Efficiently find nearby features or points of interest  
-- **Containment Queries**: Check if points or geometries lie within defined areas  
-- **Spatial Relationships**: Analyse intersections, distances, and overlaps between geometries  
+- **Proximity Search**: Efficiently find nearby features or points of interest
+- **Containment Queries**: Check if points or geometries lie within defined areas
+- **Spatial Relationships**: Analyse intersections, distances, and overlaps between geometries
 
 ### Edge & Embedded Systems
-- **On-Device Processing**: Run spatial queries directly on IoT, drones, or edge devices  
-- **Offline Operation**: Perform location analytics without cloud or network access  
-- **Energy Efficiency**: Optimised for low memory and CPU usage in constrained environments  
+- **On-Device Processing**: Run spatial queries directly on IoT, drones, or edge devices
+- **Offline Operation**: Perform location analytics without cloud or network access
+- **Energy Efficiency**: Optimised for low memory and CPU usage in constrained environments
 
 ### Developer & Research Tools
-- **Python Integration**: Use Spatio natively in data analysis or geospatial notebooks  
-- **Simulation Support**: Model trajectories and spatial behaviours locally  
-- **Lightweight Backend**: Ideal for prototypes, research projects, or local GIS tools  
+- **Python Integration**: Use Spatio natively in data analysis or geospatial notebooks
+- **Simulation Support**: Model trajectories and spatial behaviours locally
+- **Lightweight Backend**: Ideal for prototypes, research projects, or local GIS tools
 
 ### Offline & Mobile Applications
-- **Local Data Storage**: Keep spatial data close to the application  
-- **Fast Query Engine**: Sub-millisecond lookups for geometry and location queries  
-- **Self-Contained**: No external dependencies or server required  
+- **Local Data Storage**: Keep spatial data close to the application
+- **Fast Query Engine**: Sub-millisecond lookups for geometry and location queries
+- **Self-Contained**: No external dependencies or server required
 
 ## API Overview
 
@@ -306,22 +306,38 @@ Spatio uses a layered architecture:
 
 ## Status
 
-Spatio is production-ready for embedded use cases. Current version: **0.1.0**
+Spatio is in active development for embedded use cases.
 
-### Features
-- Key-value storage with spatial indexing
-- Geographic point operations
-- Trajectory tracking
-- TTL support
-- Atomic operations
-- Thread-safe concurrent access
-- Comprehensive spatial queries
+### Completed Features
+- **Core Database**: Key-value storage with B-tree indexing
+- **Spatial Operations**: Automatic geohash-based spatial indexing
+- **Geographic Queries**: Point-in-radius, bounding box, and nearest neighbor searches
+- **Trajectory Tracking**: Time-series storage and querying for moving objects
+- **TTL Support**: Automatic data expiration with time-to-live
+- **Atomic Operations**: Batch operations for data consistency (Rust API)
+- **Thread Safety**: Concurrent read/write access with RwLock
+- **Persistence**: Optional append-only file (AOF) storage
+- **Python Bindings**: Complete PyO3-based Python API via `pip install spatio`
 
-### Roadmap
-- Enhanced persistence with full AOF replay
-- Performance optimizations
-- Additional spatial data types
-- Query optimization
+### In Development
+- **Python Atomic Operations**: Batch operations for Python API
+- **Enhanced Persistence**: Full AOF replay and compaction
+- **Performance Optimizations**: Spatial index improvements
+- **Additional Spatial Types**: Polygons, lines, and complex geometries
+
+### Performance Characteristics
+Based on current benchmarks:
+- **Key-value operations**: ~1.6M ops/sec (600ns per operation)
+- **Spatial insertions**: ~1.9M points/sec (530ns per operation)
+- **Spatial queries**: ~225K queries/sec (4.4μs per operation)
+- **Memory efficiency**: Optimized in-memory storage with spatial indexing
+
+### Production Readiness
+- **Alpha Status**: API is stabilizing but may have breaking changes
+- **Testing**: Comprehensive test suite with 20 unit tests and 13 integration tests
+- **Documentation**: Complete API documentation and examples
+- **Benchmarks**: Performance regression testing in place
+- **Language Support**: Rust (native) and Python (bindings)
 
 ## Contributing
 
@@ -353,7 +369,7 @@ cargo fmt
 
 ## License
 
-MIT License ([LICENSE-MIT](LICENSE-MIT))
+MIT License ([LICENSE](LICENSE))
 
 ## Acknowledgments
 

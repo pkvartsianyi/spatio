@@ -4,16 +4,17 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a blazingly fast, embedded spatio-temporal database written in Rust. Spatio brings high-performance spatial operations and geographic data management to Python with minimal overhead.
+Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a high-performance, embedded spatio-temporal database written in Rust. Spatio brings spatial operations and geographic data management to Python with minimal overhead.
+
 
 ## Features
 
-**High Performance**: Built on Rust for maximum speed and memory efficiency
-**Spatial Operations**: Geographic point storage with automatic spatial indexing
-**Trajectory Tracking**: Store and query movement data over time
-**TTL Support**: Automatic data expiration with time-to-live
-**Thread-Safe**: Concurrent access with atomic operations
-**Persistent Storage**: Optional file-based persistence
+- **High Performance**: Built on Rust for maximum speed and memory efficiency
+- **Spatial Operations**: Geographic point storage with automatic spatial indexing
+- **Trajectory Tracking**: Store and query movement data over time
+- **TTL Support**: Automatic data expiration with time-to-live
+- **Thread-Safe**: Concurrent access (atomic operations coming soon for Python)
+- **Persistent Storage**: Optional file-based persistence
 ## Installation
 
 ### From PyPI (Recommended)
@@ -203,7 +204,7 @@ time.sleep(6)
 print("After TTL:", db.get(b"session:temp"))  # None
 ```
 
-### Atomic Operations
+### Sequential Operations
 
 ```python
 import spatio
@@ -268,10 +269,10 @@ Spatio-Py is built for high performance:
 
 Basic performance characteristics (your results may vary):
 
-- **Key-value operations**: >1M ops/sec
-- **Spatial insertions**: >100K points/sec
-- **Spatial queries**: >10K queries/sec
-- **Memory usage**: ~1KB per 1000 points
+- **Key-value operations**: ~1.6M ops/sec (600ns per operation)
+- **Spatial insertions**: ~1.9M points/sec (530ns per operation)
+- **Spatial queries**: ~225K queries/sec (4.4μs per operation)
+- **Memory usage**: Efficient in-memory storage with spatial indexing
 
 ## Development
 
@@ -351,7 +352,7 @@ just check
 | `insert(key, value, options=None)` | Store key-value pair |
 | `get(key)` | Retrieve value by key |
 | `delete(key)` | Remove key and return old value |
-| `atomic(func)` | Execute operations atomically |
+| *(atomic operations coming soon)* | Execute operations atomically |
 | `sync()` | Force sync to disk |
 | `stats()` | Get database statistics |
 
@@ -391,6 +392,15 @@ try:
 except RuntimeError as e:
     print(f"Database error: {e}")
 ```
+
+## Project Status
+
+Spatio-Python is in **alpha development**:
+- ✅ Core spatial operations implemented
+- ✅ Complete Python API via PyO3 bindings
+- ✅ TTL and persistence support
+- 🚧 Atomic operations (coming soon)
+- 🚧 Enhanced spatial types (polygons, etc.)
 
 ## License
 
