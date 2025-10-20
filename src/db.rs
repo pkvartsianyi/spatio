@@ -5,12 +5,12 @@ use crate::persistence::{AOFCommand, AOFFile};
 use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions};
 use bytes::Bytes;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 
-/// Main Spatio database structure providing thread-safe spatial and temporal data storage.
+/// Main Spatio database structure providing spatial and temporal data storage.
 ///
 /// The `DB` struct is the core of Spatio, offering:
 /// - Key-value storage with spatial indexing
@@ -61,9 +61,8 @@ use std::time::SystemTime;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
 pub struct DB {
-    inner: Arc<RwLock<DBInner>>,
+    inner: RefCell<DBInner>,
 }
 
 pub(crate) struct DBInner {
@@ -143,13 +142,13 @@ impl DB {
 
         // Initialize persistence if not in-memory
         if !is_memory {
-            let aof_file = AOFFile::open(path)?;
-            inner.load_from_aof(&aof_file)?;
+            let mut aof_file = AOFFile::open(path)?;
+            inner.load_from_aof(&mut aof_file)?;
             inner.aof_file = Some(aof_file);
         }
 
         Ok(DB {
-            inner: Arc::new(RwLock::new(inner)),
+            inner: RefCell::new(inner),
         })
     }
 
@@ -250,7 +249,7 @@ impl DB {
     where
         F: FnOnce(&mut AtomicBatch) -> Result<R>,
     {
-        let mut batch = AtomicBatch::new(self.clone());
+        let mut batch = AtomicBatch::new(self);
         let result = f(&mut batch)?;
         batch.commit()?;
         Ok(result)
@@ -650,12 +649,14 @@ impl DB {
     }
 
     // Internal helper methods
-    fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        self.inner.read().map_err(|_| SpatioError::LockError)
+    fn read(&self) -> Result<Ref<'_, DBInner>> {
+        self.inner.try_borrow().map_err(|_| SpatioError::LockError)
     }
 
-    pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        self.inner.write().map_err(|_| SpatioError::LockError)
+    pub(crate) fn write(&self) -> Result<RefMut<'_, DBInner>> {
+        self.inner
+            .try_borrow_mut()
+            .map_err(|_| SpatioError::LockError)
     }
 }
 
@@ -718,9 +719,10 @@ impl DBInner {
     }
 
     /// Load data from AOF file
-    pub fn load_from_aof(&mut self, aof_file: &AOFFile) -> Result<()> {
-        let mut aof_file = aof_file.clone();
-        aof_file.replay(|command| {
+    pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
+        let commands = aof_file.replay()?;
+
+        for command in commands {
             match command {
                 AOFCommand::Set {
                     key,
@@ -760,8 +762,7 @@ impl DBInner {
                     }
                 }
             }
-            Ok(())
-        })?;
+        }
 
         self.stats.key_count = self.keys.len();
         Ok(())

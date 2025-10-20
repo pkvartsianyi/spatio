@@ -317,14 +317,12 @@ fn demonstrate_aof_improvements() -> Result<()> {
     // Write some data to trigger potential rewrite
     println!("\nWriting data to AOF...");
     for i in 0..20 {
-        let key = format!("key_{}", i).into_bytes().into();
-        let value = format!("value_{}_with_some_extra_data_to_increase_size", i)
-            .into_bytes()
-            .into();
-        aof.write_set(&key, &value, None)?;
+        let key = format!("key_{}", i);
+        let value = format!("value_{}_with_some_extra_data_to_increase_size", i);
+        aof.write_set(key.as_bytes(), value.as_bytes(), None)?;
     }
 
-    let current_size = aof.size()?;
+    let current_size = aof.size();
     println!("Current AOF size: {} bytes", current_size);
 
     if aof.is_rewrite_in_progress() {

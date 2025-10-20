@@ -27,13 +27,13 @@ use bytes::Bytes;
 /// # Ok(())
 /// # }
 /// ```
-pub struct AtomicBatch {
-    db: DB,
-    operations: Vec<Operation>,
+pub struct AtomicBatch<'a> {
+    db: &'a DB,
+    operations: Vec<BatchOperation>,
 }
 
 #[derive(Debug, Clone)]
-enum Operation {
+enum BatchOperation {
     Insert {
         key: Bytes,
         value: Bytes,
@@ -44,8 +44,8 @@ enum Operation {
     },
 }
 
-impl AtomicBatch {
-    pub(crate) fn new(db: DB) -> Self {
+impl<'a> AtomicBatch<'a> {
+    pub(crate) fn new(db: &'a DB) -> Self {
         Self {
             db,
             operations: Vec::new(),
@@ -87,7 +87,7 @@ impl AtomicBatch {
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let op = Operation::Insert {
+        let op = BatchOperation::Insert {
             key: Bytes::copy_from_slice(key.as_ref()),
             value: Bytes::copy_from_slice(value.as_ref()),
             opts,
@@ -125,7 +125,7 @@ impl AtomicBatch {
     /// # }
     /// ```
     pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<()> {
-        let op = Operation::Delete {
+        let op = BatchOperation::Delete {
             key: Bytes::copy_from_slice(key.as_ref()),
         };
         self.operations.push(op);
@@ -142,7 +142,7 @@ impl AtomicBatch {
 
         for operation in &self.operations {
             match operation {
-                Operation::Insert { key, value, opts } => {
+                BatchOperation::Insert { key, value, opts } => {
                     let item = match opts {
                         Some(SetOptions { ttl: Some(ttl), .. }) => {
                             crate::types::DbItem::with_ttl(value.clone(), *ttl)
@@ -155,7 +155,7 @@ impl AtomicBatch {
                     };
                     inner.insert_item(key.clone(), item);
                 }
-                Operation::Delete { key } => {
+                BatchOperation::Delete { key } => {
                     inner.remove_item(key);
                 }
             }
@@ -164,10 +164,10 @@ impl AtomicBatch {
         // Write operations to AOF if needed
         for operation in &self.operations {
             match operation {
-                Operation::Insert { key, value, opts } => {
+                BatchOperation::Insert { key, value, opts } => {
                     inner.write_to_aof_if_needed(key, value.as_ref(), opts.as_ref())?;
                 }
-                Operation::Delete { key } => {
+                BatchOperation::Delete { key } => {
                     inner.write_delete_to_aof_if_needed(key)?;
                 }
             }

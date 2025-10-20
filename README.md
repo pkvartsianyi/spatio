@@ -21,21 +21,21 @@
   </a>
 </p>
 
-**Spatio** is a high-performance, embedded spatial database designed for applications that need to store and query location-based data efficiently. Built with a clean architecture and extensible design, Spatio provides powerful spatial operations with configurable storage backends and multi-tenant support.
+**Spatio** is a high-performance, embedded spatial database designed for applications that need to store and query location-based data efficiently. Built with a simple, SQLite-like architecture, Spatio provides powerful spatial operations optimized for single-threaded embedded use cases.
 
 ## Features
 
-### **Flexible Architecture**
-- **Storage Backend Abstraction**: Pluggable storage with Memory and AOF backends
-- **Namespace Support**: Data isolation with automatic key prefixing
-- **Feature Flags**: Compile only what you need (serde, geojson, aof, toml)
-- **Configurable**: JSON/TOML serializable configuration
+### **Embedded-First Design**
+- **Simple Architecture**: Single-instance, RefCell-based design for embedded use
+- **SQLite-like API**: Familiar open/close/read/write model
+- **Minimal Dependencies**: No complex thread coordination or global state
+- **Synchronous by Default**: Predictable behavior, background operations opt-in
 
 ### **High Performance**
 - **Fast Key-Value Storage**: ~1.6M ops/sec with optimized in-memory operations
 - **Automatic Spatial Indexing**: Geographic points indexed with geohash for efficient queries
-- **Concurrent Access**: Thread-safe operations with read-write locks
-- **Background AOF Rewriting**: Automatic file compaction with size thresholds
+- **Low Overhead**: No unnecessary locking or coordination complexity
+- **Optional AOF Rewriting**: Configurable file compaction with size thresholds
 
 ### **Spatial Operations**
 - **Spatial Queries**: Find nearby points, check intersections, and query bounding boxes
@@ -46,8 +46,8 @@
 ### **Data Management**
 - **TTL Support**: Built-in data expiration for temporary data
 - **Atomic Operations**: Batch multiple operations for data consistency
-- **Persistence**: Optional append-only file format with background optimization
-- **Embedded**: No external dependencies or setup required
+- **Persistence**: Optional append-only file format with configurable optimization
+- **Truly Embedded**: No external dependencies, no servers, no setup required
 
 ## Installation
 

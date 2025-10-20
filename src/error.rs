@@ -13,6 +13,14 @@ pub enum SpatioError {
     SerializationError,
     /// Serialization error with context
     SerializationErrorWithContext(String),
+    /// Rewrite operation is already in progress
+    RewriteInProgress,
+    /// Invalid timestamp value
+    InvalidTimestamp,
+    /// Unexpected end of file during deserialization
+    UnexpectedEof,
+    /// Invalid data format
+    InvalidFormat,
     /// I/O error from persistence layer
     Io(std::io::Error),
     /// Generic error with message
@@ -29,6 +37,10 @@ impl fmt::Display for SpatioError {
             SpatioError::SerializationErrorWithContext(context) => {
                 write!(f, "Serialization error: {}", context)
             }
+            SpatioError::RewriteInProgress => write!(f, "Rewrite operation is already in progress"),
+            SpatioError::InvalidTimestamp => write!(f, "Invalid timestamp value"),
+            SpatioError::UnexpectedEof => write!(f, "Unexpected end of file"),
+            SpatioError::InvalidFormat => write!(f, "Invalid data format"),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),
         }
