@@ -118,13 +118,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - uses: dtolnay/rust-toolchain@stable
-      - working-directory: py-spatio
+      - name: Build and test Python package
         run: |
+          cd py-spatio
           python -m pip install --upgrade pip
           pip install maturin pytest -r requirements-dev.txt
+
+          echo "Building wheel..."
           maturin build --out dist --interpreter python --verbose
           pip install dist/*.whl --force-reinstall --no-deps
-          pytest -v --tb=short -x --maxfail=5
+
+          echo "Running tests..."
+          cd ..
+          pytest py-spatio/tests -v --tb=short -x --maxfail=5
 
   run-tests:
     name: Run Tests Stage
