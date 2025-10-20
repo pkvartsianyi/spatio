@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use spatio::{Point, SetOptions, Spatio};
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 fn benchmark_basic_operations(c: &mut Criterion) {
@@ -159,32 +158,22 @@ fn benchmark_trajectory_operations(c: &mut Criterion) {
 fn benchmark_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_operations");
 
-    let db = std::sync::Arc::new(Spatio::memory().unwrap());
+    let db = Spatio::memory().unwrap();
 
     // Benchmark concurrent inserts
-    group.bench_function("concurrent_inserts", |b| {
-        let counter = std::sync::Arc::new(AtomicU64::new(0));
+    group.bench_function("sequential_inserts", |b| {
+        let mut counter = 0u64;
         b.iter(|| {
-            let handles: Vec<_> = (0..10)
-                .map(|thread_id| {
-                    let db_clone = db.clone();
-                    let counter_clone = counter.clone();
-                    std::thread::spawn(move || {
-                        for i in 0..10 {
-                            let id =
-                                counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            let key = format!("concurrent:{}:{}", thread_id, i);
-                            let value = format!("value:{}", id);
-                            db_clone.insert(&key, value.as_bytes(), None).unwrap();
-                        }
-                    })
-                })
-                .collect();
-
-            for handle in handles {
-                handle.join().unwrap();
+            for thread_id in 0..10 {
+                for i in 0..10 {
+                    let id = counter;
+                    counter += 1;
+                    let key = format!("sequential:{}:{}", thread_id, i);
+                    let value = format!("value:{}", id);
+                    db.insert(&key, value.as_bytes(), None).unwrap();
+                }
             }
-        })
+        });
     });
 
     group.finish();

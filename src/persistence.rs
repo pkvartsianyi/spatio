@@ -528,9 +528,11 @@ mod tests {
     #[test]
     fn test_synchronous_rewrite() {
         let temp_file = NamedTempFile::new().unwrap();
-        let mut config = AOFConfig::default();
-        config.rewrite_size_threshold = 100; // Small threshold
-        config.background_rewrite = false; // Synchronous
+        let config = AOFConfig {
+            rewrite_size_threshold: 100, // Small threshold
+            background_rewrite: false,   // Synchronous
+            ..Default::default()
+        };
 
         let mut aof = AOFFile::open_with_config(temp_file.path(), config).unwrap();
 

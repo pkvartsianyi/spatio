@@ -12,7 +12,7 @@ fn test_aof_rewrite_functionality() {
 
     // Write data using simple key-value pairs to avoid spatial indexing issues
     for i in 0..50 {
-        db.insert(&format!("key_{}", i), &format!("value_{}", i), None)
+        db.insert(format!("key_{}", i), format!("value_{}", i), None)
             .unwrap();
     }
 
@@ -21,13 +21,13 @@ fn test_aof_rewrite_functionality() {
 
     // Write more data to trigger potential rewrite
     for i in 50..100 {
-        db.insert(&format!("key_{}", i), &format!("value_{}", i), None)
+        db.insert(format!("key_{}", i), format!("value_{}", i), None)
             .unwrap();
     }
 
     // Add more data after potential rewrite
     for i in 100..150 {
-        db.insert(&format!("key_{}", i), &format!("value_{}", i), None)
+        db.insert(format!("key_{}", i), format!("value_{}", i), None)
             .unwrap();
     }
 
