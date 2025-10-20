@@ -32,6 +32,9 @@ pub trait StorageBackend: Send + Sync {
     fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Bytes>>;
 
     /// Get all key-value pairs with a given prefix
+    ///
+    /// This operation should be implemented efficiently using range scans
+    /// rather than linear iteration for optimal performance.
     fn scan_prefix(&self, prefix: &[u8]) -> Result<BTreeMap<Bytes, DbItem>>;
 
     /// Get the total number of keys
@@ -148,21 +151,106 @@ impl StorageBackend for MemoryBackend {
 
     fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Bytes>> {
         let mut keys = Vec::new();
-        for key in self.data.keys() {
+
+        if prefix.is_empty() {
+            // If prefix is empty, return all keys
+            for key in self.data.keys() {
+                keys.push(key.clone());
+            }
+            return Ok(keys);
+        }
+
+        // Compute the upper bound for the range scan
+        let mut prefix_end = prefix.to_vec();
+
+        // Find the last non-0xFF byte and increment it
+        while let Some(last_byte) = prefix_end.pop() {
+            if last_byte < 255 {
+                prefix_end.push(last_byte + 1);
+                break;
+            }
+        }
+
+        // Use BTreeMap's range() for efficient iteration over only matching keys
+        let range = if prefix_end.len() < prefix.len() {
+            // All trailing bytes were 0xFF, scan from prefix to end
+            self.data.range(Bytes::from(prefix.to_vec())..)
+        } else {
+            // Normal case: scan from prefix to computed upper bound
+            self.data
+                .range(Bytes::from(prefix.to_vec())..Bytes::from(prefix_end))
+        };
+
+        for (key, _) in range {
+            // Defensive check: should always be true with correct range bounds
             if key.starts_with(prefix) {
                 keys.push(key.clone());
             }
         }
+
         Ok(keys)
     }
 
+    /// Efficiently scan for all key-value pairs with a given prefix using BTreeMap range operations.
+    ///
+    /// This implementation uses O(log n + k) complexity where n is the total number of keys
+    /// and k is the number of matching keys, rather than O(n) linear scan.
+    ///
+    /// The algorithm works by:
+    /// 1. Computing an upper bound key (prefix with last byte incremented)
+    /// 2. Using BTreeMap's range() method to iterate only over the relevant key range
+    /// 3. Handling edge cases like prefixes ending in 0xFF bytes
+    ///
+    /// Examples:
+    /// - prefix "abc" -> range ["abc", "abd")
+    /// - prefix "test\xFF" -> range ["test\xFF", "tesu")
+    /// - prefix "abc\xFF\xFF" -> range ["abc\xFF\xFF", "abd")
     fn scan_prefix(&self, prefix: &[u8]) -> Result<BTreeMap<Bytes, DbItem>> {
         let mut result = BTreeMap::new();
-        for (key, item) in &self.data {
+
+        if prefix.is_empty() {
+            // If prefix is empty, return all keys
+            for (key, item) in &self.data {
+                result.insert(key.clone(), item.clone());
+            }
+            return Ok(result);
+        }
+
+        // Compute the upper bound for the range scan
+        // We need to find the next possible key after all keys with this prefix
+        let mut prefix_end = prefix.to_vec();
+
+        // Find the last non-0xFF byte and increment it
+        // This creates the smallest key that is lexicographically greater than
+        // any key that could start with the given prefix
+        while let Some(last_byte) = prefix_end.pop() {
+            if last_byte < 255 {
+                prefix_end.push(last_byte + 1);
+                break;
+            }
+            // If the byte is 0xFF, remove it and continue to the previous byte
+            // This handles cases like prefix "abc\xFF\xFF" -> upper bound "abd"
+        }
+
+        // Use BTreeMap's range() for efficient iteration over only matching keys
+        let range = if prefix_end.len() < prefix.len() {
+            // All trailing bytes were 0xFF, scan from prefix to end of map
+            // Example: prefix "\xFF\xFF\xFF" scans to end
+            self.data.range(Bytes::from(prefix.to_vec())..)
+        } else {
+            // Normal case: scan from prefix to computed upper bound (exclusive)
+            // Example: prefix "abc" scans range ["abc", "abd")
+            self.data
+                .range(Bytes::from(prefix.to_vec())..Bytes::from(prefix_end))
+        };
+
+        for (key, item) in range {
+            // Defensive check: should always be true with correct range bounds
             if key.starts_with(prefix) {
                 result.insert(key.clone(), item.clone());
             }
         }
+
         Ok(result)
     }
 
@@ -411,6 +499,107 @@ mod tests {
 
         let scan_result = backend.scan_prefix(b"prefix:").unwrap();
         assert_eq!(scan_result.len(), 2);
+    }
+
+    #[test]
+    fn test_prefix_scan_edge_cases() {
+        let mut backend = MemoryBackend::new();
+        let item = DbItem {
+            value: b"value".to_vec().into(),
+            expires_at: None,
+        };
+
+        // Test empty prefix
+        backend.put(b"a", &item).unwrap();
+        backend.put(b"b", &item).unwrap();
+        let all_keys = backend.scan_prefix(b"").unwrap();
+        assert_eq!(all_keys.len(), 2);
+
+        // Test prefix with 0xFF bytes
+        backend.put(b"test\xff\xffa", &item).unwrap();
+        backend.put(b"test\xff\xffb", &item).unwrap();
+        backend.put(b"test\xff\xff\xff", &item).unwrap();
+        backend.put(b"testb", &item).unwrap();
+
+        let xff_prefix_scan = backend.scan_prefix(b"test\xff\xff").unwrap();
+        assert_eq!(xff_prefix_scan.len(), 3); // Should match all test\xff\xff* keys
+
+        // Test exact prefix boundaries
+        backend.put(b"abc", &item).unwrap();
+        backend.put(b"abcd", &item).unwrap();
+        backend.put(b"abd", &item).unwrap();
+
+        let abc_scan = backend.scan_prefix(b"abc").unwrap();
+        assert_eq!(abc_scan.len(), 2); // abc and abcd, not abd
+
+        // Test prefix that matches no keys
+        let no_match_scan = backend.scan_prefix(b"nonexistent").unwrap();
+        assert_eq!(no_match_scan.len(), 0);
+
+        // Test single character prefix
+        let a_prefix_scan = backend.scan_prefix(b"a").unwrap();
+        assert_eq!(a_prefix_scan.len(), 4); // abc, abcd, abd, and original "a"
+    }
+
+    #[test]
+    fn test_prefix_scan_ordering() {
+        let mut backend = MemoryBackend::new();
+        let item = DbItem {
+            value: b"value".to_vec().into(),
+            expires_at: None,
+        };
+
+        // Insert keys in non-sorted order
+        backend.put(b"prefix:z", &item).unwrap();
+        backend.put(b"prefix:a", &item).unwrap();
+        backend.put(b"prefix:m", &item).unwrap();
+        backend.put(b"different:key", &item).unwrap();
+
+        let scan_result = backend.scan_prefix(b"prefix:").unwrap();
+        assert_eq!(scan_result.len(), 3);
+
+        // Verify keys are returned in sorted order (BTreeMap property)
+        let keys: Vec<_> = scan_result.keys().collect();
+        assert_eq!(keys[0].as_ref(), b"prefix:a");
+        assert_eq!(keys[1].as_ref(), b"prefix:m");
+        assert_eq!(keys[2].as_ref(), b"prefix:z");
+    }
+
+    #[test]
+    fn test_prefix_scan_performance_demo() {
+        let mut backend = MemoryBackend::new();
+        let item = DbItem {
+            value: b"value".to_vec().into(),
+            expires_at: None,
+        };
+
+        // Insert a large number of keys with different prefixes
+        // This demonstrates the efficiency of range-based prefix scanning
+        for i in 0..1000 {
+            // Keys with "target:" prefix (what we'll search for)
+            if i < 10 {
+                let key = format!("target:key_{:03}", i);
+                backend.put(key.as_bytes(), &item).unwrap();
+            }
+
+            // Many keys with other prefixes (noise)
+            let noise_key = format!("noise_{:03}:data", i);
+            backend.put(noise_key.as_bytes(), &item).unwrap();
+
+            let other_key = format!("zzz_other_{:03}", i);
+            backend.put(other_key.as_bytes(), &item).unwrap();
+        }
+
+        // The optimized prefix scan should efficiently find only the 10 target keys
+        // without scanning through all 2010 keys in the database
+        let target_scan = backend.scan_prefix(b"target:").unwrap();
+        assert_eq!(target_scan.len(), 10);
+
+        let target_keys = backend.keys_with_prefix(b"target:").unwrap();
+        assert_eq!(target_keys.len(), 10);
+
+        // Verify we can find keys efficiently even with a large dataset
+        assert_eq!(backend.data.len(), 2010); // Total keys in database
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Version Management Scripts
 
-This directory contains scripts for managing versions and releases in the SpatioLite project.
+This directory contains scripts for managing versions and releases in the Spatio project.
 
 ## Scripts
 

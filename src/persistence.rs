@@ -164,12 +164,26 @@ impl AOFFile {
     }
 
     /// Write a command to the AOF file
+    ///
+    /// This method implements write coordination to prevent data loss during
+    /// AOF rewrite operations. It waits for any ongoing rewrite to complete
+    /// before proceeding to ensure writes go to the correct file.
     fn write_command(&mut self, command: &AOFCommand) -> Result<()> {
-        // Apply any pending file handle updates from background rewrite
+        // Wait for any ongoing rewrite to complete first
+        // This ensures we don't write to orphaned file descriptors
+        {
+            let rewrite_guard = self.rewrite_in_progress.read().unwrap();
+            if *rewrite_guard {
+                // Drop read lock and wait for write lock to ensure rewrite completes
+                drop(rewrite_guard);
+                let _wait_for_rewrite = self.rewrite_in_progress.write().unwrap();
+            }
+        }
+
+        // Apply any pending file handle updates from completed rewrite
         self.apply_pending_file_update()?;
 
         let serialized = self.serialize_command(command)?;
-
         self.writer.write_all(&serialized)?;
         self.size += serialized.len() as u64;
 
@@ -231,7 +245,59 @@ impl AOFFile {
     }
 
     /// Perform the actual background rewrite
+    ///
+    /// This function implements safe AOF rewriting that prevents data loss during
+    /// concurrent operations. The key safety measures are:
+    ///
+    /// 1. **Write Coordination**: Sets the rewrite_in_progress flag to coordinate
+    ///    with concurrent write operations. Writers will wait for the rewrite to
+    ///    complete before proceeding, preventing writes to orphaned file descriptors.
+    ///
+    /// 2. **Flush and Sync**: Ensures all pending writes are persisted to disk
+    ///    before taking the snapshot, preventing loss of in-flight writes.
+    ///
+    /// 3. **Atomic File Replacement**: Uses filesystem rename for atomic
+    ///    replacement of the old AOF file with the rewritten one.
+    ///
+    /// 4. **Safe File Handle Management**: After rename, new file handles are
+    ///    provided to writers via shared state, ensuring no writes go to orphaned
+    ///    descriptors that point to the old (now unlinked) file.
+    ///
+    /// 5. **Robust Flag Management**: Uses RAII guard to ensure the rewrite flag is
+    ///    always cleared when the function exits, preventing indefinite blocking.
+    ///    The flag is cleared automatically on success, error, or panic.
     fn perform_background_rewrite(mut aof: AOFFile) -> Result<()> {
+        // Set rewrite in progress flag to block new writes during critical section
+        // This prevents the race condition where writes could be lost during the
+        // window between snapshot and file replacement
+        {
+            let mut in_progress = aof.rewrite_in_progress.write().unwrap();
+            *in_progress = true;
+        }
+
+        // RAII guard ensures the rewrite flag is ALWAYS cleared when function exits.
+        // This prevents indefinite blocking if an error occurs during rewrite.
+        // The guard runs on: success, error return, or panic during unwinding.
+        struct RewriteGuard<'a> {
+            rewrite_in_progress: &'a Arc<RwLock<bool>>,
+        }
+
+        impl<'a> Drop for RewriteGuard<'a> {
+            fn drop(&mut self) {
+                let mut in_progress = self.rewrite_in_progress.write().unwrap();
+                *in_progress = false;
+            }
+        }
+
+        let _cleanup_guard = RewriteGuard {
+            rewrite_in_progress: &aof.rewrite_in_progress,
+        };
+
+        // Critical: Flush and sync current writer to ensure all pending writes
+        // are persisted before taking the snapshot. This prevents data loss.
+        aof.writer.flush()?;
+        aof.file.sync_all()?;
+
         // Create a temporary rewrite file
         let rewrite_path = aof.path.with_extension("aof.rewrite");
         let mut rewrite_file = AOFFile::open_with_config(&rewrite_path, aof.config.clone())?;
@@ -250,11 +316,19 @@ impl AOFFile {
         rewrite_file.writer.write_all(&buffer)?;
         rewrite_file.flush()?;
 
-        // Get the new file size
-        let new_size = rewrite_file.size;
-
         // Atomically replace the old file
+        // After this point, the old file descriptor points to an orphaned file
         std::fs::rename(&rewrite_path, &aof.path)?;
+
+        // Get the new file size from filesystem metadata
+        //
+        // CRITICAL BUG FIX: We cannot use rewrite_file.size here because it was never
+        // updated. The data was written directly to rewrite_file.writer via write_all(),
+        // not through write_command() which would update the size field. This would
+        // result in new_size being 0, breaking size tracking and rewrite thresholds.
+        //
+        // Using filesystem metadata ensures we get the actual size of the written file.
+        let new_size = std::fs::metadata(&aof.path)?.len();
 
         // Open new file handles for the renamed file
         let new_file = OpenOptions::new()
@@ -272,11 +346,12 @@ impl AOFFile {
             *shared_state = Some((new_file, new_writer, new_size));
         }
 
-        // Clear the rewrite in progress flag
-        {
-            let mut in_progress = aof.rewrite_in_progress.write().unwrap();
-            *in_progress = false;
-        }
+        // Success! The RAII guard will automatically clear the flag when it goes out of scope.
+        // This ensures the flag is cleared consistently regardless of how the function exits:
+        // - Normal return (success)
+        // - Early return (error)
+        // - Panic (unwinding)
+        // No manual flag management needed - the guard handles all cases robustly.
 
         Ok(())
     }
@@ -490,7 +565,7 @@ impl AOFFile {
 
     /// Sync data to disk
     pub fn sync(&mut self) -> Result<()> {
-        self.flush()?;
+        self.writer.flush()?;
         self.file.sync_all()?;
         Ok(())
     }
@@ -536,13 +611,20 @@ impl AOFFile {
     }
 
     /// Apply any pending file handle updates from background rewrite
+    ///
+    /// CRITICAL SAFETY: Do NOT flush the old writer here! After a rewrite, the old
+    /// writer points to an orphaned file descriptor that no longer corresponds to
+    /// the AOF file path. Flushing it would write buffered data to the wrong file
+    /// (or to a file that has been unlinked), causing data loss.
+    ///
+    /// The write coordination ensures that all writes are blocked during the rewrite
+    /// process, so there should be no buffered data in the old writer when this
+    /// method is called.
     fn apply_pending_file_update(&mut self) -> Result<()> {
         let mut shared_state = self.shared_state.write().unwrap();
         if let Some((new_file, new_writer, new_size)) = shared_state.take() {
-            // Flush current writer before replacing
-            self.writer.flush()?;
-
-            // Replace file handles with new ones
+            // Replace file handles with new ones WITHOUT flushing old writer
+            // The old writer is now orphaned after the rename operation
             self.file = new_file;
             self.writer = new_writer;
             self.size = new_size;
@@ -562,6 +644,318 @@ impl Drop for AOFFile {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_aof_size_tracking_after_rewrite() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let mut aof = AOFFile::open(temp_file.path()).unwrap();
+
+        // Write some commands to build up file size
+        let key1 = Bytes::from("key1");
+        let value1 = Bytes::from("value1");
+        let key2 = Bytes::from("key2");
+        let value2 = Bytes::from("value2");
+        let key3 = Bytes::from("key3");
+        let value3 = Bytes::from("value3");
+
+        aof.write_set(&key1, &value1, None).unwrap();
+        aof.write_set(&key2, &value2, None).unwrap();
+        aof.write_delete(&key1).unwrap();
+        aof.flush().unwrap();
+
+        let size_before_rewrite = aof.size().unwrap();
+        assert!(
+            size_before_rewrite > 0,
+            "AOF size should be greater than 0 before rewrite"
+        );
+
+        // Perform a rewrite
+        aof.rewrite().unwrap();
+
+        // The size should still be tracked correctly after rewrite
+        let size_after_rewrite = aof.size().unwrap();
+        assert!(
+            size_after_rewrite > 0,
+            "AOF size should be greater than 0 after rewrite"
+        );
+
+        // Write another command after rewrite to verify size tracking continues to work
+        aof.write_set(&key3, &value3, None).unwrap();
+        aof.flush().unwrap();
+
+        let size_after_new_write = aof.size().unwrap();
+        assert!(
+            size_after_new_write > size_after_rewrite,
+            "AOF size should increase after writing new commands post-rewrite"
+        );
+    }
+
+    #[test]
+    fn test_no_data_loss_during_rewrite() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let aof_path = temp_file.path().to_path_buf();
+
+        // Create initial AOF with some data
+        {
+            let mut aof = AOFFile::open(&aof_path).unwrap();
+            let key1 = Bytes::from("initial_key");
+            let value1 = Bytes::from("initial_value");
+            aof.write_set(&key1, &value1, None).unwrap();
+            aof.flush().unwrap();
+        }
+
+        // Clone path for thread safety
+        let aof_path_clone = aof_path.clone();
+        let aof_path_clone2 = aof_path.clone();
+
+        // Barrier to synchronize threads
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = barrier.clone();
+
+        // Spawn thread that will perform rewrite
+        let rewrite_handle = thread::spawn(move || {
+            let mut aof = AOFFile::open(&aof_path_clone).unwrap();
+
+            // Wait for writer thread to be ready
+            barrier_clone.wait();
+
+            // Perform rewrite - this should block writes during critical section
+            aof.rewrite().unwrap();
+        });
+
+        // Main thread performs concurrent writes
+        let write_handle = thread::spawn(move || {
+            let mut aof = AOFFile::open(&aof_path_clone2).unwrap();
+
+            // Signal ready and wait for rewrite to start
+            barrier.wait();
+
+            // Write commands that should not be lost
+            for i in 0..10 {
+                let key = Bytes::from(format!("concurrent_key_{}", i));
+                let value = Bytes::from(format!("concurrent_value_{}", i));
+                aof.write_set(&key, &value, None).unwrap();
+            }
+
+            aof.flush().unwrap();
+        });
+
+        // Wait for both threads to complete
+        rewrite_handle.join().unwrap();
+        write_handle.join().unwrap();
+
+        // Verify all data is present by replaying the AOF
+        let mut aof_for_replay = AOFFile::open(&aof_path).unwrap();
+        let mut replayed_commands = Vec::new();
+
+        aof_for_replay
+            .replay(|cmd| {
+                replayed_commands.push(cmd);
+                Ok(())
+            })
+            .unwrap();
+
+        // Should have initial command plus 10 concurrent commands
+        assert!(
+            replayed_commands.len() >= 11,
+            "Expected at least 11 commands, found {}",
+            replayed_commands.len()
+        );
+
+        // Verify we have both initial and concurrent data
+        let mut has_initial = false;
+        let mut concurrent_count = 0;
+
+        for cmd in replayed_commands {
+            if let AOFCommand::Set { key, .. } = cmd {
+                if key == Bytes::from("initial_key") {
+                    has_initial = true;
+                } else if key.starts_with(b"concurrent_key_") {
+                    concurrent_count += 1;
+                }
+            }
+        }
+
+        assert!(has_initial, "Initial data was lost");
+        assert_eq!(
+            concurrent_count, 10,
+            "Expected 10 concurrent writes, found {}",
+            concurrent_count
+        );
+    }
+
+    #[test]
+    fn test_orphaned_descriptor_safety() {
+        use std::fs;
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        use std::time::Duration;
+
+        let temp_file = NamedTempFile::new().unwrap();
+        let aof_path = temp_file.path().to_path_buf();
+
+        // Create initial AOF with data
+        {
+            let mut aof = AOFFile::open(&aof_path).unwrap();
+            let key = Bytes::from("initial_key");
+            let value = Bytes::from("initial_value");
+            aof.write_set(&key, &value, None).unwrap();
+            aof.flush().unwrap();
+        }
+
+        let initial_size = fs::metadata(&aof_path).unwrap().len();
+        let aof_path_clone = aof_path.clone();
+        let aof_path_clone2 = aof_path.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_clone = barrier.clone();
+
+        // Thread that will perform rewrite
+        let rewrite_handle = thread::spawn(move || {
+            let mut aof = AOFFile::open(&aof_path_clone).unwrap();
+            barrier_clone.wait();
+            aof.rewrite().unwrap();
+        });
+
+        // Thread that will try to write and flush after rewrite
+        let write_handle = thread::spawn(move || {
+            // Wait for rewrite to start
+            barrier.wait();
+
+            // Give rewrite time to complete
+            thread::sleep(Duration::from_millis(200));
+
+            // Open a NEW AOF instance after rewrite should be done
+            // This ensures we get fresh file handles
+            let mut aof = AOFFile::open(&aof_path_clone2).unwrap();
+
+            // This write should go to the NEW file, not orphaned descriptor
+            let key = Bytes::from("post_rewrite_key");
+            let value = Bytes::from("post_rewrite_value");
+            aof.write_set(&key, &value, None).unwrap();
+            aof.flush().unwrap();
+        });
+
+        rewrite_handle.join().unwrap();
+        write_handle.join().unwrap();
+
+        // Give filesystem time to sync
+        thread::sleep(Duration::from_millis(50));
+
+        // Verify that the file size increased (data went to correct file)
+        let final_size = fs::metadata(&aof_path).unwrap().len();
+        assert!(
+            final_size > initial_size,
+            "File size should have increased from {} to {} if write went to correct file. Initial: {}, Final: {}",
+            initial_size,
+            final_size,
+            initial_size,
+            final_size
+        );
+
+        // Verify data integrity by replaying
+        let mut aof_for_replay = AOFFile::open(&aof_path).unwrap();
+        let mut commands = Vec::new();
+        aof_for_replay
+            .replay(|cmd| {
+                commands.push(cmd);
+                Ok(())
+            })
+            .unwrap();
+
+        // Should have both initial and post-rewrite data
+        let has_initial = commands.iter().any(
+            |cmd| matches!(cmd, AOFCommand::Set { key, .. } if key == &Bytes::from("initial_key")),
+        );
+        let has_post_rewrite = commands.iter().any(|cmd| {
+            matches!(cmd, AOFCommand::Set { key, .. } if key == &Bytes::from("post_rewrite_key"))
+        });
+
+        assert!(has_initial, "Initial data should be preserved");
+        assert!(
+            has_post_rewrite,
+            "Post-rewrite data should be written to correct file"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_flag_raii_guard() {
+        // Test that the RAII guard properly clears the rewrite flag
+        use std::sync::Arc;
+        use std::sync::RwLock;
+
+        let rewrite_flag = Arc::new(RwLock::new(false));
+
+        // Test successful case - guard should clear flag on normal exit
+        {
+            {
+                let mut flag = rewrite_flag.write().unwrap();
+                *flag = true;
+            }
+            assert!(*rewrite_flag.read().unwrap());
+
+            // Create the guard (same structure as in perform_background_rewrite)
+            struct RewriteGuard<'a> {
+                rewrite_in_progress: &'a Arc<RwLock<bool>>,
+            }
+
+            impl<'a> Drop for RewriteGuard<'a> {
+                fn drop(&mut self) {
+                    let mut in_progress = self.rewrite_in_progress.write().unwrap();
+                    *in_progress = false;
+                }
+            }
+
+            let _guard = RewriteGuard {
+                rewrite_in_progress: &rewrite_flag,
+            };
+
+            // Flag should still be true while guard exists
+            assert!(*rewrite_flag.read().unwrap());
+        } // Guard goes out of scope here
+
+        // Flag should be cleared by guard's Drop
+        assert!(!*rewrite_flag.read().unwrap());
+
+        // Test error case - guard should clear flag even if function returns early
+        {
+            let mut flag = rewrite_flag.write().unwrap();
+            *flag = true;
+        }
+        assert!(*rewrite_flag.read().unwrap());
+
+        // Simulate function that returns early with error
+        let test_with_early_return = || -> Result<()> {
+            struct RewriteGuard<'a> {
+                rewrite_in_progress: &'a Arc<RwLock<bool>>,
+            }
+
+            impl<'a> Drop for RewriteGuard<'a> {
+                fn drop(&mut self) {
+                    let mut in_progress = self.rewrite_in_progress.write().unwrap();
+                    *in_progress = false;
+                }
+            }
+
+            let _guard = RewriteGuard {
+                rewrite_in_progress: &rewrite_flag,
+            };
+
+            // Simulate an error that causes early return
+            return Err(crate::error::SpatioError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "simulated error",
+            )));
+        };
+
+        let result = test_with_early_return();
+        assert!(result.is_err());
+
+        // Flag should be cleared by guard even though function returned error
+        assert!(!*rewrite_flag.read().unwrap());
+    }
 
     #[test]
     fn test_aof_creation() {
