@@ -779,19 +779,20 @@ impl DB {
 /// - Syncs to disk (best effort, errors are silently ignored)
 /// - Releases resources
 ///
-/// Note: Since DB uses Arc internally, this only triggers when all clones are dropped.
-/// The database is NOT marked as closed here to allow clones to continue operating.
+/// Note: Since DB uses Arc internally, this syncs only when the last clone is dropped.
+/// The database is NOT marked as closed here to allow other clones to continue operating.
 /// Use `close()` explicitly if you need to prevent further operations.
 impl Drop for DB {
     fn drop(&mut self) {
-        // Best-effort sync on drop
-        // We don't mark the database as closed since DB is Arc-wrapped and may have other clones
-        // Only attempt sync if this is potentially the last reference
-        if let Ok(mut inner) = self.inner.write() {
-            if !inner.closed {
-                if let Some(ref mut aof_file) = inner.aof_file {
-                    // Attempt to sync on drop, but don't panic if it fails
-                    let _ = aof_file.sync();
+        // Only sync if this is the last reference to the database
+        if Arc::strong_count(&self.inner) == 1 {
+            // Best-effort sync on final drop
+            if let Ok(mut inner) = self.inner.write() {
+                if !inner.closed {
+                    if let Some(ref mut aof_file) = inner.aof_file {
+                        // Attempt to sync on drop, but don't panic if it fails
+                        let _ = aof_file.sync();
+                    }
                 }
             }
         }
@@ -990,3 +991,74 @@ impl DBInner {
 
 // Re-export for convenience
 pub use DB as Spatio;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_drop_only_syncs_on_last_reference() {
+        use std::fs;
+        let temp_path = std::env::temp_dir().join("test_drop_sync.aof");
+        let _ = fs::remove_file(&temp_path);
+
+        // Create database
+        let db = DB::open(&temp_path).unwrap();
+        db.insert("key1", b"value1", None).unwrap();
+
+        // Create clones
+        let db2 = db.clone();
+        let db3 = db.clone();
+
+        // Check strong count
+        assert_eq!(Arc::strong_count(&db.inner), 3);
+
+        // Drop one clone - should NOT sync (still 2 references)
+        drop(db2);
+        assert_eq!(Arc::strong_count(&db.inner), 2);
+
+        // Drop another clone - should NOT sync (still 1 reference)
+        drop(db3);
+        assert_eq!(Arc::strong_count(&db.inner), 1);
+
+        // Drop last reference - SHOULD sync
+        drop(db);
+
+        // Reopen and verify data persisted
+        let db = DB::open(&temp_path).unwrap();
+        assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
+
+        // Cleanup
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_explicit_close_prevents_operations() {
+        let mut db = DB::memory().unwrap();
+        db.insert("key", b"value", None).unwrap();
+
+        // Close the database
+        db.close().unwrap();
+
+        // Operations should fail
+        assert!(db.insert("key2", b"value2", None).is_err());
+        assert!(db.get("key").is_err());
+        assert!(db.delete("key").is_err());
+    }
+
+    #[test]
+    fn test_clone_shares_state() {
+        let db = DB::memory().unwrap();
+        let db2 = db.clone();
+
+        db.insert("key1", b"value1", None).unwrap();
+        db2.insert("key2", b"value2", None).unwrap();
+
+        // Both clones see both keys
+        assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
+        assert_eq!(db.get("key2").unwrap().unwrap().as_ref(), b"value2");
+        assert_eq!(db2.get("key1").unwrap().unwrap().as_ref(), b"value1");
+        assert_eq!(db2.get("key2").unwrap().unwrap().as_ref(), b"value2");
+    }
+}
