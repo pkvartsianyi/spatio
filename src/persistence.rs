@@ -6,12 +6,18 @@ use rustc_hash::FxHashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Shared writer handle across AOFFile instances
+type SharedWriter = Arc<Mutex<BufWriter<File>>>;
+
+/// Registry of writer handles to coordinate flushing across instances
+type WriterRegistry = Arc<Mutex<Vec<Weak<Mutex<BufWriter<File>>>>>>;
+
 /// Type alias for shared state in AOF file handle coordination
-type SharedFileState = Arc<RwLock<Option<(File, BufWriter<File>, u64)>>>;
+type SharedFileState = Arc<RwLock<Option<(File, SharedWriter, u64)>>>;
 
 /// Type alias for rewrite barrier to prevent writes during entire rewrite process
 type RewriteBarrier = Arc<RwLock<()>>;
@@ -22,6 +28,7 @@ struct PathCoordination {
     rewrite_in_progress: Arc<RwLock<bool>>,
     shared_state: SharedFileState,
     rewrite_barrier: RewriteBarrier,
+    writers: WriterRegistry,
 }
 
 impl PathCoordination {
@@ -30,6 +37,7 @@ impl PathCoordination {
             rewrite_in_progress: Arc::new(RwLock::new(false)),
             shared_state: Arc::new(RwLock::new(None)),
             rewrite_barrier: Arc::new(RwLock::new(())),
+            writers: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -93,7 +101,7 @@ impl Default for AOFConfig {
 /// AOF (Append-Only File) for persistence with background rewriting
 pub struct AOFFile {
     file: File,
-    writer: BufWriter<File>,
+    writer: SharedWriter,
     path: PathBuf,
     size: u64,
     config: AOFConfig,
@@ -103,15 +111,14 @@ pub struct AOFFile {
     shared_state: SharedFileState,
     // Barrier lock held for entire rewrite process to prevent concurrent writes
     rewrite_barrier: RewriteBarrier,
+    // Registry of writers for this path to coordinate flush operations
+    writers: WriterRegistry,
 }
 
 impl Clone for AOFFile {
     fn clone(&self) -> Self {
         let file = self.file.try_clone().expect("Failed to clone file handle");
-        let writer_file = file
-            .try_clone()
-            .expect("Failed to clone file handle for writer");
-        let writer = BufWriter::new(writer_file);
+        let writer = self.writer.clone();
 
         Self {
             file,
@@ -123,6 +130,7 @@ impl Clone for AOFFile {
             last_rewrite_size: self.last_rewrite_size,
             shared_state: self.shared_state.clone(),
             rewrite_barrier: self.rewrite_barrier.clone(),
+            writers: self.writers.clone(),
         }
     }
 }
@@ -162,12 +170,16 @@ impl AOFFile {
 
         let size = file.metadata()?.len();
 
-        // Clone file handle for writer
-        let writer_file = file.try_clone()?;
-        let writer = BufWriter::new(writer_file);
-
         // Get shared coordination state for this path
         let coordination = get_path_coordination(&path);
+        let writer_file = file.try_clone()?;
+        let writer = Arc::new(Mutex::new(BufWriter::new(writer_file)));
+        {
+            let mut registry = coordination.writers.lock().unwrap();
+            // Remove stale entries while we're registering the new writer
+            registry.retain(|weak| weak.upgrade().is_some());
+            registry.push(Arc::downgrade(&writer));
+        }
 
         Ok(Self {
             file,
@@ -175,10 +187,11 @@ impl AOFFile {
             path,
             size,
             config,
-            rewrite_in_progress: coordination.rewrite_in_progress,
+            rewrite_in_progress: coordination.rewrite_in_progress.clone(),
             last_rewrite_size: size,
-            shared_state: coordination.shared_state,
-            rewrite_barrier: coordination.rewrite_barrier,
+            shared_state: coordination.shared_state.clone(),
+            rewrite_barrier: coordination.rewrite_barrier.clone(),
+            writers: coordination.writers.clone(),
         })
     }
 
@@ -251,7 +264,10 @@ impl AOFFile {
         // Acquire barrier read lock for the actual write operations
         {
             let _barrier_guard = self.rewrite_barrier.read().unwrap();
-            self.writer.write_all(&serialized)?;
+            {
+                let mut writer = self.writer.lock().unwrap();
+                writer.write_all(&serialized)?;
+            }
             self.size += serialized.len() as u64;
         }
 
@@ -373,15 +389,11 @@ impl AOFFile {
         // Critical: Flush and sync current writer to ensure all pending writes
         // are persisted before taking the snapshot. This prevents data loss.
         //
-        // NOTE: This only flushes the current AOFFile instance's buffer. If there are
-        // multiple AOFFile instances for the same path (which can happen in tests or
-        // multi-threaded scenarios), each instance maintains its own BufWriter buffer.
-        // Those separate buffers would not be flushed here, potentially causing buffered
-        // data to be excluded from the rewrite snapshot. In production, the barrier
-        // mechanism should prevent concurrent writes during rewrite, but the architecture
-        // could be improved by using a single shared writer (e.g., Arc<Mutex<BufWriter>>)
-        // or ensuring global coordination of all instances for a given path.
-        aof.writer.flush()?;
+        // Flush ALL registered writers before taking the snapshot. Each AOFFile instance
+        // maintains its own buffered writer, so we coordinate through the registry to
+        // ensure every pending buffer is flushed. This prevents buffered data from being
+        // omitted from the rewrite snapshot.
+        aof.flush_registered_writers()?;
         aof.file.sync_all()?;
 
         // Create a temporary rewrite file
@@ -394,12 +406,13 @@ impl AOFFile {
         // 2. Write only the latest value for each key
         // 3. Handle concurrent writes properly
 
-        // For now, just copy the existing file (this could be optimized)
+        // For now, just stream-copy the existing file to keep memory bounded
         aof.file.seek(SeekFrom::Start(0))?;
-        let mut buffer = Vec::new();
-        aof.file.read_to_end(&mut buffer)?;
-
-        rewrite_file.writer.write_all(&buffer)?;
+        {
+            let mut reader = BufReader::new(&mut aof.file);
+            let mut writer = rewrite_file.writer.lock().unwrap();
+            std::io::copy(&mut reader, &mut *writer)?;
+        }
         rewrite_file.flush()?;
 
         // CRITICAL: Sync rewritten file to disk before rename to guarantee durability
@@ -429,7 +442,12 @@ impl AOFFile {
             .open(&aof.path)?;
 
         let new_writer_file = new_file.try_clone()?;
-        let new_writer = BufWriter::new(new_writer_file);
+        let new_writer = Arc::new(Mutex::new(BufWriter::new(new_writer_file)));
+        {
+            let mut registry = aof.writers.lock().unwrap();
+            registry.retain(|weak| weak.upgrade().is_some());
+            registry.push(Arc::downgrade(&new_writer));
+        }
 
         // Update shared state with new file handles
         {
@@ -649,6 +667,25 @@ impl AOFFile {
         }
     }
 
+    /// Flush all registered writers for this path to ensure buffers are empty
+    fn flush_registered_writers(&self) -> Result<()> {
+        let mut registry = self.writers.lock().unwrap();
+        let mut idx = 0;
+        while idx < registry.len() {
+            match registry[idx].upgrade() {
+                Some(writer_arc) => {
+                    let mut writer = writer_arc.lock().unwrap();
+                    writer.flush()?;
+                    idx += 1;
+                }
+                None => {
+                    registry.swap_remove(idx);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Flush the write buffer to disk
     pub fn flush(&mut self) -> Result<()> {
         // Apply any pending file handle updates from completed rewrite
@@ -656,7 +693,8 @@ impl AOFFile {
 
         // Acquire read lock on rewrite barrier to coordinate with rewrite operations
         let _barrier_guard = self.rewrite_barrier.read().unwrap();
-        self.writer.flush()?;
+        let mut writer = self.writer.lock().unwrap();
+        writer.flush()?;
         Ok(())
     }
 
@@ -667,14 +705,18 @@ impl AOFFile {
 
         // Acquire read lock on rewrite barrier to coordinate with rewrite operations
         let _barrier_guard = self.rewrite_barrier.read().unwrap();
-        self.writer.flush()?;
+        {
+            let mut writer = self.writer.lock().unwrap();
+            writer.flush()?;
+        }
         self.file.sync_all()?;
         Ok(())
     }
 
     /// Internal sync method that doesn't acquire barrier (used during rewrite)
     fn sync_without_barrier(&mut self) -> Result<()> {
-        self.writer.flush()?;
+        let mut writer = self.writer.lock().unwrap();
+        writer.flush()?;
         self.file.sync_all()?;
         Ok(())
     }
@@ -704,7 +746,12 @@ impl AOFFile {
 
         let size = file.metadata()?.len();
         let writer_file = file.try_clone()?;
-        let writer = BufWriter::new(writer_file);
+        let writer = Arc::new(Mutex::new(BufWriter::new(writer_file)));
+        {
+            let mut registry = self.writers.lock().unwrap();
+            registry.retain(|weak| weak.upgrade().is_some());
+            registry.push(Arc::downgrade(&writer));
+        }
 
         self.file = file;
         self.writer = writer;
@@ -748,7 +795,9 @@ impl Drop for AOFFile {
         // Use a simple flush without applying pending file updates
         // to avoid issues when dropping cloned instances during rewrite
         if let Ok(_barrier_guard) = self.rewrite_barrier.read() {
-            let _ = self.writer.flush();
+            if let Ok(mut writer) = self.writer.lock() {
+                let _ = writer.flush();
+            }
         }
     }
 }
