@@ -2,15 +2,8 @@
 
 All notable changes since the last release are documented below.
 
-## [0.1.1-alpha.1] - 2025-10-20
-
-### Added
-- auto changelog
-- persistence lifecycle
+## [0.1.1-alpha.2] - 2025-10-20
 
 ### Fixed
-- release script
-- python build
-- Drop comments
-- docs job
+- ci
 
