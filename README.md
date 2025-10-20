@@ -16,8 +16,11 @@
   <a href="https://pypi.org/project/spatio">
     <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
   </a>
-  <a href="https://docs.rs/spatio">
+  <a href="https://pkvartsianyi.github.io/spatio/">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
+  </a>
+  <a href="https://docs.rs/spatio">
+    <img src="https://img.shields.io/badge/docs.rs-spatio-66c2a5" alt="Rust Docs">
   </a>
 </p>
 
@@ -122,39 +125,39 @@ fn main() -> Result<()> {
     // Simplified configuration with serialization
     let config = Config::with_geohash_precision(10)
         .with_default_ttl(Duration::from_secs(3600));
-    
+
     // Create database with custom config
     let db = Spatio::memory_with_config(config)?;
-    
+
     // Namespace support for data organization
     let namespace_a = Namespace::new("namespace_a");
     let namespace_b = Namespace::new("namespace_b");
-    
+
     // Store data with namespace isolation
     db.insert(namespace_a.key("user:123"), b"John Doe", None)?;
     db.insert(namespace_b.key("user:123"), b"Jane Smith", None)?;
 
     // Create a point for spatial operations
     let nyc = Point::new(40.7128, -74.0060);
-    
+
     // GeoJSON I/O support (requires "geojson" feature)
     #[cfg(feature = "geojson")]
     {
         let geojson = nyc.to_geojson()?;
         let point_from_geojson = Point::from_geojson(&geojson)?;
     }
-    
+
     // Spatial operations with automatic indexing
     db.insert_point("cities", &nyc, b"New York City", None)?;
     let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
-    
+
     // Advanced spatial queries
     let count = db.count_within_distance("cities", &nyc, 100_000.0)?;
     let in_bounds = db.find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)?;
-    
+
     // Storage backend abstraction
     let memory_backend = MemoryBackend::new();
-    
+
     // Feature-gated AOF backend
     #[cfg(feature = "aof")]
     let aof_backend = AOFBackend::new("data.aof")?;
@@ -343,7 +346,7 @@ Spatio uses a modern, extensible layered architecture:
 - **AOF Backend**: Append-only file storage with background compaction
 - **Custom Backends**: Extensible design for RocksDB, SQLite, or cloud storage
 
-### **Namespace Layer** 
+### **Namespace Layer**
 - **Data Organization**: Isolated data with automatic key prefixing
 - **Namespace Management**: Utilities for parsing and organizing namespaced keys
 - **Configurable Separators**: Flexible namespace delimiter configuration
@@ -370,7 +373,7 @@ Spatio is in active development for embedded use cases. Current version: **0.1.0
 
 ### **Core Architecture** (New!)
 - **Storage Backend Abstraction**: Pluggable storage with trait-based design
-- **Namespace Support**: Data isolation with automatic key prefixing  
+- **Namespace Support**: Data isolation with automatic key prefixing
 - **Simplified Configuration**: JSON/TOML serializable config with validation
 - **Feature Flags**: Modular compilation (serde, geojson, aof, toml)
 - **Clean Public API**: Organized exports with comprehensive prelude module
@@ -397,7 +400,7 @@ Spatio is in active development for embedded use cases. Current version: **0.1.0
 ### **Performance Characteristics**
 Based on current benchmarks:
 - **Key-value operations**: ~1.6M ops/sec (600ns per operation)
-- **Spatial insertions**: ~1.9M points/sec (530ns per operation)  
+- **Spatial insertions**: ~1.9M points/sec (530ns per operation)
 - **Spatial queries**: ~225K queries/sec (4.4μs per operation)
 - **Memory efficiency**: Optimized storage with spatial indexing and background compaction
 
