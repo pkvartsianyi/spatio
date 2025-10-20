@@ -10,9 +10,6 @@ All notable changes since the last release are documented below.
 
 ### Fixed
 - release script
-- release script
-- release script
-- release script
 - python build
 - Drop comments
 - docs job
