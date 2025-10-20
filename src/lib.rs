@@ -128,6 +128,7 @@
 //! ```
 
 pub mod batch;
+pub mod builder;
 pub mod db;
 pub mod error;
 pub mod index;
@@ -140,6 +141,7 @@ pub mod types;
 pub mod persistence;
 
 // Core exports - Main API
+pub use builder::DBBuilder;
 pub use db::DB;
 pub use error::{Result, SpatioError};
 
@@ -187,7 +189,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// ```
 pub mod prelude {
     // Core database types
-    pub use crate::{Result, Spatio, SpatioError};
+    pub use crate::{DBBuilder, Result, Spatio, SpatioError};
 
     // Spatial types
     pub use crate::{BoundingBox, Point};

@@ -140,6 +140,11 @@ impl AtomicBatch {
         // Apply all operations atomically
         let mut inner = self.db.write()?;
 
+        // Check if database is closed
+        if inner.closed {
+            return Err(crate::error::SpatioError::DatabaseClosed);
+        }
+
         for operation in &self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {

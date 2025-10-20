@@ -46,7 +46,9 @@
 ### **Data Management**
 - **TTL Support**: Built-in data expiration for temporary data
 - **Atomic Operations**: Batch multiple operations for data consistency
-- **Persistence**: Optional append-only file format with configurable optimization
+- **Durable Persistence**: Append-only file (AOF) with configurable paths and sync policies
+- **Automatic Startup Replay**: Transparent state restoration on database open
+- **Graceful Shutdown**: Automatic data sync on close and Drop
 - **Truly Embedded**: No external dependencies, no servers, no setup required
 
 ## Installation
@@ -94,9 +96,14 @@ namespace_b = spatio.Namespace.new("namespace_b")
 db.insert(namespace_a.key("user:123"), b"John Doe")
 db.insert(namespace_b.key("user:123"), b"Jane Smith")
 
+# Create persistent database with custom AOF path
+db = spatio.DBBuilder.new().aof_path("/data/myapp.aof").build()
+
 # Store geographic points with automatic indexing
 nyc = spatio.Point(40.7128, -74.0060)
 db.insert_point("cities", nyc, b"New York City")
+
+# Data automatically persists and syncs on close
 
 # GeoJSON support
 geojson = nyc.to_geojson()

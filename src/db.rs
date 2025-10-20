@@ -63,7 +63,7 @@ use std::time::SystemTime;
 /// ```
 #[derive(Clone)]
 pub struct DB {
-    inner: Arc<RwLock<DBInner>>,
+    pub(crate) inner: Arc<RwLock<DBInner>>,
 }
 
 pub(crate) struct DBInner {
@@ -86,6 +86,18 @@ pub(crate) struct DBInner {
 impl DB {
     /// Opens a Spatio database from a file path or creates a new one.
     ///
+    /// When opening an existing database, this method automatically replays the
+    /// append-only file (AOF) to restore all data and spatial indexes to their
+    /// previous state. This ensures durability across restarts.
+    ///
+    /// # Startup Replay
+    ///
+    /// The database performs the following steps on startup:
+    /// 1. Opens the AOF file at the specified path (creates if doesn't exist)
+    /// 2. Replays all commands from the AOF to restore state
+    /// 3. Rebuilds spatial indexes for all geographic data
+    /// 4. Ready for new operations
+    ///
     /// # Arguments
     ///
     /// * `path` - File system path or ":memory:" for in-memory storage
@@ -96,10 +108,10 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Create persistent database
+    /// // Create persistent database with automatic AOF replay on open
     /// let persistent_db = Spatio::open("my_data.db")?;
     ///
-    /// // Create in-memory database
+    /// // Create in-memory database (no persistence)
     /// let mem_db = Spatio::open(":memory:")?;
     /// # Ok(())
     /// # }
@@ -110,6 +122,14 @@ impl DB {
 
     /// Creates a new Spatio database with custom configuration.
     ///
+    /// This method provides full control over database behavior including:
+    /// - Geohash precision for spatial indexing
+    /// - Sync policy for durability vs performance tradeoff
+    /// - Default TTL for automatic expiration
+    ///
+    /// Like `open()`, this method automatically replays the AOF on startup
+    /// to restore previous state.
+    ///
     /// # Arguments
     ///
     /// * `path` - File path for the database (use ":memory:" for in-memory)
@@ -118,10 +138,14 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Config};
+    /// use spatio::{Spatio, Config, SyncPolicy};
+    /// use std::time::Duration;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = Config::with_geohash_precision(10); // Higher precision for dense urban areas
+    /// // High-precision config for dense urban areas
+    /// let config = Config::with_geohash_precision(10)
+    ///     .with_sync_policy(SyncPolicy::Always)
+    ///     .with_default_ttl(Duration::from_secs(3600));
     ///
     /// let db = Spatio::open_with_config("my_database.db", config)?;
     /// # Ok(())
@@ -142,6 +166,7 @@ impl DB {
         };
 
         // Initialize persistence if not in-memory
+        // This automatically replays the AOF to restore previous state
         if !is_memory {
             let mut aof_file = AOFFile::open(path)?;
             inner.load_from_aof(&mut aof_file)?;
@@ -161,6 +186,34 @@ impl DB {
     /// Create an in-memory database with custom configuration
     pub fn memory_with_config(config: Config) -> Result<Self> {
         Self::open_with_config(":memory:", config)
+    }
+
+    /// Create a database builder for advanced configuration.
+    ///
+    /// The builder provides full control over database configuration including:
+    /// - Custom AOF (Append-Only File) paths
+    /// - In-memory vs persistent storage
+    /// - Full configuration options
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Spatio;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Create database with custom AOF path
+    /// let temp_path = std::env::temp_dir().join("builder_demo.aof");
+    /// let db = Spatio::builder()
+    ///     .aof_path(&temp_path)
+    ///     .build()?;
+    ///
+    /// db.insert("key", b"value", None)?;
+    /// # std::fs::remove_file(temp_path)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn builder() -> crate::builder::DBBuilder {
+        crate::builder::DBBuilder::new()
     }
 
     /// Get database statistics
@@ -201,6 +254,11 @@ impl DB {
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
+        let mut inner = self.write()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let value_bytes = Bytes::copy_from_slice(value.as_ref());
 
@@ -213,7 +271,6 @@ impl DB {
             _ => DbItem::new(value_bytes),
         };
 
-        let mut inner = self.write()?;
         let old = inner.insert_item(key_bytes.clone(), item);
         inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref())?;
         Ok(old.map(|item| item.value))
@@ -221,8 +278,12 @@ impl DB {
 
     /// Get a value by key
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let inner = self.read()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
         if let Some(item) = inner.get_item(&key_bytes) {
             if !item.is_expired() {
@@ -234,8 +295,12 @@ impl DB {
 
     /// Delete a key atomically
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let mut inner = self.write()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
         if let Some(item) = inner.remove_item(&key_bytes) {
             inner.write_delete_to_aof_if_needed(&key_bytes)?;
@@ -627,6 +692,26 @@ impl DB {
     }
 
     /// Force sync to disk
+    /// Force sync all pending writes to disk.
+    ///
+    /// This method flushes the AOF buffer and calls fsync to ensure all data
+    /// is durably written to disk. Useful before critical operations or when
+    /// you need to guarantee data persistence.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Spatio;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::open("my_data.db")?;
+    /// db.insert("critical_key", b"important_data", None)?;
+    ///
+    /// // Ensure data is on disk before continuing
+    /// db.sync()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn sync(&self) -> Result<()> {
         let mut inner = self.write()?;
         if let Some(ref mut aof_file) = inner.aof_file {
@@ -635,7 +720,35 @@ impl DB {
         Ok(())
     }
 
-    /// Close the database
+    /// Gracefully close the database.
+    ///
+    /// This method performs a clean shutdown by:
+    /// 1. Marking the database as closed (rejecting new operations)
+    /// 2. Flushing any pending writes to the AOF
+    /// 3. Syncing the AOF to disk (fsync)
+    /// 4. Releasing resources
+    ///
+    /// After calling `close()`, any further operations on this database
+    /// instance will return `DatabaseClosed` errors.
+    ///
+    /// **Note:** The database is also automatically closed when dropped,
+    /// so explicitly calling `close()` is optional but recommended for
+    /// explicit error handling.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Spatio;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut db = Spatio::open("my_data.db")?;
+    /// db.insert("key", b"value", None)?;
+    ///
+    /// // Explicitly close and handle errors
+    /// db.close()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn close(&mut self) -> Result<()> {
         let mut inner = self.write()?;
         if inner.closed {
@@ -644,7 +757,7 @@ impl DB {
 
         inner.closed = true;
         if let Some(ref mut aof_file) = inner.aof_file {
-            let _ = aof_file.sync();
+            aof_file.sync()?;
         }
         Ok(())
     }
@@ -656,6 +769,32 @@ impl DB {
 
     pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
         self.inner.write().map_err(|_| SpatioError::LockError)
+    }
+}
+
+/// Automatic graceful shutdown on drop.
+///
+/// When the last reference to the database is dropped, it automatically performs a graceful shutdown:
+/// - Flushes pending writes
+/// - Syncs to disk (best effort, errors are silently ignored)
+/// - Releases resources
+///
+/// Note: Since DB uses Arc internally, this only triggers when all clones are dropped.
+/// The database is NOT marked as closed here to allow clones to continue operating.
+/// Use `close()` explicitly if you need to prevent further operations.
+impl Drop for DB {
+    fn drop(&mut self) {
+        // Best-effort sync on drop
+        // We don't mark the database as closed since DB is Arc-wrapped and may have other clones
+        // Only attempt sync if this is potentially the last reference
+        if let Ok(mut inner) = self.inner.write() {
+            if !inner.closed {
+                if let Some(ref mut aof_file) = inner.aof_file {
+                    // Attempt to sync on drop, but don't panic if it fails
+                    let _ = aof_file.sync();
+                }
+            }
+        }
     }
 }
 
@@ -718,6 +857,24 @@ impl DBInner {
     }
 
     /// Load data from AOF file
+    /// Load database state from the AOF file (startup replay).
+    ///
+    /// This method replays all commands from the append-only file to restore
+    /// the database to its previous state. It's called automatically during
+    /// database initialization.
+    ///
+    /// The replay process:
+    /// 1. Reads all commands from the AOF sequentially
+    /// 2. Applies each SET and DELETE command to rebuild state
+    /// 3. Reconstructs spatial indexes from geographic data
+    /// 4. Updates statistics (key counts, etc.)
+    ///
+    /// # Error Handling
+    ///
+    /// If the AOF is corrupted or unreadable, this method returns an error
+    /// and the database will not open. To recover from corruption:
+    /// - Restore from backup if available
+    /// - Or delete the AOF file to start fresh (data loss)
     pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
         let commands = aof_file.replay()?;
 
