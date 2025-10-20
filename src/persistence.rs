@@ -1005,10 +1005,9 @@ mod tests {
             };
 
             // Simulate an error that causes early return
-            return Err(crate::error::SpatioError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(crate::error::SpatioError::Io(std::io::Error::other(
                 "simulated error",
-            )));
+            )))
         };
 
         let result = test_with_early_return();
