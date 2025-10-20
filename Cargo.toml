@@ -31,8 +31,8 @@ toml = { version = "0.8", optional = true }
 uuid = { version = "1.0", features = ["v4"] }
 
 [features]
-default = ["aof"]
-# GeoJSON I/O support (serde_json is always available)
+default = ["aof", "geojson"]
+# GeoJSON I/O support (conditionally compiled)
 geojson = []
 # Append-only file persistence
 aof = ["dep:bincode"]

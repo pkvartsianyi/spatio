@@ -113,8 +113,7 @@ use spatio::prelude::*;
 
 fn main() -> Result<()> {
     // Simplified configuration with serialization
-    let config = Config::default()
-        .with_geohash_precision(10)
+    let config = Config::with_geohash_precision(10)
         .with_default_ttl(Duration::from_secs(3600));
     
     // Create database with custom config
@@ -128,10 +127,15 @@ fn main() -> Result<()> {
     db.insert(namespace_a.key("user:123"), b"John Doe", None)?;
     db.insert(namespace_b.key("user:123"), b"Jane Smith", None)?;
 
-    // GeoJSON I/O support
+    // Create a point for spatial operations
     let nyc = Point::new(40.7128, -74.0060);
-    let geojson = nyc.to_geojson()?;
-    let point_from_geojson = Point::from_geojson(&geojson)?;
+    
+    // GeoJSON I/O support (requires "geojson" feature)
+    #[cfg(feature = "geojson")]
+    {
+        let geojson = nyc.to_geojson()?;
+        let point_from_geojson = Point::from_geojson(&geojson)?;
+    }
     
     // Spatial operations with automatic indexing
     db.insert_point("cities", &nyc, b"New York City", None)?;

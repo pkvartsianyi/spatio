@@ -26,6 +26,7 @@ fn main() -> Result<()> {
     demonstrate_namespace_support()?;
 
     // 3. Demonstrate GeoJSON I/O
+    #[cfg(feature = "geojson")]
     demonstrate_geojson_support()?;
 
     // 4. Show storage backend abstraction
@@ -39,6 +40,7 @@ fn main() -> Result<()> {
     println!("\nKey architectural improvements demonstrated:");
     println!("- Simplified, serializable configuration");
     println!("- Namespace support for data organization");
+    #[cfg(feature = "geojson")]
     println!("- GeoJSON I/O for interoperability");
     println!("- Storage backend abstraction");
     #[cfg(feature = "aof")]
@@ -166,6 +168,7 @@ fn demonstrate_namespace_support() -> Result<()> {
 }
 
 /// Demonstrate GeoJSON I/O support
+#[cfg(feature = "geojson")]
 fn demonstrate_geojson_support() -> Result<()> {
     println!("3. GeoJSON I/O Support");
     println!("----------------------");

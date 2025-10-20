@@ -48,14 +48,36 @@ impl IndexManager {
 
     /// Create a new index manager with custom configuration
     pub fn with_config(config: &Config) -> Self {
+        // Generate search precisions with proper bounds and deduplication
+        let mut search_precisions = Vec::new();
+
+        // Add precision-2 if valid and different
+        let p_minus_2 = config.geohash_precision.saturating_sub(2).max(1);
+        if p_minus_2 >= 1 {
+            search_precisions.push(p_minus_2);
+        }
+
+        // Add precision-1 if valid and different from previous
+        let p_minus_1 = config.geohash_precision.saturating_sub(1).max(1);
+        if p_minus_1 >= 1 && !search_precisions.contains(&p_minus_1) {
+            search_precisions.push(p_minus_1);
+        }
+
+        // Add the main precision if different from previous
+        let main_precision = config.geohash_precision.min(12);
+        if !search_precisions.contains(&main_precision) {
+            search_precisions.push(main_precision);
+        }
+
+        // Ensure we have at least one precision
+        if search_precisions.is_empty() {
+            search_precisions.push(1);
+        }
+
         Self {
             spatial_indexes: FxHashMap::default(),
             geohash_precision: config.geohash_precision,
-            search_precisions: vec![
-                config.geohash_precision.saturating_sub(2),
-                config.geohash_precision.saturating_sub(1),
-                config.geohash_precision,
-            ],
+            search_precisions,
         }
     }
 
@@ -530,5 +552,78 @@ mod tests {
                     .iter()
                     .any(|&p| (p as i32 - DEFAULT_GEOHASH_PRECISION as i32).abs() <= 1)
         );
+    }
+
+    #[test]
+    fn test_search_precisions_exact_values() {
+        // Test precision 1: should be [1]
+        let config = Config::with_geohash_precision(1);
+        let manager = IndexManager::with_config(&config);
+        assert_eq!(manager.search_precisions, vec![1]);
+
+        // Test precision 2: should be [1, 2]
+        let config = Config::with_geohash_precision(2);
+        let manager = IndexManager::with_config(&config);
+        assert_eq!(manager.search_precisions, vec![1, 2]);
+
+        // Test precision 3: should be [1, 2, 3]
+        let config = Config::with_geohash_precision(3);
+        let manager = IndexManager::with_config(&config);
+        assert_eq!(manager.search_precisions, vec![1, 2, 3]);
+
+        // Test normal case: precision 8 should be [6, 7, 8]
+        let config = Config::with_geohash_precision(8);
+        let manager = IndexManager::with_config(&config);
+        assert_eq!(manager.search_precisions, vec![6, 7, 8]);
+
+        // Test high precision: 12 should be [10, 11, 12]
+        let config = Config::with_geohash_precision(12);
+        let manager = IndexManager::with_config(&config);
+        assert_eq!(manager.search_precisions, vec![10, 11, 12]);
+    }
+
+    #[test]
+    fn test_search_precisions_edge_cases() {
+        // Test precision 1 (should not produce 0 or negative values)
+        let config = Config::with_geohash_precision(1);
+        let manager = IndexManager::with_config(&config);
+        assert!(manager
+            .search_precisions
+            .iter()
+            .all(|&p| (1..=12).contains(&p)));
+        assert!(manager.search_precisions.contains(&1));
+
+        // Test precision 2 (should not produce 0)
+        let config = Config::with_geohash_precision(2);
+        let manager = IndexManager::with_config(&config);
+        assert!(manager
+            .search_precisions
+            .iter()
+            .all(|&p| (1..=12).contains(&p)));
+        assert!(manager.search_precisions.contains(&2));
+
+        // Test precision 12 (upper bound)
+        let config = Config::with_geohash_precision(12);
+        let manager = IndexManager::with_config(&config);
+        assert!(manager
+            .search_precisions
+            .iter()
+            .all(|&p| (1..=12).contains(&p)));
+        assert!(manager.search_precisions.contains(&12));
+
+        // Test that search precisions are unique and sorted
+        let config = Config::with_geohash_precision(5);
+        let manager = IndexManager::with_config(&config);
+        let mut sorted_precisions = manager.search_precisions.clone();
+        sorted_precisions.sort();
+        sorted_precisions.dedup();
+        assert_eq!(manager.search_precisions.len(), sorted_precisions.len());
+
+        // Test that main precision is always included
+        for precision in 1..=12 {
+            let config = Config::with_geohash_precision(precision);
+            let manager = IndexManager::with_config(&config);
+            assert!(manager.search_precisions.contains(&precision.min(12)));
+        }
     }
 }

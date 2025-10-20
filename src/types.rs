@@ -4,6 +4,8 @@
 //! and data management with minimal complexity.
 
 use bytes::Bytes;
+#[cfg(feature = "toml")]
+use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 

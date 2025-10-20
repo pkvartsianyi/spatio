@@ -4,7 +4,9 @@
 //! allowing different storage implementations while maintaining a consistent API.
 
 use crate::error::Result;
-use crate::types::{DbItem, SetOptions};
+use crate::types::DbItem;
+#[cfg(feature = "aof")]
+use crate::types::SetOptions;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::time::SystemTime;

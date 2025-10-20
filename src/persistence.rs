@@ -3,10 +3,13 @@ use crate::types::SetOptions;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Type alias for shared state in AOF file handle coordination
+type SharedFileState = Arc<RwLock<Option<(File, BufWriter<File>, u64)>>>;
 
 /// AOF configuration for background rewriting
 #[derive(Debug, Clone)]
@@ -33,11 +36,13 @@ impl Default for AOFConfig {
 pub struct AOFFile {
     file: File,
     writer: BufWriter<File>,
-    path: std::path::PathBuf,
+    path: PathBuf,
     size: u64,
     config: AOFConfig,
     rewrite_in_progress: Arc<RwLock<bool>>,
     last_rewrite_size: u64,
+    // Shared state for coordinating file handle updates during rewrite
+    shared_state: SharedFileState,
 }
 
 impl Clone for AOFFile {
@@ -56,6 +61,7 @@ impl Clone for AOFFile {
             config: self.config.clone(),
             rewrite_in_progress: self.rewrite_in_progress.clone(),
             last_rewrite_size: self.last_rewrite_size,
+            shared_state: self.shared_state.clone(),
         }
     }
 }
@@ -107,6 +113,7 @@ impl AOFFile {
             config,
             rewrite_in_progress: Arc::new(RwLock::new(false)),
             last_rewrite_size: size,
+            shared_state: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -158,6 +165,9 @@ impl AOFFile {
 
     /// Write a command to the AOF file
     fn write_command(&mut self, command: &AOFCommand) -> Result<()> {
+        // Apply any pending file handle updates from background rewrite
+        self.apply_pending_file_update()?;
+
         let serialized = self.serialize_command(command)?;
 
         self.writer.write_all(&serialized)?;
@@ -240,12 +250,27 @@ impl AOFFile {
         rewrite_file.writer.write_all(&buffer)?;
         rewrite_file.flush()?;
 
+        // Get the new file size
+        let new_size = rewrite_file.size;
+
         // Atomically replace the old file
         std::fs::rename(&rewrite_path, &aof.path)?;
 
-        // Update last rewrite size
-        // Note: In a real implementation, you'd need to communicate this back
-        // to the main AOF instance through shared state
+        // Open new file handles for the renamed file
+        let new_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&aof.path)?;
+
+        let new_writer_file = new_file.try_clone()?;
+        let new_writer = BufWriter::new(new_writer_file);
+
+        // Update shared state with new file handles
+        {
+            let mut shared_state = aof.shared_state.write().unwrap();
+            *shared_state = Some((new_file, new_writer, new_size));
+        }
 
         // Clear the rewrite in progress flag
         {
@@ -509,6 +534,22 @@ impl AOFFile {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Apply any pending file handle updates from background rewrite
+    fn apply_pending_file_update(&mut self) -> Result<()> {
+        let mut shared_state = self.shared_state.write().unwrap();
+        if let Some((new_file, new_writer, new_size)) = shared_state.take() {
+            // Flush current writer before replacing
+            self.writer.flush()?;
+
+            // Replace file handles with new ones
+            self.file = new_file;
+            self.writer = new_writer;
+            self.size = new_size;
+            self.last_rewrite_size = new_size;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for AOFFile {
@@ -620,5 +661,61 @@ mod tests {
             }
             _ => panic!("Expected SET command with expiration"),
         }
+    }
+
+    #[test]
+    fn test_file_handle_update_after_rewrite() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let mut aof = AOFFile::open_with_config(
+            temp_file.path(),
+            AOFConfig {
+                rewrite_size_threshold: 100,
+                rewrite_growth_percentage: 50.0,
+                background_rewrite: false, // Manual rewrite for testing
+            },
+        )
+        .unwrap();
+
+        // Write some data to exceed rewrite threshold
+        let key1 = Bytes::from("key1");
+        let value1 = Bytes::from("value1_initial");
+        let key2 = Bytes::from("key2");
+        let value2 = Bytes::from("value2_initial");
+
+        aof.write_set(&key1, &value1, None).unwrap();
+        aof.write_set(&key2, &value2, None).unwrap();
+        aof.flush().unwrap();
+
+        // Get initial file size
+        let initial_size = aof.size().unwrap();
+
+        // Trigger a manual rewrite
+        aof.rewrite().unwrap();
+
+        // Write more data after rewrite to verify file handles are correct
+        let value1_updated = Bytes::from("value1_updated");
+        let value2_updated = Bytes::from("value2_updated");
+
+        aof.write_set(&key1, &value1_updated, None).unwrap();
+        aof.write_set(&key2, &value2_updated, None).unwrap();
+        aof.flush().unwrap();
+
+        // Verify that the new data was written to the correct file
+        let final_size = aof.size().unwrap();
+        assert!(
+            final_size > initial_size,
+            "File size should increase after post-rewrite writes"
+        );
+
+        // Replay all commands to verify data integrity
+        let mut commands = Vec::new();
+        aof.replay(|cmd| {
+            commands.push(cmd);
+            Ok(())
+        })
+        .unwrap();
+
+        // Should have 4 commands: 2 initial sets + 2 updated sets
+        assert_eq!(commands.len(), 4);
     }
 }
