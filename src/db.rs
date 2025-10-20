@@ -756,11 +756,6 @@ impl DBInner {
                         }
                     }
                 }
-                AOFCommand::Expire { key, expires_at } => {
-                    if let Some(item) = self.keys.get_mut(&key) {
-                        item.expires_at = Some(expires_at);
-                    }
-                }
             }
         }
 

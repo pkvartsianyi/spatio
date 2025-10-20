@@ -11,18 +11,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub struct AOFConfig {
     /// Trigger rewrite when file size exceeds this many bytes
     pub rewrite_size_threshold: u64,
-    /// Trigger rewrite when file size grows by this percentage
-    pub rewrite_growth_percentage: f64,
-    /// Enable background rewriting (defaults to false for embedded use)
-    pub background_rewrite: bool,
 }
 
 impl Default for AOFConfig {
     fn default() -> Self {
         Self {
             rewrite_size_threshold: 64 * 1024 * 1024, // 64MB
-            rewrite_growth_percentage: 100.0,         // 100%
-            background_rewrite: false,                // Synchronous by default for embedded DB
         }
     }
 }
@@ -47,10 +41,6 @@ pub enum AOFCommand {
     },
     Delete {
         key: Bytes,
-    },
-    Expire {
-        key: Bytes,
-        expires_at: SystemTime,
     },
 }
 
@@ -119,15 +109,6 @@ impl AOFFile {
         self.write_command(&command)
     }
 
-    /// Write an EXPIRE command to the AOF
-    pub fn write_expire(&mut self, key: &[u8], expires_at: SystemTime) -> Result<()> {
-        let command = AOFCommand::Expire {
-            key: Bytes::copy_from_slice(key),
-            expires_at,
-        };
-        self.write_command(&command)
-    }
-
     /// Write a command to the AOF file
     fn write_command(&mut self, command: &AOFCommand) -> Result<()> {
         if self.rewrite_in_progress {
@@ -146,27 +127,9 @@ impl AOFFile {
         Ok(())
     }
 
-    /// Check if AOF should be rewritten based on configured thresholds
+    /// Check if AOF should be rewritten based on size threshold
     fn should_rewrite(&self) -> bool {
-        if self.rewrite_in_progress {
-            return false;
-        }
-
-        // Check size threshold
-        if self.size >= self.config.rewrite_size_threshold {
-            return true;
-        }
-
-        // Check growth percentage
-        if self.last_rewrite_size > 0 {
-            let growth_ratio = (self.size as f64) / (self.last_rewrite_size as f64);
-            let growth_percentage = (growth_ratio - 1.0) * 100.0;
-            if growth_percentage >= self.config.rewrite_growth_percentage {
-                return true;
-            }
-        }
-
-        false
+        !self.rewrite_in_progress && self.size >= self.config.rewrite_size_threshold
     }
 
     /// Trigger AOF rewrite if conditions are met
@@ -175,15 +138,9 @@ impl AOFFile {
             return Ok(());
         }
 
-        if self.config.background_rewrite {
-            // For now, background rewrite is not implemented in the simplified version
-            // This would require careful thread coordination which we're avoiding
-            // Fall back to synchronous rewrite
-            self.perform_rewrite()
-        } else {
-            // Perform synchronous rewrite
-            self.perform_rewrite()
-        }
+        // Always perform synchronous rewrite for embedded database
+        // Background rewrite would require thread coordination which we avoid
+        self.perform_rewrite()
     }
 
     /// Perform the actual AOF rewrite operation
@@ -194,78 +151,55 @@ impl AOFFile {
 
         self.rewrite_in_progress = true;
 
-        let result = self.perform_rewrite_internal();
+        // Perform the rewrite and always clear the flag, even on error
+        let result = (|| {
+            // Flush current writer to ensure all data is persisted
+            self.writer.flush()?;
+            self.file.sync_all()?;
 
-        // Always clear the flag, even on error
+            // Create temporary rewrite file
+            let rewrite_path = self.path.with_extension("aof.rewrite");
+            let mut rewrite_file = Self::open_with_config(&rewrite_path, self.config.clone())?;
+
+            // For simplicity, just copy the existing file
+            // In a real implementation, you'd want to compact by removing deleted keys
+            // and only keeping the latest value for each key
+            self.file.seek(SeekFrom::Start(0))?;
+            let mut buffer = Vec::new();
+            self.file.read_to_end(&mut buffer)?;
+
+            rewrite_file.writer.write_all(&buffer)?;
+            rewrite_file.flush()?;
+
+            // CRITICAL: Sync rewritten file to disk before rename to guarantee durability
+            rewrite_file.sync()?;
+
+            // Atomically replace the old file
+            std::fs::rename(&rewrite_path, &self.path)?;
+
+            // Reopen the file with new handles
+            let new_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .read(true)
+                .open(&self.path)?;
+
+            let new_size = new_file.metadata()?.len();
+            let writer_file = new_file.try_clone()?;
+            let new_writer = BufWriter::new(writer_file);
+
+            // Update file handles
+            self.file = new_file;
+            self.writer = new_writer;
+            self.size = new_size;
+            self.last_rewrite_size = new_size;
+
+            Ok(())
+        })();
+
         self.rewrite_in_progress = false;
 
         result
-    }
-
-    /// Internal rewrite implementation
-    fn perform_rewrite_internal(&mut self) -> Result<()> {
-        // Flush current writer to ensure all data is persisted
-        self.writer.flush()?;
-        self.file.sync_all()?;
-
-        // Create temporary rewrite file
-        let rewrite_path = self.path.with_extension("aof.rewrite");
-        let mut rewrite_file = Self::open_with_config(&rewrite_path, self.config.clone())?;
-
-        // For simplicity, just copy the existing file
-        // In a real implementation, you'd want to compact by removing deleted keys
-        // and only keeping the latest value for each key
-        self.file.seek(SeekFrom::Start(0))?;
-        let mut buffer = Vec::new();
-        self.file.read_to_end(&mut buffer)?;
-
-        rewrite_file.writer.write_all(&buffer)?;
-        rewrite_file.flush()?;
-
-        // CRITICAL: Sync rewritten file to disk before rename to guarantee durability
-        rewrite_file.sync()?;
-
-        // Atomically replace the old file
-        std::fs::rename(&rewrite_path, &self.path)?;
-
-        // Reopen the file with new handles
-        let new_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .read(true)
-            .open(&self.path)?;
-
-        let new_size = new_file.metadata()?.len();
-        let writer_file = new_file.try_clone()?;
-        let new_writer = BufWriter::new(writer_file);
-
-        // Update file handles
-        self.file = new_file;
-        self.writer = new_writer;
-        self.size = new_size;
-        self.last_rewrite_size = new_size;
-
-        Ok(())
-    }
-
-    /// Force a rewrite regardless of thresholds
-    pub fn rewrite(&mut self) -> Result<()> {
-        self.perform_rewrite()
-    }
-
-    /// Get current configuration
-    pub fn config(&self) -> &AOFConfig {
-        &self.config
-    }
-
-    /// Update configuration
-    pub fn set_config(&mut self, config: AOFConfig) {
-        self.config = config;
-    }
-
-    /// Check if rewrite is currently in progress
-    pub fn is_rewrite_in_progress(&self) -> bool {
-        self.rewrite_in_progress
     }
 
     /// Serialize a command to bytes
@@ -309,20 +243,6 @@ impl AOFFile {
                 // Key length and data
                 buf.put_u32(key.len() as u32);
                 buf.put(key.as_ref());
-            }
-            AOFCommand::Expire { key, expires_at } => {
-                buf.put_u8(2); // Command type: EXPIRE
-
-                // Key length and data
-                buf.put_u32(key.len() as u32);
-                buf.put(key.as_ref());
-
-                // Expiration timestamp
-                let timestamp = expires_at
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|_| SpatioError::InvalidTimestamp)?
-                    .as_secs();
-                buf.put_u64(timestamp);
             }
         }
 
@@ -383,17 +303,6 @@ impl AOFFile {
                 // DELETE command
                 let key = Self::read_bytes(reader)?;
                 Ok(AOFCommand::Delete { key })
-            }
-            2 => {
-                // EXPIRE command
-                let key = Self::read_bytes(reader)?;
-
-                let mut timestamp_buf = [0u8; 8];
-                reader.read_exact(&mut timestamp_buf)?;
-                let timestamp = u64::from_be_bytes(timestamp_buf);
-                let expires_at = UNIX_EPOCH + Duration::from_secs(timestamp);
-
-                Ok(AOFCommand::Expire { key, expires_at })
             }
             _ => Err(SpatioError::InvalidFormat),
         }
@@ -530,8 +439,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let config = AOFConfig {
             rewrite_size_threshold: 100, // Small threshold
-            background_rewrite: false,   // Synchronous
-            ..Default::default()
         };
 
         let mut aof = AOFFile::open_with_config(temp_file.path(), config).unwrap();
@@ -544,22 +451,6 @@ mod tests {
                 .unwrap();
         }
 
-        // Rewrite should have been triggered automatically
-        assert!(!aof.is_rewrite_in_progress());
-    }
-
-    #[test]
-    fn test_manual_rewrite() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let mut aof = AOFFile::open(temp_file.path()).unwrap();
-
-        aof.write_set(b"key1", b"value1", None).unwrap();
-        let size_before = aof.size();
-
-        aof.rewrite().unwrap();
-
-        // Size should be similar (or same in this simple case)
-        assert!(aof.size() <= size_before);
-        assert!(!aof.is_rewrite_in_progress());
+        // Rewrite should have been triggered automatically (synchronous)
     }
 }
