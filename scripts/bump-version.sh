@@ -54,7 +54,6 @@ The script will update versions in:
     - rust: Cargo.toml (main project)
     - python: py-spatio/Cargo.toml (Python bindings)
     - both: Both Cargo.toml files (same version)
-    - CHANGELOG.md: Converts [Unreleased] to new version
 
 Note: GitHub Actions will automatically detect version changes and create releases.
 
@@ -238,56 +237,90 @@ if [[ "$DRY_RUN" == false ]]; then
     esac
 fi
 
-# Update CHANGELOG.md
+# --- CHANGELOG GENERATION ----------------------------------------------------
+
+# --- CHANGELOG GENERATION ----------------------------------------------------
+
+update_changelog() {
+    print_info "Rebuilding CHANGELOG.md from latest release..."
+
+    local changelog_file="CHANGELOG.md"
+    local temp_file
+    temp_file=$(mktemp)
+
+    {
+        echo "# Changelog"
+        echo ""
+        echo "All notable changes since the last release are documented below."
+        echo ""
+    } > "$temp_file"
+
+    git fetch --tags --quiet || true
+
+    # Get the most recent tag (sorted by version)
+    local last_tag
+    last_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+    if [[ -z "$last_tag" ]]; then
+        print_warning "No previous tag found — using entire commit history."
+        last_tag=$(git rev-list --max-parents=0 HEAD)
+    fi
+
+    local date
+    date=$(date +%Y-%m-%d)
+    echo "## [$NEW_VERSION] - $date" >> "$temp_file"
+
+    print_info "Generating changelog since tag: ${last_tag}"
+
+    # Collect commits between last tag and HEAD
+    local commits
+    commits=$(git log "${last_tag}"..HEAD --pretty=format:"%s" || true)
+
+    if [[ -z "$commits" ]]; then
+        echo "(no new commits since ${last_tag})" >> "$temp_file"
+        mv "$temp_file" "$changelog_file"
+        print_warning "No new commits to include in changelog."
+        return
+    fi
+
+    local added changed fixed
+    added=""; changed=""; fixed=""
+
+    while IFS= read -r commit; do
+        msg="${commit#*: }"
+        msg="${msg# }"
+        case "$commit" in
+            feat:*|feature:*) added="${added}\n- ${msg}" ;;
+            fix:*|bugfix:*) fixed="${fixed}\n- ${msg}" ;;
+            refactor:*|chore:*|style:*) changed="${changed}\n- ${msg}" ;;
+            bump*version*) ;; # skip version bumps
+            *) changed="${changed}\n- ${commit}" ;;
+        esac
+    done <<< "$commits"
+
+    [[ -n "$added" ]] && echo -e "\n### Added${added}" >> "$temp_file"
+    [[ -n "$changed" ]] && echo -e "\n### Changed${changed}" >> "$temp_file"
+    [[ -n "$fixed" ]] && echo -e "\n### Fixed${fixed}" >> "$temp_file"
+
+    echo "" >> "$temp_file"
+
+    mv "$temp_file" "$changelog_file"
+    print_success "CHANGELOG.md regenerated for commits since ${last_tag}"
+}
+
 if [[ "$DRY_RUN" == false ]]; then
-    print_info "Updating CHANGELOG.md..."
-    
-    CHANGELOG_FILE="CHANGELOG.md"
-    if [[ -f "$CHANGELOG_FILE" ]]; then
-        # Get current date
-        CURRENT_DATE=$(date +%Y-%m-%d)
-        
-        # Check if [Unreleased] section exists
-        if grep -q "## \[Unreleased\]" "$CHANGELOG_FILE"; then
-            # Create backup
-            cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
-            
-            # Replace [Unreleased] with the new version
-            sed -i.tmp "s/## \[Unreleased\]/## [$NEW_VERSION] - $CURRENT_DATE/" "$CHANGELOG_FILE"
-            rm "${CHANGELOG_FILE}.tmp" 2>/dev/null || true
-            
-            # Add a new [Unreleased] section at the top
-            # Find the line after "## [Unreleased]" which is now "## [$NEW_VERSION]"
-            awk -v date="$CURRENT_DATE" -v ver="$NEW_VERSION" '
-            /^## \['"$NEW_VERSION"'\] - '"$CURRENT_DATE"'/ {
-                print "## [Unreleased]"
-                print ""
-                print "### Added"
-                print ""
-                print "### Changed"
-                print ""
-                print "### Fixed"
-                print ""
-                print $0
-                next
-            }
-            { print }
-            ' "${CHANGELOG_FILE}.backup" > "$CHANGELOG_FILE"
-            
-            rm "${CHANGELOG_FILE}.backup" 2>/dev/null || true
-            print_success "Updated CHANGELOG.md (moved Unreleased -> [$NEW_VERSION])"
-        else
-            print_warning "No [Unreleased] section found in CHANGELOG.md"
-            print_info "Consider adding an [Unreleased] section for next release"
-        fi
-    else
-        print_warning "CHANGELOG.md not found, skipping changelog update"
-    fi
-elif [[ "$DRY_RUN" == true ]]; then
-    if [[ -f "CHANGELOG.md" ]] && grep -q "## \[Unreleased\]" "CHANGELOG.md"; then
-        print_info "Would update CHANGELOG.md: [Unreleased] -> [$NEW_VERSION]"
-    fi
+    print_info "Generating CHANGELOG.md from latest commits..."
+    update_changelog
 fi
+
+# ------------------------------------------------------------------------------
+
+if [[ "$DRY_RUN" == false ]]; then
+    print_info "Generating CHANGELOG.md from git history..."
+    update_changelog
+fi
+
+# ------------------------------------------------------------------------------
 
 # Commit changes
 if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
@@ -297,10 +330,10 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     declare -a FILES_TO_ADD=()
     case "$PACKAGE" in
         "rust")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock")
             ;;
         "python")
-            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
             ;;
         "both")
             FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "CHANGELOG.md")
@@ -311,7 +344,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     for file in "${FILES_TO_ADD[@]}"; do
         if [[ "$file" == *"Cargo.lock" ]]; then
             git add -f "$file" 2>/dev/null || print_warning "Could not add $file (might be ignored)"
-        elif [[ -f "$file" ]]; then
+        else
             git add "$file"
         fi
     done
@@ -338,8 +371,7 @@ elif [[ "$NO_COMMIT" == true ]]; then
 else
     print_info "Changes committed."
     print_info ""
-    print_info "Next step: Push changes to trigger auto-release"
-    print_info "  git push origin main"
+    print_info "Next step: Merge changes to trigger auto-release"
 fi
 
 print_info ""
@@ -350,13 +382,12 @@ case "$PACKAGE" in
         print_info "  - Publish Rust crate to crates.io"
         ;;
     "python")
-        print_info "  - Build 40+ wheels for all platforms (Linux, macOS, Windows)"
         print_info "  - Create GitHub release with python-v$NEW_VERSION tag"
         print_info "  - Publish Python package to PyPI"
         ;;
     "both")
         print_info "  - Create GitHub releases for both packages"
         print_info "  - Publish Rust crate to crates.io"
-        print_info "  - Build 40+ wheels and publish Python package to PyPI"
+        print_info "  - Publish Python package to PyPI"
         ;;
 esac
