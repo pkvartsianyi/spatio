@@ -396,12 +396,13 @@ except RuntimeError as e:
 ## Project Status
 
 Spatio-Python is in **alpha development**:
-- ✅ Core spatial operations implemented
-- ✅ Complete Python API via PyO3 bindings
-- ✅ TTL and persistence support
-- 🚧 Atomic operations (coming soon)
-- 🚧 Enhanced spatial types (polygons, etc.)
+- Core spatial operations implemented
+- Complete Python API via PyO3 bindings
+- TTL and persistence support
+- Atomic operations (coming soon)
+- Enhanced spatial types (polygons, etc.)
 
+Current version: **0.1.0-alpha.10**
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.

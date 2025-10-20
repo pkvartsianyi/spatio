@@ -145,17 +145,13 @@ impl AtomicBatch {
                 Operation::Insert { key, value, opts } => {
                     let item = match opts {
                         Some(SetOptions { ttl: Some(ttl), .. }) => {
-                            crate::types::DbItem::with_ttl(key.clone(), value.clone(), *ttl)
+                            crate::types::DbItem::with_ttl(value.clone(), *ttl)
                         }
                         Some(SetOptions {
                             expires_at: Some(expires_at),
                             ..
-                        }) => crate::types::DbItem::with_expiration(
-                            key.clone(),
-                            value.clone(),
-                            *expires_at,
-                        ),
-                        _ => crate::types::DbItem::new(key.clone(), value.clone()),
+                        }) => crate::types::DbItem::with_expiration(value.clone(), *expires_at),
+                        _ => crate::types::DbItem::new(value.clone()),
                     };
                     inner.insert_item(key.clone(), item);
                 }

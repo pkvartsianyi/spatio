@@ -64,9 +64,7 @@
 //! )?;
 //!
 //! // Manual configuration
-//! let mut config = Config::default();
-//! config.geohash_precision = 6; // ~610m accuracy
-//! config.geohash_search_precisions = vec![5, 6, 7];
+//! let config = Config::with_geohash_precision(6); // ~610m accuracy
 //! let custom_db = Spatio::memory_with_config(config)?;
 //! # Ok(())
 //! # }
@@ -133,25 +131,42 @@ pub mod batch;
 pub mod db;
 pub mod error;
 pub mod index;
-pub mod persistence;
+pub mod namespace;
 pub mod spatial;
+pub mod storage;
 pub mod types;
 
-// Core exports
+#[cfg(feature = "aof")]
+pub mod persistence;
+
+// Core exports - Main API
 pub use db::DB;
 pub use error::{Result, SpatioError};
 
-// Main database type
+// Main database type alias for cleaner API
 pub type Spatio = DB;
 
-// Spatial types
+// Spatial types and operations
 pub use spatial::{BoundingBox, Point};
 
 // Configuration and options
 pub use types::{Config, DbStats, SetOptions, SyncPolicy};
 
+// Namespace support for data organization
+pub use namespace::{Namespace, NamespaceManager};
+
+// Storage backend abstraction
+pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
+
+#[cfg(feature = "aof")]
+pub use storage::AOFBackend;
+
 // Batch operations
 pub use batch::AtomicBatch;
+
+// AOF persistence (when feature enabled)
+#[cfg(feature = "aof")]
+pub use persistence::{AOFConfig, AOFFile};
 
 // Geohash configuration constants
 pub use index::{DEFAULT_GEOHASH_PRECISION, DEFAULT_SEARCH_PRECISIONS};
@@ -160,7 +175,35 @@ pub use index::{DEFAULT_GEOHASH_PRECISION, DEFAULT_SEARCH_PRECISIONS};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Prelude module for common imports
+///
+/// Import this module to get the most commonly used types and traits:
+///
+/// ```rust
+/// use spatio::prelude::*;
+///
+/// let db = Spatio::memory()?;
+/// let point = Point::new(40.7128, -74.0060);
+/// # Ok::<(), spatio::SpatioError>(())
+/// ```
 pub mod prelude {
-    pub use crate::{BoundingBox, Config, Point, Result, SetOptions, Spatio, SpatioError};
+    // Core database types
+    pub use crate::{Result, Spatio, SpatioError};
+
+    // Spatial types
+    pub use crate::{BoundingBox, Point};
+
+    // Configuration
+    pub use crate::{Config, SetOptions, SyncPolicy};
+
+    // Namespace support for data organization
+    pub use crate::{Namespace, NamespaceManager};
+
+    // Storage backends
+    pub use crate::{MemoryBackend, StorageBackend};
+
+    #[cfg(feature = "aof")]
+    pub use crate::AOFBackend;
+
+    // Common standard library types
     pub use std::time::Duration;
 }

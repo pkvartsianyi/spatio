@@ -51,7 +51,11 @@ impl IndexManager {
         Self {
             spatial_indexes: FxHashMap::default(),
             geohash_precision: config.geohash_precision,
-            search_precisions: config.geohash_search_precisions.clone(),
+            search_precisions: vec![
+                config.geohash_precision.saturating_sub(2),
+                config.geohash_precision.saturating_sub(1),
+                config.geohash_precision,
+            ],
         }
     }
 
@@ -451,11 +455,7 @@ mod tests {
 
     #[test]
     fn test_custom_geohash_precision() {
-        let config = Config {
-            geohash_precision: 10,
-            geohash_search_precisions: vec![8, 9, 10],
-            ..Default::default()
-        };
+        let config = Config::with_geohash_precision(10);
 
         let manager = IndexManager::with_config(&config);
         assert_eq!(manager.geohash_precision, 10);
@@ -464,10 +464,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_remove_with_custom_precision() -> Result<()> {
-        let config = Config {
-            geohash_precision: 6, // Lower precision for testing
-            ..Default::default()
-        };
+        let config = Config::with_geohash_precision(6); // Lower precision for testing
 
         let mut manager = IndexManager::with_config(&config);
         let point = Point::new(40.7128, -74.0060);
@@ -493,17 +490,11 @@ mod tests {
     #[test]
     fn test_search_with_different_precisions() -> Result<()> {
         // Test with single precision
-        let config1 = Config {
-            geohash_search_precisions: vec![7],
-            ..Default::default()
-        };
+        let config1 = Config::with_geohash_precision(7);
         let mut manager1 = IndexManager::with_config(&config1);
 
         // Test with multiple precisions
-        let config2 = Config {
-            geohash_search_precisions: vec![6, 7, 8, 9],
-            ..Default::default()
-        };
+        let config2 = Config::with_geohash_precision(8);
         let mut manager2 = IndexManager::with_config(&config2);
 
         let point = Point::new(40.7128, -74.0060);

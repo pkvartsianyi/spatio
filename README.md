@@ -21,19 +21,33 @@
   </a>
 </p>
 
-**Spatio** is a fast, embedded spatial database designed for applications that need to store and query location-based data efficiently. Built with simplicity and performance in mind, Spatio provides a clean API for spatial operations without the complexity of traditional GIS systems.
+**Spatio** is a high-performance, embedded spatial database designed for applications that need to store and query location-based data efficiently. Built with a clean architecture and extensible design, Spatio provides powerful spatial operations with configurable storage backends and multi-tenant support.
 
 ## Features
 
-- **Fast Key-Value Storage**: High-performance in-memory operations with optional persistence
-- **Automatic Spatial Indexing**: Geographic points are automatically indexed for efficient queries
+### **Flexible Architecture**
+- **Storage Backend Abstraction**: Pluggable storage with Memory and AOF backends
+- **Namespace Support**: Data isolation with automatic key prefixing
+- **Feature Flags**: Compile only what you need (serde, geojson, aof, toml)
+- **Configurable**: JSON/TOML serializable configuration
+
+### **High Performance**
+- **Fast Key-Value Storage**: ~1.6M ops/sec with optimized in-memory operations
+- **Automatic Spatial Indexing**: Geographic points indexed with geohash for efficient queries
+- **Concurrent Access**: Thread-safe operations with read-write locks
+- **Background AOF Rewriting**: Automatic file compaction with size thresholds
+
+### **Spatial Operations**
 - **Spatial Queries**: Find nearby points, check intersections, and query bounding boxes
+- **GeoJSON I/O**: Native support for GeoJSON import/export
+- **Distance Calculations**: Haversine formula for accurate geographic distances
 - **Trajectory Tracking**: Store and query movement paths over time
+
+### **Data Management**
 - **TTL Support**: Built-in data expiration for temporary data
 - **Atomic Operations**: Batch multiple operations for data consistency
-- **Thread-Safe**: Concurrent read/write access without blocking
+- **Persistence**: Optional append-only file format with background optimization
 - **Embedded**: No external dependencies or setup required
-- **Simple API**: Clean, focused interface that's easy to learn and use
 
 ## Installation
 
@@ -72,12 +86,21 @@ import spatio
 # Create an in-memory database
 db = spatio.Spatio.memory()
 
-# Store a simple key-value pair
-db.insert(b"user:123", b"John Doe")
+# Namespace support for data organization
+namespace_a = spatio.Namespace.new("namespace_a")
+namespace_b = spatio.Namespace.new("namespace_b")
 
-# Store a geographic point (automatically indexed)
+# Store data with namespace isolation
+db.insert(namespace_a.key("user:123"), b"John Doe")
+db.insert(namespace_b.key("user:123"), b"Jane Smith")
+
+# Store geographic points with automatic indexing
 nyc = spatio.Point(40.7128, -74.0060)
 db.insert_point("cities", nyc, b"New York City")
+
+# GeoJSON support
+geojson = nyc.to_geojson()
+point_from_json = spatio.Point.from_geojson(geojson)
 
 # Find nearby points within 100km
 nearby = db.find_nearby("cities", nyc, 100_000.0, 10)
@@ -86,46 +109,44 @@ print(f"Found {len(nearby)} cities nearby")
 
 ### Rust
 ```rust
-use spatio::{Point, SetOptions, Spatio};
-use std::time::Duration;
+use spatio::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create an in-memory database
-    let db = Spatio::memory()?;
+fn main() -> Result<()> {
+    // Simplified configuration with serialization
+    let config = Config::default()
+        .with_geohash_precision(10)
+        .with_default_ttl(Duration::from_secs(3600));
+    
+    // Create database with custom config
+    let db = Spatio::memory_with_config(config)?;
+    
+    // Namespace support for data organization
+    let namespace_a = Namespace::new("namespace_a");
+    let namespace_b = Namespace::new("namespace_b");
+    
+    // Store data with namespace isolation
+    db.insert(namespace_a.key("user:123"), b"John Doe", None)?;
+    db.insert(namespace_b.key("user:123"), b"Jane Smith", None)?;
 
-    // Store a simple key-value pair
-    db.insert("user:123", b"John Doe", None)?;
-
-    // Store a geographic point (automatically indexed)
+    // GeoJSON I/O support
     let nyc = Point::new(40.7128, -74.0060);
+    let geojson = nyc.to_geojson()?;
+    let point_from_geojson = Point::from_geojson(&geojson)?;
+    
+    // Spatial operations with automatic indexing
     db.insert_point("cities", &nyc, b"New York City", None)?;
-
-    // Find nearby points within 100km
     let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
-    println!("Found {} cities nearby", nearby.len());
-
-    // Check if points exist in a region
-    let has_cities = db.contains_point("cities", &nyc, 50_000.0)?;
-    println!("Cities within 50km: {}", has_cities);
-
-    // Count points within distance
+    
+    // Advanced spatial queries
     let count = db.count_within_distance("cities", &nyc, 100_000.0)?;
-    println!("City count within 100km: {}", count);
-
-    // Find points in bounding box
-    let in_area = db.find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)?;
-    println!("Cities in area: {}", in_area.len());
-
-    // Atomic batch operations
-    db.atomic(|batch| {
-        batch.insert("sensor:temp", b"22.5C", None)?;
-        batch.insert("sensor:humidity", b"65%", None)?;
-        Ok(())
-    })?;
-
-    // Data with TTL (expires in 5 minutes)
-    let opts = SetOptions::with_ttl(Duration::from_secs(300));
-    db.insert("session:abc", b"user_data", Some(opts))?;
+    let in_bounds = db.find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)?;
+    
+    // Storage backend abstraction
+    let memory_backend = MemoryBackend::new();
+    
+    // Feature-gated AOF backend
+    #[cfg(feature = "aof")]
+    let aof_backend = AOFBackend::new("data.aof")?;
 
     Ok(())
 }
@@ -148,6 +169,11 @@ cargo run --example spatial_queries
 ### Trajectory Tracking
 ```bash
 cargo run --example trajectory_tracking
+```
+
+### Architecture Demo (New!)
+```bash
+cargo run --example architecture_demo
 ```
 
 ### Comprehensive Demo
@@ -298,45 +324,77 @@ cargo doc --open
 
 ## Architecture
 
-Spatio uses a layered architecture:
-- **Storage Layer**: In-memory B-trees with optional AOF persistence
-- **Indexing Layer**: Automatic geohash-based spatial indexing
-- **Query Layer**: Optimized spatial query execution
-- **API Layer**: Clean, type-safe Rust interface
+Spatio uses a modern, extensible layered architecture:
+
+### **Storage Layer**
+- **Backend Abstraction**: Trait-based storage with pluggable implementations
+- **Memory Backend**: High-performance in-memory B-trees with prefix operations
+- **AOF Backend**: Append-only file storage with background compaction
+- **Custom Backends**: Extensible design for RocksDB, SQLite, or cloud storage
+
+### **Namespace Layer** 
+- **Data Organization**: Isolated data with automatic key prefixing
+- **Namespace Management**: Utilities for parsing and organizing namespaced keys
+- **Configurable Separators**: Flexible namespace delimiter configuration
+
+### **Indexing Layer**
+- **Spatial Indexing**: Automatic geohash-based geographic point indexing
+- **Configurable Precision**: Adjustable spatial resolution (1-12 levels)
+- **Multi-Level Search**: Smart fallback across precision levels
+
+### **Query Layer**
+- **Optimized Execution**: Efficient spatial query processing
+- **Multiple Query Types**: Point-in-radius, bounding box, nearest neighbor
+- **Background Cleanup**: Automatic TTL-based data expiration
+
+### **API Layer**
+- **Clean Interface**: Organized public API with comprehensive prelude
+- **Feature Flags**: Modular compilation for specific use cases
+- **Serialization**: JSON/TOML config support with validation
+- **Language Bindings**: Native Rust API with Python bindings
 
 ## Status
 
-Spatio is in active development for embedded use cases.
+Spatio is in active development for embedded use cases. Current version: **0.1.0-alpha.10**
 
-### Completed Features
-- **Core Database**: Key-value storage with B-tree indexing
-- **Spatial Operations**: Automatic geohash-based spatial indexing
-- **Geographic Queries**: Point-in-radius, bounding box, and nearest neighbor searches
-- **Trajectory Tracking**: Time-series storage and querying for moving objects
-- **TTL Support**: Automatic data expiration with time-to-live
+### **Core Architecture** (New!)
+- **Storage Backend Abstraction**: Pluggable storage with trait-based design
+- **Namespace Support**: Data isolation with automatic key prefixing  
+- **Simplified Configuration**: JSON/TOML serializable config with validation
+- **Feature Flags**: Modular compilation (serde, geojson, aof, toml)
+- **Clean Public API**: Organized exports with comprehensive prelude module
+
+### **Spatial & Data Features**
+- **Enhanced Spatial Operations**: Point-in-radius, bounding box, trajectory tracking
+- **GeoJSON I/O**: Native import/export for interoperability
+- **Automatic Indexing**: Geohash-based spatial indexing with configurable precision
+- **TTL Support**: Time-based data expiration with background cleanup
+- **Thread Safety**: Concurrent read/write access with optimized locking
+
+### **Persistence & Performance**
+- **Enhanced AOF**: Background rewriting with configurable size thresholds
+- **Memory Backend**: High-performance in-memory storage with prefix operations
 - **Atomic Operations**: Batch operations for data consistency (Rust API)
-- **Thread Safety**: Concurrent read/write access with RwLock
-- **Persistence**: Optional append-only file (AOF) storage
 - **Python Bindings**: Complete PyO3-based Python API via `pip install spatio`
 
-### In Development
+### **In Development**
 - **Python Atomic Operations**: Batch operations for Python API
-- **Enhanced Persistence**: Full AOF replay and compaction
-- **Performance Optimizations**: Spatial index improvements
-- **Additional Spatial Types**: Polygons, lines, and complex geometries
+- **Additional Storage Backends**: RocksDB, SQLite integration
+- **Advanced Spatial Types**: Polygons, lines, and complex geometries
+- **Query Optimization**: Enhanced spatial index performance
 
-### Performance Characteristics
+### **Performance Characteristics**
 Based on current benchmarks:
 - **Key-value operations**: ~1.6M ops/sec (600ns per operation)
-- **Spatial insertions**: ~1.9M points/sec (530ns per operation)
+- **Spatial insertions**: ~1.9M points/sec (530ns per operation)  
 - **Spatial queries**: ~225K queries/sec (4.4μs per operation)
-- **Memory efficiency**: Optimized in-memory storage with spatial indexing
+- **Memory efficiency**: Optimized storage with spatial indexing and background compaction
 
-### Production Readiness
-- **Alpha Status**: API is stabilizing but may have breaking changes
-- **Testing**: Comprehensive test suite with 20 unit tests and 13 integration tests
-- **Documentation**: Complete API documentation and examples
-- **Benchmarks**: Performance regression testing in place
+### **Production Readiness**
+- **Alpha Status**: Enhanced architecture stabilizing, may have breaking changes
+- **Testing**: Comprehensive test suite with 20+ unit tests and integration tests
+- **Documentation**: Complete API documentation with architectural examples
+- **Extensibility**: Plugin architecture ready for custom storage backends
 - **Language Support**: Rust (native) and Python (bindings)
 
 ## Contributing

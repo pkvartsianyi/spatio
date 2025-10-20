@@ -8,6 +8,7 @@ use geo;
 use geohash;
 use s2::cellid::CellID;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::fmt;
 
 /// A geographic point representing a location on Earth's surface.
@@ -64,6 +65,126 @@ impl Point {
     /// ```
     pub fn new(lat: f64, lon: f64) -> Self {
         Self { lat, lon }
+    }
+
+    /// Create a point from GeoJSON coordinates [longitude, latitude]
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - Array of [longitude, latitude] coordinates
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Point;
+    ///
+    /// let point = Point::from_geojson_coords(&[-74.0060, 40.7128]).unwrap();
+    /// assert_eq!(point.lat, 40.7128);
+    /// assert_eq!(point.lon, -74.0060);
+    /// ```
+    pub fn from_geojson_coords(coords: &[f64]) -> Result<Self> {
+        if coords.len() != 2 {
+            return Err(SpatioError::Other(
+                "GeoJSON coordinates must have exactly 2 elements [lon, lat]".into(),
+            ));
+        }
+        Ok(Self::new(coords[1], coords[0]))
+    }
+
+    /// Convert to GeoJSON coordinates [longitude, latitude]
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Point;
+    ///
+    /// let point = Point::new(40.7128, -74.0060);
+    /// let coords = point.to_geojson_coords();
+    /// assert_eq!(coords, [-74.0060, 40.7128]);
+    /// ```
+    pub fn to_geojson_coords(&self) -> [f64; 2] {
+        [self.lon, self.lat]
+    }
+
+    /// Convert to GeoJSON Point geometry
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Point;
+    ///
+    /// let point = Point::new(40.7128, -74.0060);
+    /// let geojson = point.to_geojson().unwrap();
+    /// println!("{}", geojson);
+    /// ```
+    pub fn to_geojson(&self) -> Result<String> {
+        let mut geometry = Map::new();
+        geometry.insert("type".to_string(), Value::String("Point".to_string()));
+        geometry.insert(
+            "coordinates".to_string(),
+            Value::Array(vec![
+                Value::Number(serde_json::Number::from_f64(self.lon).unwrap()),
+                Value::Number(serde_json::Number::from_f64(self.lat).unwrap()),
+            ]),
+        );
+
+        serde_json::to_string(&geometry)
+            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))
+    }
+
+    /// Create a point from GeoJSON string
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::Point;
+    ///
+    /// let geojson = r#"{"type":"Point","coordinates":[-74.0060,40.7128]}"#;
+    /// let point = Point::from_geojson(geojson).unwrap();
+    /// assert_eq!(point.lat, 40.7128);
+    /// assert_eq!(point.lon, -74.0060);
+    /// ```
+    pub fn from_geojson(geojson: &str) -> Result<Self> {
+        let value: Value = serde_json::from_str(geojson)
+            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+
+        let geometry = value
+            .as_object()
+            .ok_or_else(|| SpatioError::Other("GeoJSON must be an object".into()))?;
+
+        let type_field = geometry
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SpatioError::Other("GeoJSON must have a 'type' field".into()))?;
+
+        if type_field != "Point" {
+            return Err(SpatioError::Other(format!(
+                "Expected Point geometry, got {}",
+                type_field
+            )));
+        }
+
+        let coordinates = geometry
+            .get("coordinates")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                SpatioError::Other("GeoJSON Point must have coordinates array".into())
+            })?;
+
+        if coordinates.len() != 2 {
+            return Err(SpatioError::Other(
+                "GeoJSON Point coordinates must have exactly 2 elements".into(),
+            ));
+        }
+
+        let lon = coordinates[0]
+            .as_f64()
+            .ok_or_else(|| SpatioError::Other("Longitude must be a number".into()))?;
+        let lat = coordinates[1]
+            .as_f64()
+            .ok_or_else(|| SpatioError::Other("Latitude must be a number".into()))?;
+
+        Ok(Self::new(lat, lon))
     }
 
     /// Calculate the distance between two points using the Haversine formula.

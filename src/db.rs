@@ -121,9 +121,7 @@ impl DB {
     /// use spatio::{Spatio, Config};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut config = Config::default();
-    /// config.geohash_precision = 10; // Higher precision for dense urban areas
-    /// config.geohash_search_precisions = vec![8, 9, 10]; // Custom search precisions
+    /// let config = Config::with_geohash_precision(10); // Higher precision for dense urban areas
     ///
     /// let db = Spatio::open_with_config("my_database.db", config)?;
     /// # Ok(())
@@ -207,14 +205,12 @@ impl DB {
         let value_bytes = Bytes::copy_from_slice(value.as_ref());
 
         let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                DbItem::with_ttl(key_bytes.clone(), value_bytes, ttl)
-            }
+            Some(SetOptions { ttl: Some(ttl), .. }) => DbItem::with_ttl(value_bytes, ttl),
             Some(SetOptions {
                 expires_at: Some(expires_at),
                 ..
-            }) => DbItem::with_expiration(key_bytes.clone(), value_bytes, expires_at),
-            _ => DbItem::new(key_bytes.clone(), value_bytes),
+            }) => DbItem::with_expiration(value_bytes, expires_at),
+            _ => DbItem::new(value_bytes),
         };
 
         let mut inner = self.write()?;
@@ -307,14 +303,12 @@ impl DB {
 
         // Insert into main storage
         let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                DbItem::with_ttl(key_bytes.clone(), data_ref.clone(), ttl)
-            }
+            Some(SetOptions { ttl: Some(ttl), .. }) => DbItem::with_ttl(data_ref.clone(), ttl),
             Some(SetOptions {
                 expires_at: Some(expires_at),
                 ..
-            }) => DbItem::with_expiration(key_bytes.clone(), data_ref.clone(), expires_at),
-            _ => DbItem::new(key_bytes.clone(), data_ref.clone()),
+            }) => DbItem::with_expiration(data_ref.clone(), expires_at),
+            _ => DbItem::new(data_ref.clone()),
         };
 
         inner.insert_item(key_bytes.clone(), item);
@@ -734,7 +728,6 @@ impl DBInner {
                     expires_at,
                 } => {
                     let item = DbItem {
-                        key: key.clone(),
                         value: value.clone(),
                         expires_at,
                     };

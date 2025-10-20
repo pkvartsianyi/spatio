@@ -8,9 +8,7 @@ for better type safety and documentation.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from typing import Dict
 from typing import List
-from typing import Protocol
 from typing import Tuple
 from typing import Union
 
