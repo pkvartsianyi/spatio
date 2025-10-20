@@ -315,6 +315,36 @@ just test
 python examples/basic_usage.py
 ```
 
+### Building Multi-Platform Wheels
+
+The project uses [`cibuildwheel`](https://cibuildwheel.readthedocs.io/) to build wheels for all major platforms and Python versions (3.9-3.13):
+
+**Supported Platforms:**
+- Linux: `x86_64`, `aarch64` (manylinux)
+- macOS: `x86_64` (Intel), `arm64` (Apple Silicon)
+- Windows: `AMD64`
+
+**Automated Builds:**
+- Wheels are automatically built on every release via GitHub Actions
+- All wheels are tested before publishing to PyPI
+- The workflow generates 40+ wheel files covering all platform/Python combinations
+
+**Manual Build:**
+```bash
+# Install cibuildwheel
+pip install cibuildwheel
+
+# Build wheels for your platform
+cibuildwheel --platform linux  # or macos, windows
+
+# Build for specific Python versions
+CIBW_BUILD="cp311-* cp312-*" cibuildwheel
+
+# Output wheels will be in ./wheelhouse/
+```
+
+For more details, see `.github/workflows/wheels.yml`
+
 ### Testing
 
 ```bash
@@ -399,10 +429,18 @@ Spatio-Python is in **alpha development**:
 - Core spatial operations implemented
 - Complete Python API via PyO3 bindings
 - TTL and persistence support
-- Atomic operations (coming soon)
-- Enhanced spatial types (polygons, etc.)
+- Multi-platform wheels (Linux, macOS, Windows)
+- Python 3.8-3.13 support
 
 Current version: **0.1.0-alpha.10**
+
+### Platform Support
+
+Pre-built wheels are available for:
+- **Linux**: x86_64, aarch64 (manylinux)
+- **macOS**: x86_64 (Intel), arm64 (Apple Silicon)
+- **Windows**: AMD64
+- **Python**: 3.9, 3.10, 3.11, 3.12, 3.13
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.

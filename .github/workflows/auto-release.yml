@@ -426,14 +426,15 @@ jobs:
           CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
           DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
 
-  release-python:
-    name: Release Python Package
-    runs-on: ubuntu-latest
+  build-python-wheels:
+    name: Build Python wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     needs: [detect-changes, test-python]
     if: needs.detect-changes.outputs.python-changed == 'true'
-    permissions:
-      contents: write
-      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
 
     steps:
       - name: Checkout code
@@ -447,21 +448,101 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Set up QEMU (for Linux ARM builds)
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            py-spatio/target
-          key: python-release-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
+          platforms: arm64
 
-      - name: Install Python build tools
-        working-directory: py-spatio
+      - name: Build wheels with cibuildwheel
+        uses: pypa/cibuildwheel@v2.16
+        env:
+          # Skip PyPy and musllinux builds
+          CIBW_SKIP: "pp* *-musllinux*"
+          
+          # Build for Python 3.9-3.13
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          
+          # Linux: build for x86_64 and aarch64
+          CIBW_ARCHS_LINUX: "x86_64 aarch64"
+          
+          # macOS: build for x86_64 (macos-13) and arm64 (macos-14)
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          
+          # Windows: build for AMD64
+          CIBW_ARCHS_WINDOWS: "AMD64"
+          
+          # Install test dependencies
+          CIBW_TEST_REQUIRES: "pytest"
+          
+          # Run tests after building (skip on emulated architectures)
+          CIBW_TEST_COMMAND: "pytest {project}/py-spatio/tests -v"
+          CIBW_TEST_SKIP: "*-*linux_aarch64 *-macosx_arm64"
+          
+          # Build configuration
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
+        with:
+          package-dir: ./py-spatio
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+          retention-days: 7
+
+  build-python-sdist:
+    name: Build Python source distribution
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-python]
+    if: needs.detect-changes.outputs.python-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install maturin twine
+          pip install maturin
+
+      - name: Build sdist
+        working-directory: py-spatio
+        run: maturin sdist --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: py-spatio/dist/*.tar.gz
+          retention-days: 7
+
+  release-python:
+    name: Release Python Package
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-python, build-python-wheels, build-python-sdist]
+    if: needs.detect-changes.outputs.python-changed == 'true'
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Create Python release tag
         run: |
@@ -515,43 +596,47 @@ jobs:
           prerelease: ${{ contains(needs.detect-changes.outputs.python-version, 'alpha') || contains(needs.detect-changes.outputs.python-version, 'beta') || contains(needs.detect-changes.outputs.python-version, 'rc') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Python wheels
-        working-directory: py-spatio
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - name: Download sdist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: List all artifacts
         run: |
-          maturin build --release --out dist
-          echo "Built wheels:"
-          ls -la dist/
+          echo "=== All built packages for PyPI upload ==="
+          ls -lh dist/
+          echo ""
+          echo "Total files: $(ls -1 dist/ | wc -l)"
+          echo "Wheels: $(ls -1 dist/*.whl 2>/dev/null | wc -l)"
+          echo "Source dist: $(ls -1 dist/*.tar.gz 2>/dev/null | wc -l)"
+
+      - name: Install twine
+        run: pip install twine
 
       - name: Verify package metadata
-        working-directory: py-spatio
         run: |
           # Check all built packages
           twine check dist/*
-          echo "Package verification completed successfully"
-          echo "Packages to upload:"
-          ls -la dist/
-
-      - name: Clean working directory
-        run: |
-          # Remove any temporary files
-          rm -f rust-release-notes.md python-release-notes.md
-          # Ensure working directory is clean
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo "Working directory is not clean:"
-            git status --short
-            exit 1
-          fi
+          echo "✓ Package verification completed successfully"
 
       - name: Publish to PyPI
-        working-directory: py-spatio
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             echo "DRY_RUN mode: Skipping actual PyPI publish"
-            echo "Running twine check only..."
-            twine check dist/*
+            echo "Would upload the following packages:"
+            ls -lh dist/
           elif [ -n "$PYPI_API_TOKEN" ]; then
             echo "Publishing to PyPI..."
             twine upload dist/*
+            echo "✓ Successfully published to PyPI"
           else
             echo "PYPI_API_TOKEN secret is not set"
             echo "To publish to PyPI, add your PyPI API token as a repository secret named PYPI_API_TOKEN"
