@@ -38,24 +38,25 @@ jobs:
         run: |
           # Get current version
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_NAME="rust-v$CURRENT_VERSION"
 
-          # Get previous version from last commit that changed Cargo.toml
+          echo "Current Rust version: $CURRENT_VERSION"
+
+          # Check if this version tag already exists remotely
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
+            echo "Tag $TAG_NAME already exists remotely. No release needed."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG_NAME does not exist. Version change detected."
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Get previous version from last commit for informational purposes
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 Cargo.toml | tail -1)
           if [[ -n "$PREVIOUS_COMMIT" ]]; then
             PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           else
             PREVIOUS_VERSION=""
-          fi
-
-          echo "Current Rust version: $CURRENT_VERSION"
-          echo "Previous Rust version: $PREVIOUS_VERSION"
-
-          if [[ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" && -n "$PREVIOUS_VERSION" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Rust version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "Rust version unchanged"
           fi
 
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
@@ -66,24 +67,25 @@ jobs:
         run: |
           # Get current version
           CURRENT_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_NAME="python-v$CURRENT_VERSION"
 
-          # Get previous version from last commit that changed py-spatio/Cargo.toml
+          echo "Current Python version: $CURRENT_VERSION"
+
+          # Check if this version tag already exists remotely
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
+            echo "Tag $TAG_NAME already exists remotely. No release needed."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG_NAME does not exist. Version change detected."
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Get previous version from last commit for informational purposes
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 py-spatio/Cargo.toml | tail -1)
           if [[ -n "$PREVIOUS_COMMIT" ]]; then
             PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:py-spatio/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           else
             PREVIOUS_VERSION=""
-          fi
-
-          echo "Current Python version: $CURRENT_VERSION"
-          echo "Previous Python version: $PREVIOUS_VERSION"
-
-          if [[ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" && -n "$PREVIOUS_VERSION" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Python version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "Python version unchanged"
           fi
 
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
