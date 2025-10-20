@@ -84,6 +84,22 @@ pub struct StorageStats {
     pub operations_count: u64,
 }
 
+/// Computes the upper bound for a prefix scan.
+fn calculate_prefix_end(prefix: &[u8]) -> Vec<u8> {
+    let mut prefix_end = prefix.to_vec();
+
+    // Find the last non-0xFF byte and increment it.
+    // This creates the smallest key that is lexicographically greater than
+    // any key that could start with the given prefix.
+    while let Some(last_byte) = prefix_end.pop() {
+        if last_byte < 255 {
+            prefix_end.push(last_byte + 1);
+            break;
+        }
+    }
+    prefix_end
+}
+
 /// In-memory storage backend using BTreeMap
 pub struct MemoryBackend {
     data: BTreeMap<Bytes, DbItem>,
@@ -161,15 +177,7 @@ impl StorageBackend for MemoryBackend {
         }
 
         // Compute the upper bound for the range scan
-        let mut prefix_end = prefix.to_vec();
-
-        // Find the last non-0xFF byte and increment it
-        while let Some(last_byte) = prefix_end.pop() {
-            if last_byte < 255 {
-                prefix_end.push(last_byte + 1);
-                break;
-            }
-        }
+        let prefix_end = calculate_prefix_end(prefix);
 
         // Use BTreeMap's range() for efficient iteration over only matching keys
         let range = if prefix_end.len() < prefix.len() {
@@ -217,20 +225,7 @@ impl StorageBackend for MemoryBackend {
         }
 
         // Compute the upper bound for the range scan
-        // We need to find the next possible key after all keys with this prefix
-        let mut prefix_end = prefix.to_vec();
-
-        // Find the last non-0xFF byte and increment it
-        // This creates the smallest key that is lexicographically greater than
-        // any key that could start with the given prefix
-        while let Some(last_byte) = prefix_end.pop() {
-            if last_byte < 255 {
-                prefix_end.push(last_byte + 1);
-                break;
-            }
-            // If the byte is 0xFF, remove it and continue to the previous byte
-            // This handles cases like prefix "abc\xFF\xFF" -> upper bound "abd"
-        }
+        let prefix_end = calculate_prefix_end(prefix);
 
         // Use BTreeMap's range() for efficient iteration over only matching keys
         let range = if prefix_end.len() < prefix.len() {

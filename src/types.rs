@@ -4,7 +4,6 @@
 //! and data management with minimal complexity.
 
 use bytes::Bytes;
-#[cfg(feature = "toml")]
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
@@ -121,10 +120,7 @@ impl Config {
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let config: Config = serde_json::from_str(json)?;
         if let Err(e) = config.validate() {
-            return Err(serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                e,
-            )));
+            return Err(Error::custom(e));
         }
         Ok(config)
     }
