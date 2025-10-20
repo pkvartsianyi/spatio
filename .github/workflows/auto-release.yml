@@ -16,6 +16,7 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------- STAGE 1: DETECT ----------------
   detect-changes:
     name: Detect Version Changes
     runs-on: ubuntu-latest
@@ -36,125 +37,64 @@ jobs:
       - name: Check Rust version changes
         id: check-rust
         run: |
-          # Get current version
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_NAME="rust-v$CURRENT_VERSION"
-
-          echo "Current Rust version: $CURRENT_VERSION"
-
-          # Check if this version tag already exists remotely
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "Tag $TAG_NAME already exists remotely. No release needed."
             echo "changed=false" >> $GITHUB_OUTPUT
           else
-            echo "Tag $TAG_NAME does not exist. Version change detected."
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
-
-          # Get previous version from last commit for informational purposes
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 Cargo.toml | tail -1)
-          if [[ -n "$PREVIOUS_COMMIT" ]]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-
+          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
       - name: Check Python version changes
         id: check-python
         run: |
-          # Get current version
           CURRENT_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_NAME="python-v$CURRENT_VERSION"
-
-          echo "Current Python version: $CURRENT_VERSION"
-
-          # Check if this version tag already exists remotely
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "Tag $TAG_NAME already exists remotely. No release needed."
             echo "changed=false" >> $GITHUB_OUTPUT
           else
-            echo "Tag $TAG_NAME does not exist. Version change detected."
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
-
-          # Get previous version from last commit for informational purposes
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 py-spatio/Cargo.toml | tail -1)
-          if [[ -n "$PREVIOUS_COMMIT" ]]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:py-spatio/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-
+          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:py-spatio/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
       - name: Summary
         run: |
-          echo "Version Change Detection Summary:"
-          echo "================================"
           echo "Rust: ${{ steps.check-rust.outputs.previous }} -> ${{ steps.check-rust.outputs.version }} (Changed: ${{ steps.check-rust.outputs.changed }})"
           echo "Python: ${{ steps.check-python.outputs.previous }} -> ${{ steps.check-python.outputs.version }} (Changed: ${{ steps.check-python.outputs.changed }})"
 
+  # ---------------- STAGE 2: TEST ----------------
   test-rust:
-    name: Test Rust Changes (${{ matrix.os }})
+    name: Test Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: detect-changes
     if: needs.detect-changes.outputs.rust-changed == 'true'
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Check formatting (Linux only)
+      - run: cargo fmt --all -- --check
         if: matrix.os == 'ubuntu-latest'
-        run: cargo fmt --all -- --check
-
-      - name: Run clippy (Linux only)
+      - run: cargo clippy --all-targets -- -D warnings
         if: matrix.os == 'ubuntu-latest'
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --verbose
-
-      - name: Run tests
-        run: cargo test --verbose
-
-      - name: Run doc tests
-        run: cargo test --doc
-
-      - name: Check documentation
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+      - run: cargo test --doc
+      - run: cargo package --allow-dirty
         if: matrix.os == 'ubuntu-latest'
-        run: cargo doc --no-deps
-
-      - name: Verify package can be built
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo package --allow-dirty
 
   test-python:
-    name: Test Python Changes (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    name: Test Python (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     needs: detect-changes
     if: needs.detect-changes.outputs.python-changed == 'true'
@@ -164,7 +104,6 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
         exclude:
-          # Reduce matrix size for efficiency
           - os: windows-latest
             python-version: "3.9"
           - os: windows-latest
@@ -173,555 +112,181 @@ jobs:
             python-version: "3.9"
           - os: macos-latest
             python-version: "3.10"
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            py-spatio/target
-          key: ${{ runner.os }}-python${{ matrix.python-version }}-${{ hashFiles('**/Cargo.lock', 'py-spatio/pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-python${{ matrix.python-version }}-
-
-      - name: Install Python dependencies
-        working-directory: py-spatio
+      - uses: dtolnay/rust-toolchain@stable
+      - working-directory: py-spatio
         run: |
           python -m pip install --upgrade pip
-          pip install maturin
-          pip install -r requirements-dev.txt
-
-      - name: Build Python package
-        working-directory: py-spatio
-        run: |
-          echo "Building Python package..."
+          pip install maturin pytest -r requirements-dev.txt
           maturin build --out dist --interpreter python --verbose
-        env:
-          PYTHONIOENCODING: utf-8
-          RUST_BACKTRACE: 1
-
-      - name: Install Python package (Windows)
-        if: matrix.os == 'windows-latest'
-        working-directory: py-spatio
-        shell: powershell
-        run: |
-          echo "Installing Python package..."
-
-          # Find wheel file using PowerShell
-          $wheelFile = Get-ChildItem dist -Filter "*.whl" | Select-Object -First 1
-
-          if ($null -eq $wheelFile) {
-            echo "ERROR: No wheel file found in dist directory"
-            echo "Available files in dist:"
-            if (Test-Path "dist") {
-              Get-ChildItem dist | ForEach-Object { echo $_.Name }
-            } else {
-              echo "dist directory does not exist"
-            }
-            exit 1
-          }
-
-          echo "Found wheel file: $($wheelFile.FullName)"
-          echo "Installing wheel..."
-          pip install "$($wheelFile.FullName)" --force-reinstall --no-deps --verbose
-
-          echo "Verifying installation..."
-          python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
-
-      - name: Install Python package (Unix)
-        if: matrix.os != 'windows-latest'
-        working-directory: py-spatio
-        run: |
-          echo "Installing Python package..."
-
-          # Find wheel file
-          wheel_file=$(find dist -name "*.whl" -type f | head -1)
-
-          if [ -z "$wheel_file" ]; then
-            echo "ERROR: No wheel file found in dist directory"
-            echo "Available files in dist:"
-            ls -la dist/ || echo "dist directory does not exist"
-            exit 1
-          fi
-
-          echo "Found wheel file: $wheel_file"
-          echo "Installing wheel..."
-          pip install "$wheel_file" --force-reinstall --no-deps --verbose
-
-          echo "Verifying installation..."
-          python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
-
-      - name: Run Python tests (Windows)
-        if: matrix.os == 'windows-latest'
-        working-directory: py-spatio
-        run: |
-          echo "Running Python tests..."
-          echo "Python path:"
-          python -c "import sys; print('\n'.join(sys.path))"
-          echo "Installed packages:"
-          pip list | findstr spatio
+          pip install dist/*.whl --force-reinstall --no-deps
           pytest -v --tb=short -x --maxfail=5
-        env:
-          PYTHONIOENCODING: utf-8
-          PYTEST_TIMEOUT: 600
 
-      - name: Run Python tests (Unix)
-        if: matrix.os != 'windows-latest'
-        working-directory: py-spatio
-        run: |
-          echo "Running Python tests..."
-          echo "Python path:"
-          python -c "import sys; print('\n'.join(sys.path))"
-          echo "Installed packages:"
-          pip list | grep spatio || echo "spatio not found in pip list"
-          pytest -v --tb=short -x --maxfail=5
-        env:
-          PYTHONIOENCODING: utf-8
-          PYTEST_TIMEOUT: 600
+  run-tests:
+    name: Run Tests Stage
+    runs-on: ubuntu-latest
+    needs: [test-rust, test-python]
+    if: always()
+    steps:
+      - run: echo "All tests finished successfully."
 
-      - name: Debug Windows environment
-        if: matrix.os == 'windows-latest' && failure()
-        working-directory: py-spatio
-        run: |
-          echo "Python version: $(python --version)"
-          echo "Pip version: $(pip --version)"
-          echo "Rust version: $(rustc --version)"
-          echo "Cargo version: $(cargo --version)"
-          echo "Maturin version: $(maturin --version)"
-          echo "Current directory: $(pwd)"
-          echo "Directory contents:"
-          ls -la
-          echo "Dist contents:"
-          ls -la dist/ || echo "No dist directory"
-          echo "Target contents:"
-          ls -la target/ || echo "No target directory"
-          python -c "import sys; print('Python path:', sys.path)"
-          python -c "import platform; print('Platform:', platform.platform())"
-        shell: bash
-
-      - name: Run Python linting (Python 3.11, Ubuntu only)
-        if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
-        working-directory: py-spatio
-        run: |
-          ruff check src/ tests/ examples/
-          mypy src/
-
+  # ---------------- STAGE 3: RELEASE ----------------
   release-rust:
     name: Release Rust Crate
     runs-on: ubuntu-latest
-    needs: [detect-changes, test-rust]
+    needs: [run-tests, detect-changes]
     if: needs.detect-changes.outputs.rust-changed == 'true'
     permissions:
       contents: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: release-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Create Rust release tag
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag and release Rust
         run: |
           VERSION="${{ needs.detect-changes.outputs.rust-version }}"
-          TAG_NAME="rust-v$VERSION"
-
+          TAG="rust-v$VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag "$TAG_NAME" -m "Release Rust crate version $VERSION"
-          git push origin "$TAG_NAME"
-
-      - name: Generate Rust changelog
-        id: changelog
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.rust-version }}"
-          PREVIOUS="${{ needs.detect-changes.outputs.rust-previous }}"
-
-          # Create changelog in tmp to avoid dirtying working directory
-          CHANGELOG_FILE="/tmp/rust-release-notes.md"
-          echo "# Rust Crate Release v$VERSION" > "$CHANGELOG_FILE"
-          echo "" >> "$CHANGELOG_FILE"
-
-          if [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> "$CHANGELOG_FILE" || true
-          fi
-
-          if [ ! -s "$CHANGELOG_FILE" ] || [ $(wc -l < "$CHANGELOG_FILE") -le 2 ]; then
-            echo "# Rust Crate Release v$VERSION" > "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "## What's Changed" >> "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "* Updated from version $PREVIOUS to $VERSION" >> "$CHANGELOG_FILE"
-            echo "* See commit history for detailed changes" >> "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/rust-v$PREVIOUS...rust-v$VERSION" >> "$CHANGELOG_FILE"
-          fi
-
-          echo "changelog_file=$CHANGELOG_FILE" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release for Rust
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: rust-v${{ needs.detect-changes.outputs.rust-version }}
-          name: "Rust Crate v${{ needs.detect-changes.outputs.rust-version }}"
-          body_path: ${{ steps.changelog.outputs.changelog_file }}
-          draft: false
-          prerelease: ${{ contains(needs.detect-changes.outputs.rust-version, 'alpha') || contains(needs.detect-changes.outputs.rust-version, 'beta') || contains(needs.detect-changes.outputs.rust-version, 'rc') }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Clean working directory
-        run: |
-          # Remove any temporary files that might have been created
-          rm -f rust-release-notes.md python-release-notes.md
-          # Ensure working directory is clean
-          git status --porcelain
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo "Working directory is not clean:"
-            git status --short
-            exit 1
-          fi
-
-      - name: Publish to crates.io
-        run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "DRY_RUN mode: Skipping actual crates.io publish"
-            echo "Running dry-run only..."
-            cargo publish --dry-run
-          elif [ -n "$CRATES_IO_TOKEN" ]; then
-            echo "Running dry-run first..."
-            cargo publish --dry-run
-            echo "Publishing to crates.io..."
-            cargo publish
-          else
-            echo "CRATES_IO_TOKEN secret is not set"
-            echo "To publish to crates.io, add your crates.io API token as a repository secret named CRATES_IO_TOKEN"
-            echo "Skipping crates.io publish for now..."
-          fi
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-          DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
+          git tag "$TAG" -m "Release Rust crate $VERSION"
+          git push origin "$TAG"
 
   build-python-wheels:
-    name: Build Python wheels on ${{ matrix.os }}
+    name: Build Python Wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [detect-changes, test-python]
+    needs: [run-tests, detect-changes]
     if: needs.detect-changes.outputs.python-changed == 'true'
     strategy:
-      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up QEMU (for Linux ARM builds)
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: docker/setup-qemu-action@v3
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-
-      - name: Build wheels with cibuildwheel
-        uses: pypa/cibuildwheel@v2.16
+      - uses: pypa/cibuildwheel@v2.16
         env:
-          # Skip PyPy and musllinux builds
-          CIBW_SKIP: "pp* *-musllinux*"
-          
-          # Build for Python 3.9-3.13
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
-          
-          # Linux: build for x86_64 and aarch64
           CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          
-          # macOS: build for x86_64 (macos-13) and arm64 (macos-14)
           CIBW_ARCHS_MACOS: "x86_64 arm64"
-          
-          # Windows: build for AMD64
           CIBW_ARCHS_WINDOWS: "AMD64"
-          
-          # Install test dependencies
+          CIBW_SKIP: "pp* *-musllinux*"
           CIBW_TEST_REQUIRES: "pytest"
-          
-          # Run tests after building (skip on emulated architectures)
           CIBW_TEST_COMMAND: "pytest {project}/py-spatio/tests -v"
           CIBW_TEST_SKIP: "*-*linux_aarch64 *-macosx_arm64"
-          
-          # Build configuration
           CIBW_BUILD_VERBOSITY: 1
-          CIBW_PROJECT_REQUIRES_PYTHON: ">=3.8"
         with:
           package-dir: ./py-spatio
-
-      - name: Upload wheels
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
-          retention-days: 7
 
   build-python-sdist:
-    name: Build Python source distribution
+    name: Build Python Source Dist
     runs-on: ubuntu-latest
-    needs: [detect-changes, test-python]
+    needs: [run-tests, detect-changes]
     if: needs.detect-changes.outputs.python-changed == 'true'
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
+      - run: |
           pip install maturin
-
-      - name: Build sdist
-        working-directory: py-spatio
-        run: maturin sdist --out dist
-
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
+          cd py-spatio
+          maturin sdist --out dist
+      - uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: py-spatio/dist/*.tar.gz
-          retention-days: 7
 
   release-python:
     name: Release Python Package
     runs-on: ubuntu-latest
-    needs: [detect-changes, test-python, build-python-wheels, build-python-sdist]
+    needs: [build-python-wheels, build-python-sdist, detect-changes]
     if: needs.detect-changes.outputs.python-changed == 'true'
     permissions:
       contents: write
       id-token: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Create Python release tag
-        run: |
+      - run: |
           VERSION="${{ needs.detect-changes.outputs.python-version }}"
-          TAG_NAME="python-v$VERSION"
-
+          TAG="python-v$VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag "$TAG_NAME" -m "Release Python package version $VERSION"
-          git push origin "$TAG_NAME"
-
-      - name: Generate Python changelog
-        id: py-changelog
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.python-version }}"
-          PREVIOUS="${{ needs.detect-changes.outputs.python-previous }}"
-
-          # Create changelog in tmp to avoid dirtying working directory
-          CHANGELOG_FILE="/tmp/python-release-notes.md"
-          echo "# Python Package Release v$VERSION" > "$CHANGELOG_FILE"
-          echo "" >> "$CHANGELOG_FILE"
-
-          if [ -f "py-spatio/CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" py-spatio/CHANGELOG.md >> "$CHANGELOG_FILE" || true
-          elif [ -f "CHANGELOG.md" ]; then
-            awk "/^## \[v?$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md >> "$CHANGELOG_FILE" || true
-          fi
-
-          if [ ! -s "$CHANGELOG_FILE" ] || [ $(wc -l < "$CHANGELOG_FILE") -le 2 ]; then
-            echo "# Python Package Release v$VERSION" > "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "## What's Changed" >> "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "* Updated from version $PREVIOUS to $VERSION" >> "$CHANGELOG_FILE"
-            echo "* Python bindings improvements and updates" >> "$CHANGELOG_FILE"
-            echo "* See commit history for detailed changes" >> "$CHANGELOG_FILE"
-            echo "" >> "$CHANGELOG_FILE"
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/python-v$PREVIOUS...python-v$VERSION" >> "$CHANGELOG_FILE"
-          fi
-
-          echo "changelog_file=$CHANGELOG_FILE" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release for Python
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: python-v${{ needs.detect-changes.outputs.python-version }}
-          name: "Python Package v${{ needs.detect-changes.outputs.python-version }}"
-          body_path: ${{ steps.py-changelog.outputs.changelog_file }}
-          draft: false
-          prerelease: ${{ contains(needs.detect-changes.outputs.python-version, 'alpha') || contains(needs.detect-changes.outputs.python-version, 'beta') || contains(needs.detect-changes.outputs.python-version, 'rc') }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
+          git tag "$TAG" -m "Release Python package $VERSION"
+          git push origin "$TAG"
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           pattern: wheels-*
           merge-multiple: true
-
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: sdist
           path: dist
-
-      - name: List all artifacts
-        run: |
-          echo "=== All built packages for PyPI upload ==="
-          ls -lh dist/
-          echo ""
-          echo "Total files: $(ls -1 dist/ | wc -l)"
-          echo "Wheels: $(ls -1 dist/*.whl 2>/dev/null | wc -l)"
-          echo "Source dist: $(ls -1 dist/*.tar.gz 2>/dev/null | wc -l)"
-
-      - name: Install twine
-        run: pip install twine
-
-      - name: Verify package metadata
-        run: |
-          # Check all built packages
+      - run: |
+          pip install twine
           twine check dist/*
-          echo "✓ Package verification completed successfully"
-
-      - name: Publish to PyPI
-        run: |
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "DRY_RUN mode: Skipping actual PyPI publish"
-            echo "Would upload the following packages:"
-            ls -lh dist/
-          elif [ -n "$PYPI_API_TOKEN" ]; then
-            echo "Publishing to PyPI..."
+          if [ -n "${{ secrets.PYPI_API_TOKEN }}" ]; then
             twine upload dist/*
-            echo "✓ Successfully published to PyPI"
           else
-            echo "PYPI_API_TOKEN secret is not set"
-            echo "To publish to PyPI, add your PyPI API token as a repository secret named PYPI_API_TOKEN"
-            echo "Skipping PyPI publish for now..."
+            echo "Skipping PyPI publish (missing token)"
           fi
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-          DRY_RUN: ${{ vars.DRY_RUN || 'false' }}
 
-  summary:
-    name: Release Summary
+  run-release:
+    name: Release Stage
     runs-on: ubuntu-latest
-    needs: [detect-changes, release-rust, release-python]
-    if: always() && (needs.detect-changes.outputs.rust-changed == 'true' || needs.detect-changes.outputs.python-changed == 'true')
-
+    needs: [release-rust, release-python]
+    if: always()
     steps:
-      - name: Print summary
-        run: |
-          echo "Release Summary"
-          echo "==============="
+      - run: echo "All release jobs finished."
 
-          if [[ "${{ needs.detect-changes.outputs.rust-changed }}" == "true" ]]; then
-            if [[ "${{ needs.release-rust.result }}" == "success" ]]; then
-              echo "Rust crate v${{ needs.detect-changes.outputs.rust-version }} released successfully"
-            else
-              echo "Rust crate release failed"
-            fi
-          fi
-
-          if [[ "${{ needs.detect-changes.outputs.python-changed }}" == "true" ]]; then
-            if [[ "${{ needs.release-python.result }}" == "success" ]]; then
-              echo "Python package v${{ needs.detect-changes.outputs.python-version }} released successfully"
-            else
-              echo "Python package release failed"
-            fi
-          fi
-
-          echo ""
-          echo "Releases are automatically triggered when version numbers change in:"
-          echo "  - Cargo.toml (Rust crate)"
-          echo "  - py-spatio/Cargo.toml (Python package)"
-
+  # ---------------- STAGE 4: DOCS + SUMMARY ----------------
   docs:
     name: Build and Deploy Documentation
     runs-on: ubuntu-latest
-    needs: [detect-changes, release-rust, release-python]
-    if: always() && (needs.release-rust.result == 'success' || needs.release-python.result == 'success')
+    needs: [run-release]
+    if: always()
     permissions:
       contents: read
       pages: write
       id-token: write
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: docs-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build documentation
-        run: cargo doc --no-deps --all-features
-
-      - name: Add index.html redirect
-        run: |
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          cargo doc --no-deps --all-features
           echo '<meta http-equiv="refresh" content="0; url=spatio">' > target/doc/index.html
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: target/doc
+      - uses: actions/deploy-pages@v4
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs: [run-release]
+    if: always()
+    steps:
+      - run: |
+          echo "Release Summary"
+          echo "================"
+          echo "Rust changed: ${{ needs.detect-changes.outputs.rust-changed }}"
+          echo "Python changed: ${{ needs.detect-changes.outputs.python-changed }}"
+          echo "Rust version: ${{ needs.detect-changes.outputs.rust-version }}"
+          echo "Python version: ${{ needs.detect-changes.outputs.python-version }}"
