@@ -5,10 +5,17 @@ use crate::persistence::{AOFCommand, AOFFile};
 use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions};
 use bytes::Bytes;
-use std::cell::{Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::SystemTime;
+
+// Use RefCell for embedded Rust (single-threaded)
+#[cfg(not(feature = "python"))]
+use std::cell::{Ref as Guard, RefCell as Lock, RefMut as GuardMut};
+
+// Use Arc<RwLock> for Python bindings (needs Sync for multi-threaded Python)
+#[cfg(feature = "python")]
+use std::sync::{Arc, RwLock as Lock, RwLockReadGuard as Guard, RwLockWriteGuard as GuardMut};
 
 /// Main Spatio database structure providing spatial and temporal data storage.
 ///
@@ -61,8 +68,14 @@ use std::time::SystemTime;
 /// # Ok(())
 /// # }
 /// ```
+#[cfg(not(feature = "python"))]
 pub struct DB {
-    inner: RefCell<DBInner>,
+    inner: Lock<DBInner>,
+}
+
+#[cfg(feature = "python")]
+pub struct DB {
+    inner: Arc<Lock<DBInner>>,
 }
 
 pub(crate) struct DBInner {
@@ -147,9 +160,17 @@ impl DB {
             inner.aof_file = Some(aof_file);
         }
 
-        Ok(DB {
-            inner: RefCell::new(inner),
-        })
+        #[cfg(not(feature = "python"))]
+        let db = DB {
+            inner: Lock::new(inner),
+        };
+
+        #[cfg(feature = "python")]
+        let db = DB {
+            inner: Arc::new(Lock::new(inner)),
+        };
+
+        Ok(db)
     }
 
     /// Creates a new in-memory Spatio database.
@@ -649,14 +670,26 @@ impl DB {
     }
 
     // Internal helper methods
-    fn read(&self) -> Result<Ref<'_, DBInner>> {
+    #[cfg(not(feature = "python"))]
+    fn read(&self) -> Result<Guard<'_, DBInner>> {
         self.inner.try_borrow().map_err(|_| SpatioError::LockError)
     }
 
-    pub(crate) fn write(&self) -> Result<RefMut<'_, DBInner>> {
+    #[cfg(not(feature = "python"))]
+    pub(crate) fn write(&self) -> Result<GuardMut<'_, DBInner>> {
         self.inner
             .try_borrow_mut()
             .map_err(|_| SpatioError::LockError)
+    }
+
+    #[cfg(feature = "python")]
+    fn read(&self) -> Result<Guard<'_, DBInner>> {
+        self.inner.read().map_err(|_| SpatioError::LockError)
+    }
+
+    #[cfg(feature = "python")]
+    pub(crate) fn write(&self) -> Result<GuardMut<'_, DBInner>> {
+        self.inner.write().map_err(|_| SpatioError::LockError)
     }
 }
 
