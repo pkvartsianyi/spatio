@@ -917,6 +917,7 @@ dependencies = [
  "criterion",
  "geo",
  "geohash",
+ "once_cell",
  "rstar 0.11.0",
  "rustc-hash",
  "s2",

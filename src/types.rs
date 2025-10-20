@@ -98,7 +98,13 @@ impl Config {
 
     /// Get default TTL as Duration
     pub fn default_ttl(&self) -> Option<Duration> {
-        self.default_ttl_seconds.map(Duration::from_secs_f64)
+        self.default_ttl_seconds.and_then(|ttl| {
+            if ttl.is_finite() && ttl > 0.0 && ttl <= u64::MAX as f64 {
+                Some(Duration::from_secs_f64(ttl))
+            } else {
+                None
+            }
+        })
     }
 
     /// Validate configuration values
@@ -108,8 +114,14 @@ impl Config {
         }
 
         if let Some(ttl) = self.default_ttl_seconds {
+            if !ttl.is_finite() {
+                return Err("Default TTL must be finite (not NaN or infinity)".to_string());
+            }
             if ttl <= 0.0 {
                 return Err("Default TTL must be positive".to_string());
+            }
+            if ttl > u64::MAX as f64 {
+                return Err("Default TTL is too large".to_string());
             }
         }
 
@@ -419,5 +431,73 @@ mod tests {
         config.geohash_precision = 8;
         config.default_ttl_seconds = Some(-1.0);
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_ttl_validation() {
+        let mut config = Config::default();
+        assert!(config.validate().is_ok());
+
+        // Valid TTL
+        config = Config {
+            default_ttl_seconds: Some(60.0),
+            ..Default::default()
+        };
+        assert!(config.validate().is_ok());
+
+        // Negative TTL
+        config.default_ttl_seconds = Some(-1.0);
+        assert!(config.validate().is_err());
+
+        // Zero TTL
+        config.default_ttl_seconds = Some(0.0);
+        assert!(config.validate().is_err());
+
+        // NaN TTL
+        config.default_ttl_seconds = Some(f64::NAN);
+        assert!(config.validate().is_err());
+
+        // Positive infinity TTL
+        config.default_ttl_seconds = Some(f64::INFINITY);
+        assert!(config.validate().is_err());
+
+        // Negative infinity TTL
+        config.default_ttl_seconds = Some(f64::NEG_INFINITY);
+        assert!(config.validate().is_err());
+
+        // Too large TTL (use 1e20 which is definitely larger than u64::MAX as f64)
+        config.default_ttl_seconds = Some(1e20);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_default_ttl_safe_conversion() {
+        let mut config = Config {
+            default_ttl_seconds: Some(60.0),
+            ..Default::default()
+        };
+
+        // Valid TTL should convert successfully
+        assert!(config.default_ttl().is_some());
+
+        // NaN should return None (safe fallback)
+        config.default_ttl_seconds = Some(f64::NAN);
+        assert!(config.default_ttl().is_none());
+
+        // Infinity should return None (safe fallback)
+        config.default_ttl_seconds = Some(f64::INFINITY);
+        assert!(config.default_ttl().is_none());
+
+        // Negative values should return None (safe fallback)
+        config.default_ttl_seconds = Some(-1.0);
+        assert!(config.default_ttl().is_none());
+
+        // Too large values should return None (safe fallback)
+        config.default_ttl_seconds = Some(1e20);
+        assert!(config.default_ttl().is_none());
+
+        // Zero should return None (safe fallback)
+        config.default_ttl_seconds = Some(0.0);
+        assert!(config.default_ttl().is_none());
     }
 }

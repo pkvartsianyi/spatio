@@ -31,10 +31,10 @@ impl PyPoint {
     /// Create a new Point with latitude and longitude
     #[new]
     fn new(lat: f64, lon: f64) -> PyResult<Self> {
-        if lat < -90.0 || lat > 90.0 {
+        if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
         }
-        if lon < -180.0 || lon > 180.0 {
+        if !(-180.0..=180.0).contains(&lon) {
             return Err(PyValueError::new_err(
                 "Longitude must be between -180 and 180",
             ));
@@ -88,8 +88,16 @@ impl PySetOptions {
     /// Create SetOptions with TTL in seconds
     #[staticmethod]
     fn with_ttl(ttl_seconds: f64) -> PyResult<Self> {
+        if !ttl_seconds.is_finite() {
+            return Err(PyValueError::new_err(
+                "TTL must be finite (not NaN or infinity)",
+            ));
+        }
         if ttl_seconds <= 0.0 {
             return Err(PyValueError::new_err("TTL must be positive"));
+        }
+        if ttl_seconds > u64::MAX as f64 {
+            return Err(PyValueError::new_err("TTL is too large"));
         }
 
         let duration = Duration::from_secs_f64(ttl_seconds);
@@ -101,6 +109,18 @@ impl PySetOptions {
     /// Create SetOptions with absolute expiration timestamp
     #[staticmethod]
     fn with_expiration(timestamp: f64) -> PyResult<Self> {
+        if !timestamp.is_finite() {
+            return Err(PyValueError::new_err(
+                "Timestamp must be finite (not NaN or infinity)",
+            ));
+        }
+        if timestamp < 0.0 {
+            return Err(PyValueError::new_err("Timestamp must be non-negative"));
+        }
+        if timestamp > u64::MAX as f64 {
+            return Err(PyValueError::new_err("Timestamp is too large"));
+        }
+
         let system_time = UNIX_EPOCH + Duration::from_secs_f64(timestamp);
         Ok(PySetOptions {
             inner: RustSetOptions::with_expiration(system_time),
@@ -127,7 +147,7 @@ impl PyConfig {
     /// Create config with custom geohash precision (1-12)
     #[staticmethod]
     fn with_geohash_precision(precision: usize) -> PyResult<Self> {
-        if precision < 1 || precision > 12 {
+        if !(1..=12).contains(&precision) {
             return Err(PyValueError::new_err(
                 "Geohash precision must be between 1 and 12",
             ));
@@ -145,7 +165,7 @@ impl PyConfig {
 
     #[setter]
     fn set_geohash_precision(&mut self, precision: usize) -> PyResult<()> {
-        if precision < 1 || precision > 12 {
+        if !(1..=12).contains(&precision) {
             return Err(PyValueError::new_err(
                 "Geohash precision must be between 1 and 12",
             ));
@@ -267,10 +287,7 @@ impl PySpatio {
                 let py_point = PyPoint { inner: point };
                 let py_value = PyBytes::new(py, &value);
                 let distance = center.inner.distance_to(&point);
-                let tuple = PyTuple::new(
-                    py,
-                    [py_point.into_py(py), py_value.into(), distance.into_py(py)],
-                )?;
+                let tuple = (py_point, py_value, distance).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
@@ -323,8 +340,7 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (point, timestamp) in results {
                 let py_point = PyPoint { inner: point };
-                let tuple =
-                    PyTuple::new(py, [py_point.into_py(py), (timestamp as f64).into_py(py)])?;
+                let tuple = (py_point, timestamp as f64).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
@@ -384,7 +400,7 @@ impl PySpatio {
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
                 let py_value = PyBytes::new(py, &value);
-                let tuple = PyTuple::new(py, [py_point.into_py(py), py_value.into()])?;
+                let tuple = (py_point, py_value).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())
