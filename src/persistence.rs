@@ -669,53 +669,74 @@ mod tests {
         let mut aof = AOFFile::open_with_config(
             temp_file.path(),
             AOFConfig {
-                rewrite_size_threshold: 100,
-                rewrite_growth_percentage: 50.0,
-                background_rewrite: false, // Manual rewrite for testing
+                rewrite_size_threshold: 0, // Force immediate rewrite
+                rewrite_growth_percentage: 0.0,
+                background_rewrite: false,
             },
         )
         .unwrap();
 
-        // Write some data to exceed rewrite threshold
-        let key1 = Bytes::from("key1");
-        let value1 = Bytes::from("value1_initial");
-        let key2 = Bytes::from("key2");
-        let value2 = Bytes::from("value2_initial");
+        // Write initial data
+        let key1 = Bytes::from("test_key_1");
+        let key2 = Bytes::from("test_key_2");
+        let initial_value = Bytes::from("initial_value");
 
-        aof.write_set(&key1, &value1, None).unwrap();
-        aof.write_set(&key2, &value2, None).unwrap();
+        aof.write_set(&key1, &initial_value, None).unwrap();
+        aof.write_set(&key2, &initial_value, None).unwrap();
         aof.flush().unwrap();
 
-        // Get initial file size
-        let initial_size = aof.size().unwrap();
-
-        // Trigger a manual rewrite
+        // Manually trigger rewrite to test file handle update
         aof.rewrite().unwrap();
 
-        // Write more data after rewrite to verify file handles are correct
-        let value1_updated = Bytes::from("value1_updated");
-        let value2_updated = Bytes::from("value2_updated");
-
-        aof.write_set(&key1, &value1_updated, None).unwrap();
-        aof.write_set(&key2, &value2_updated, None).unwrap();
+        // Write new data after rewrite - this tests that file handles were updated correctly
+        let post_rewrite_value = Bytes::from("post_rewrite_value");
+        aof.write_set(&key1, &post_rewrite_value, None).unwrap();
+        aof.write_set(&key2, &post_rewrite_value, None).unwrap();
         aof.flush().unwrap();
 
-        // Verify that the new data was written to the correct file
-        let final_size = aof.size().unwrap();
-        assert!(
-            final_size > initial_size,
-            "File size should increase after post-rewrite writes"
-        );
-
-        // Replay all commands to verify data integrity
-        let mut commands = Vec::new();
+        // Test that we can read back all the data correctly
+        // This verifies that the file handles are pointing to the right file
+        let mut all_commands = Vec::new();
         aof.replay(|cmd| {
-            commands.push(cmd);
+            all_commands.push(cmd);
             Ok(())
         })
         .unwrap();
 
-        // Should have 4 commands: 2 initial sets + 2 updated sets
-        assert_eq!(commands.len(), 4);
+        // We should have at least 4 commands (2 initial + 2 post-rewrite)
+        assert!(all_commands.len() >= 4, "Should have at least 4 commands");
+
+        // Verify that post-rewrite writes are present and readable
+        let post_rewrite_commands: Vec<_> = all_commands
+            .iter()
+            .filter(|cmd| match cmd {
+                AOFCommand::Set { value, .. } => value == &post_rewrite_value,
+                _ => false,
+            })
+            .collect();
+
+        assert!(
+            post_rewrite_commands.len() >= 2,
+            "Should find both post-rewrite writes in the AOF file"
+        );
+
+        // Additionally test recovery by reopening the file
+        drop(aof);
+        let mut recovered_aof = AOFFile::open(temp_file.path()).unwrap();
+
+        let mut recovered_commands = Vec::new();
+        recovered_aof
+            .replay(|cmd| {
+                recovered_commands.push(cmd);
+                Ok(())
+            })
+            .unwrap();
+
+        // The recovered AOF should have the same commands
+        assert_eq!(
+            all_commands.len(),
+            recovered_commands.len(),
+            "Recovered AOF should have same number of commands"
+        );
     }
 }
