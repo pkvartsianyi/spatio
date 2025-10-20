@@ -27,8 +27,8 @@ use bytes::Bytes;
 /// # Ok(())
 /// # }
 /// ```
-pub struct AtomicBatch<'a> {
-    db: &'a DB,
+pub struct AtomicBatch {
+    db: DB,
     operations: Vec<BatchOperation>,
 }
 
@@ -44,8 +44,8 @@ enum BatchOperation {
     },
 }
 
-impl<'a> AtomicBatch<'a> {
-    pub(crate) fn new(db: &'a DB) -> Self {
+impl AtomicBatch {
+    pub(crate) fn new(db: DB) -> Self {
         Self {
             db,
             operations: Vec::new(),

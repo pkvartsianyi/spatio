@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Core Spatio dependency
-spatio = { path = "..", features = ["python"] }
+spatio = { path = ".." }
 
 # Python bindings
 pyo3 = { version = "0.24.1", features = ["extension-module"] }

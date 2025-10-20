@@ -39,8 +39,6 @@ geojson = []
 aof = ["dep:bincode"]
 # TOML configuration support
 toml = ["dep:toml"]
-# Python bindings support (requires Sync for multi-threaded Python)
-python = []
 # All features
 full = ["geojson", "aof", "toml"]
 
