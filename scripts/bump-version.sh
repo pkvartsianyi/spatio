@@ -54,6 +54,7 @@ The script will update versions in:
     - rust: Cargo.toml (main project)
     - python: py-spatio/Cargo.toml (Python bindings)
     - both: Both Cargo.toml files (same version)
+    - CHANGELOG.md: Converts [Unreleased] to new version
 
 Note: GitHub Actions will automatically detect version changes and create releases.
 
@@ -237,6 +238,57 @@ if [[ "$DRY_RUN" == false ]]; then
     esac
 fi
 
+# Update CHANGELOG.md
+if [[ "$DRY_RUN" == false ]]; then
+    print_info "Updating CHANGELOG.md..."
+    
+    CHANGELOG_FILE="CHANGELOG.md"
+    if [[ -f "$CHANGELOG_FILE" ]]; then
+        # Get current date
+        CURRENT_DATE=$(date +%Y-%m-%d)
+        
+        # Check if [Unreleased] section exists
+        if grep -q "## \[Unreleased\]" "$CHANGELOG_FILE"; then
+            # Create backup
+            cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
+            
+            # Replace [Unreleased] with the new version
+            sed -i.tmp "s/## \[Unreleased\]/## [$NEW_VERSION] - $CURRENT_DATE/" "$CHANGELOG_FILE"
+            rm "${CHANGELOG_FILE}.tmp" 2>/dev/null || true
+            
+            # Add a new [Unreleased] section at the top
+            # Find the line after "## [Unreleased]" which is now "## [$NEW_VERSION]"
+            awk -v date="$CURRENT_DATE" -v ver="$NEW_VERSION" '
+            /^## \['"$NEW_VERSION"'\] - '"$CURRENT_DATE"'/ {
+                print "## [Unreleased]"
+                print ""
+                print "### Added"
+                print ""
+                print "### Changed"
+                print ""
+                print "### Fixed"
+                print ""
+                print $0
+                next
+            }
+            { print }
+            ' "${CHANGELOG_FILE}.backup" > "$CHANGELOG_FILE"
+            
+            rm "${CHANGELOG_FILE}.backup" 2>/dev/null || true
+            print_success "Updated CHANGELOG.md (moved Unreleased -> [$NEW_VERSION])"
+        else
+            print_warning "No [Unreleased] section found in CHANGELOG.md"
+            print_info "Consider adding an [Unreleased] section for next release"
+        fi
+    else
+        print_warning "CHANGELOG.md not found, skipping changelog update"
+    fi
+elif [[ "$DRY_RUN" == true ]]; then
+    if [[ -f "CHANGELOG.md" ]] && grep -q "## \[Unreleased\]" "CHANGELOG.md"; then
+        print_info "Would update CHANGELOG.md: [Unreleased] -> [$NEW_VERSION]"
+    fi
+fi
+
 # Commit changes
 if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     print_info "Committing version changes..."
@@ -245,13 +297,13 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     declare -a FILES_TO_ADD=()
     case "$PACKAGE" in
         "rust")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "CHANGELOG.md")
             ;;
         "python")
-            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
+            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "CHANGELOG.md")
             ;;
         "both")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "CHANGELOG.md")
             ;;
     esac
 
@@ -259,7 +311,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     for file in "${FILES_TO_ADD[@]}"; do
         if [[ "$file" == *"Cargo.lock" ]]; then
             git add -f "$file" 2>/dev/null || print_warning "Could not add $file (might be ignored)"
-        else
+        elif [[ -f "$file" ]]; then
             git add "$file"
         fi
     done
@@ -286,7 +338,8 @@ elif [[ "$NO_COMMIT" == true ]]; then
 else
     print_info "Changes committed."
     print_info ""
-    print_info "Next step: Merge changes to trigger auto-release"
+    print_info "Next step: Push changes to trigger auto-release"
+    print_info "  git push origin main"
 fi
 
 print_info ""
@@ -297,12 +350,13 @@ case "$PACKAGE" in
         print_info "  - Publish Rust crate to crates.io"
         ;;
     "python")
+        print_info "  - Build 40+ wheels for all platforms (Linux, macOS, Windows)"
         print_info "  - Create GitHub release with python-v$NEW_VERSION tag"
         print_info "  - Publish Python package to PyPI"
         ;;
     "both")
         print_info "  - Create GitHub releases for both packages"
         print_info "  - Publish Rust crate to crates.io"
-        print_info "  - Publish Python package to PyPI"
+        print_info "  - Build 40+ wheels and publish Python package to PyPI"
         ;;
 esac
