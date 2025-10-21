@@ -587,28 +587,34 @@ mod tests {
         // Test precision 1 (should not produce 0 or negative values)
         let config = Config::with_geohash_precision(1);
         let manager = IndexManager::with_config(&config);
-        assert!(manager
-            .search_precisions
-            .iter()
-            .all(|&p| (1..=12).contains(&p)));
+        assert!(
+            manager
+                .search_precisions
+                .iter()
+                .all(|&p| (1..=12).contains(&p))
+        );
         assert!(manager.search_precisions.contains(&1));
 
         // Test precision 2 (should not produce 0)
         let config = Config::with_geohash_precision(2);
         let manager = IndexManager::with_config(&config);
-        assert!(manager
-            .search_precisions
-            .iter()
-            .all(|&p| (1..=12).contains(&p)));
+        assert!(
+            manager
+                .search_precisions
+                .iter()
+                .all(|&p| (1..=12).contains(&p))
+        );
         assert!(manager.search_precisions.contains(&2));
 
         // Test precision 12 (upper bound)
         let config = Config::with_geohash_precision(12);
         let manager = IndexManager::with_config(&config);
-        assert!(manager
-            .search_precisions
-            .iter()
-            .all(|&p| (1..=12).contains(&p)));
+        assert!(
+            manager
+                .search_precisions
+                .iter()
+                .all(|&p| (1..=12).contains(&p))
+        );
         assert!(manager.search_precisions.contains(&12));
 
         // Test that search precisions are unique and sorted

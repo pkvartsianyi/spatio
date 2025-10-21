@@ -1,6 +1,6 @@
+use crate::DB;
 use crate::error::Result;
 use crate::types::SetOptions;
-use crate::DB;
 use bytes::Bytes;
 
 /// Atomic batch for grouping multiple operations together.

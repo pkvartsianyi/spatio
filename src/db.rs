@@ -285,10 +285,10 @@ impl DB {
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = inner.get_item(&key_bytes) {
-            if !item.is_expired() {
-                return Ok(Some(item.value.clone()));
-            }
+        if let Some(item) = inner.get_item(&key_bytes)
+            && !item.is_expired()
+        {
+            return Ok(Some(item.value.clone()));
         }
         Ok(None)
     }
@@ -787,13 +787,12 @@ impl Drop for DB {
         // Only sync if this is the last reference to the database
         if Arc::strong_count(&self.inner) == 1 {
             // Best-effort sync on final drop
-            if let Ok(mut inner) = self.inner.write() {
-                if !inner.closed {
-                    if let Some(ref mut aof_file) = inner.aof_file {
-                        // Attempt to sync on drop, but don't panic if it fails
-                        let _ = aof_file.sync();
-                    }
-                }
+            if let Ok(mut inner) = self.inner.write()
+                && !inner.closed
+                && let Some(ref mut aof_file) = inner.aof_file
+            {
+                // Attempt to sync on drop, but don't panic if it fails
+                let _ = aof_file.sync();
             }
         }
     }
@@ -804,12 +803,12 @@ impl DBInner {
     pub fn insert_item(&mut self, key: Bytes, item: DbItem) -> Option<DbItem> {
         // Remove from old expiration index if updating
         let old_item = if let Some(old) = self.keys.get(&key) {
-            if let Some(expires_at) = old.expires_at {
-                if let Some(keys) = self.expirations.get_mut(&expires_at) {
-                    keys.retain(|k| k != &key);
-                    if keys.is_empty() {
-                        self.expirations.remove(&expires_at);
-                    }
+            if let Some(expires_at) = old.expires_at
+                && let Some(keys) = self.expirations.get_mut(&expires_at)
+            {
+                keys.retain(|k| k != &key);
+                if keys.is_empty() {
+                    self.expirations.remove(&expires_at);
                 }
             }
             Some(old.clone())
@@ -836,12 +835,12 @@ impl DBInner {
     pub fn remove_item(&mut self, key: &Bytes) -> Option<DbItem> {
         if let Some(item) = self.keys.remove(key) {
             // Remove from expiration index
-            if let Some(expires_at) = item.expires_at {
-                if let Some(keys) = self.expirations.get_mut(&expires_at) {
-                    keys.retain(|k| k != key);
-                    if keys.is_empty() {
-                        self.expirations.remove(&expires_at);
-                    }
+            if let Some(expires_at) = item.expires_at
+                && let Some(keys) = self.expirations.get_mut(&expires_at)
+            {
+                keys.retain(|k| k != key);
+                if keys.is_empty() {
+                    self.expirations.remove(&expires_at);
                 }
             }
 
@@ -893,24 +892,22 @@ impl DBInner {
                     self.keys.insert(key.clone(), item);
 
                     // Rebuild spatial index if this is a spatial key
-                    if let Ok(key_str) = std::str::from_utf8(&key) {
-                        if let Some((prefix, geohash)) = self.parse_spatial_key(key_str) {
-                            if let Ok(point) = self.decode_geohash_to_point(geohash) {
-                                let _ = self.index_manager.insert_point(prefix, &point, &value);
-                            }
-                        }
+                    if let Ok(key_str) = std::str::from_utf8(&key)
+                        && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
+                        && let Ok(point) = self.decode_geohash_to_point(geohash)
+                    {
+                        let _ = self.index_manager.insert_point(prefix, &point, &value);
                     }
                 }
                 AOFCommand::Delete { key } => {
                     self.keys.remove(&key);
 
                     // Remove from spatial index if this was a spatial key
-                    if let Ok(key_str) = std::str::from_utf8(&key) {
-                        if let Some((prefix, geohash)) = self.parse_spatial_key(key_str) {
-                            if let Ok(point) = self.decode_geohash_to_point(geohash) {
-                                let _ = self.index_manager.remove_point(prefix, &point);
-                            }
-                        }
+                    if let Ok(key_str) = std::str::from_utf8(&key)
+                        && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
+                        && let Ok(point) = self.decode_geohash_to_point(geohash)
+                    {
+                        let _ = self.index_manager.remove_point(prefix, &point);
                     }
                 }
             }

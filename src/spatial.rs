@@ -695,52 +695,64 @@ mod tests {
         let point_nan_lat = Point::new(f64::NAN, -74.0060);
         let result = point_nan_lat.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
 
         let point_nan_lon = Point::new(40.7128, f64::NAN);
         let result = point_nan_lon.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
 
         // Test infinity coordinates
         let point_inf_lat = Point::new(f64::INFINITY, -74.0060);
         let result = point_inf_lat.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
 
         let point_inf_lon = Point::new(40.7128, f64::INFINITY);
         let result = point_inf_lon.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
 
         // Test negative infinity
         let point_neg_inf_lat = Point::new(f64::NEG_INFINITY, -74.0060);
         let result = point_neg_inf_lat.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
 
         let point_neg_inf_lon = Point::new(40.7128, f64::NEG_INFINITY);
         let result = point_neg_inf_lon.to_geojson();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid point coordinates"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid point coordinates")
+        );
     }
 
     #[test]

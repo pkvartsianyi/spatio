@@ -3,7 +3,7 @@
 //! This module provides a builder pattern for creating databases with
 //! advanced configuration options including custom AOF paths.
 
-use crate::db::{DBInner, DB};
+use crate::db::{DB, DBInner};
 use crate::error::Result;
 use crate::index::IndexManager;
 use crate::persistence::AOFFile;
@@ -237,13 +237,13 @@ impl DBBuilder {
         };
 
         // Initialize persistence if AOF path is specified
-        if !self.in_memory {
-            if let Some(aof_path) = self.aof_path {
-                let mut aof_file = AOFFile::open(&aof_path)?;
-                // Automatic startup replay to restore previous state
-                inner.load_from_aof(&mut aof_file)?;
-                inner.aof_file = Some(aof_file);
-            }
+        if !self.in_memory
+            && let Some(aof_path) = self.aof_path
+        {
+            let mut aof_file = AOFFile::open(&aof_path)?;
+            // Automatic startup replay to restore previous state
+            inner.load_from_aof(&mut aof_file)?;
+            inner.aof_file = Some(aof_file);
         }
 
         Ok(DB {

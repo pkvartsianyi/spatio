@@ -299,10 +299,10 @@ impl StorageBackend for MemoryBackend {
         let mut expired_keys = Vec::new();
 
         for (key, item) in &self.data {
-            if let Some(expires_at) = item.expires_at {
-                if expires_at <= now {
-                    expired_keys.push(key.clone());
-                }
+            if let Some(expires_at) = item.expires_at
+                && expires_at <= now
+            {
+                expired_keys.push(key.clone());
             }
         }
 
@@ -427,10 +427,10 @@ impl StorageBackend for AOFBackend {
         let expired_keys = {
             let mut keys = Vec::new();
             for (key, item) in self.memory.iter()? {
-                if let Some(expires_at) = item.expires_at {
-                    if expires_at <= now {
-                        keys.push(key);
-                    }
+                if let Some(expires_at) = item.expires_at
+                    && expires_at <= now
+                {
+                    keys.push(key);
                 }
             }
             keys
