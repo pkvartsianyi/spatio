@@ -1,30 +1,9 @@
-<p align="center">
-    <a href="https://github.com/pkvartsianyi/spatio">
-        <img src="assets/images/logo-min.png" height="60" alt="Spatio Logo">
-    </a>
-</p>
+<p align="center"> <a href="https://github.com/pkvartsianyi/spatio"> <img src="assets/images/logo-min.png" height="60" alt="Spatio Logo"> </a> </p> <h1 align="center">Spatio</h1> <p align="center"> <a href="https://opensource.org/licenses/MIT"> <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"> </a> <a href="https://crates.io/crates/spatio"> <img src="https://img.shields.io/crates/v/spatio.svg" alt="Crates.io"> </a> <a href="https://pypi.org/project/spatio"> <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI"> </a> <a href="https://pkvartsianyi.github.io/spatio/"> <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation"> </a> <a href="https://docs.rs/spatio"> <img src="https://img.shields.io/badge/docs.rs-spatio-66c2a5" alt="Rust Docs"> </a> </p>
 
-<h1 align="center">Spatio</h1>
+Spatio is a lightweight, high-performance embedded spatial database written in Rust.
+It’s designed for real-time location data, with low memory usage, optional persistence, and native Python bindings.
 
-<p align="center">
-  <a href="https://opensource.org/licenses/MIT">
-    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
-  </a>
-  <a href="https://crates.io/crates/spatio">
-    <img src="https://img.shields.io/crates/v/spatio.svg" alt="Crates.io">
-  </a>
-  <a href="https://pypi.org/project/spatio">
-    <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
-  </a>
-  <a href="https://pkvartsianyi.github.io/spatio/">
-    <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
-  </a>
-  <a href="https://docs.rs/spatio">
-    <img src="https://img.shields.io/badge/docs.rs-spatio-66c2a5" alt="Rust Docs">
-  </a>
-</p>
-
-**Spatio** is a high-performance, embedded spatial database designed for applications that need to store and query location-based data efficiently. Built with a simple, SQLite-like architecture, Spatio provides powerful spatial operations optimized for single-threaded embedded use cases.
+Unlike traditional GIS or SQL-based systems, Spatio offers a direct API for spatial operations — no SQL parser, no external dependencies, and no setup required.
 
 ## Features
 
@@ -35,7 +14,7 @@
 - **Synchronous by Default**: Predictable behavior, background operations opt-in
 
 ### **High Performance**
-- **Fast Key-Value Storage**: ~1.6M ops/sec with optimized in-memory operations
+- **Fast Key-Value Storage**: ~1.6M ops/sec with optimised in-memory operations
 - **Automatic Spatial Indexing**: Geographic points indexed with geohash for efficient queries
 - **Low Overhead**: No unnecessary locking or coordination complexity
 - **Optional AOF Rewriting**: Configurable file compaction with size thresholds
@@ -91,7 +70,7 @@ import spatio
 # Create an in-memory database
 db = spatio.Spatio.memory()
 
-# Namespace support for data organization
+# Namespace support for data organisation
 namespace_a = spatio.Namespace.new("namespace_a")
 namespace_b = spatio.Namespace.new("namespace_b")
 
