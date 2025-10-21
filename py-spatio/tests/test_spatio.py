@@ -15,27 +15,42 @@ import spatio
 class TestPoint:
     """Test Point class functionality"""
 
-    def test_point_creation(self):
+    def test_valid_point_creation(self):
         """Test creating valid points"""
         point = spatio.Point(40.7128, -74.0060)
         assert point.lat == 40.7128
         assert point.lon == -74.0060
 
-    def test_point_validation(self):
+    @pytest.mark.parametrize(
+        "latitude, longitude",
+        [
+            pytest.param(
+                91.0, 0.0,
+                id="north latitude",
+            ),
+            pytest.param(
+                -91.0, 0.0,
+                id="south latitude",
+            ),
+            pytest.param(
+                0.0, 181.0,
+                id="east longitude",
+            ),
+            pytest.param(
+                -0.0, -181.0,
+                id="west longitude",
+            ),
+        ]
+    )
+    def test_invalid_point_creation_equivalence_partition(
+            self,
+            latitude: float,
+            longitude: float,
+    ):
         """Test point validation"""
         # Invalid latitude
         with pytest.raises(ValueError):
-            spatio.Point(91.0, 0.0)
-
-        with pytest.raises(ValueError):
-            spatio.Point(-91.0, 0.0)
-
-        # Invalid longitude
-        with pytest.raises(ValueError):
-            spatio.Point(0.0, 181.0)
-
-        with pytest.raises(ValueError):
-            spatio.Point(0.0, -181.0)
+            spatio.Point(latitude, longitude)
 
     def test_point_distance(self):
         """Test distance calculation between points"""
