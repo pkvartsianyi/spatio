@@ -207,6 +207,7 @@ impl SetOptions {
 pub struct DbItem {
     /// The value bytes
     pub value: Bytes,
+    pub created_at: SystemTime,
     /// Expiration time (if any)
     pub expires_at: Option<SystemTime>,
 }
@@ -216,6 +217,7 @@ impl DbItem {
     pub fn new(value: impl Into<Bytes>) -> Self {
         Self {
             value: value.into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         }
     }
@@ -224,6 +226,7 @@ impl DbItem {
     pub fn with_expiration(value: impl Into<Bytes>, expires_at: SystemTime) -> Self {
         Self {
             value: value.into(),
+            created_at: SystemTime::now(),
             expires_at: Some(expires_at),
         }
     }
@@ -241,7 +244,11 @@ impl DbItem {
         match options {
             Some(opts) => {
                 let expires_at = opts.effective_expires_at();
-                Self { value, expires_at }
+                Self {
+                    value,
+                    created_at: SystemTime::now(),
+                    expires_at,
+                }
             }
             None => Self::new(value),
         }

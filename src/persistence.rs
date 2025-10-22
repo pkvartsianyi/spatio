@@ -37,6 +37,7 @@ pub enum AOFCommand {
     Set {
         key: Bytes,
         value: Bytes,
+        created_at: SystemTime,
         expires_at: Option<SystemTime>,
     },
     Delete {
@@ -45,6 +46,9 @@ pub enum AOFCommand {
 }
 
 impl AOFFile {
+    const FLAG_HAS_EXPIRATION: u8 = 0b0000_0001;
+    const FLAG_HAS_CREATED_AT: u8 = 0b0000_0010;
+
     /// Open AOF file with default configuration
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, AOFConfig::default())
@@ -86,6 +90,7 @@ impl AOFFile {
         key: &[u8],
         value: &[u8],
         options: Option<&SetOptions>,
+        created_at: SystemTime,
     ) -> Result<()> {
         let expires_at = match options {
             Some(opts) => opts.expires_at,
@@ -95,6 +100,7 @@ impl AOFFile {
         let command = AOFCommand::Set {
             key: Bytes::copy_from_slice(key),
             value: Bytes::copy_from_slice(value),
+            created_at,
             expires_at,
         };
 
@@ -204,14 +210,19 @@ impl AOFFile {
 
     /// Serialize a command to bytes
     fn serialize_command(&self, command: &AOFCommand) -> Result<Vec<u8>> {
-        let mut buf = BytesMut::new();
-
         match command {
             AOFCommand::Set {
                 key,
                 value,
+                created_at,
                 expires_at,
             } => {
+                let mut buf = BytesMut::with_capacity(Self::calc_aof_capacity(
+                    key.len(),
+                    value.len(),
+                    expires_at.is_some(),
+                ));
+
                 buf.put_u8(0); // Command type: SET
 
                 // Key length and data
@@ -222,31 +233,60 @@ impl AOFFile {
                 buf.put_u32(value.len() as u32);
                 buf.put(value.as_ref());
 
-                // Expiration
-                match expires_at {
-                    Some(exp) => {
-                        buf.put_u8(1); // Has expiration
-                        let timestamp = exp
-                            .duration_since(UNIX_EPOCH)
-                            .map_err(|_| SpatioError::InvalidTimestamp)?
-                            .as_secs();
-                        buf.put_u64(timestamp);
-                    }
-                    None => {
-                        buf.put_u8(0); // No expiration
-                    }
+                let mut flags = Self::FLAG_HAS_CREATED_AT;
+                if expires_at.is_some() {
+                    flags |= Self::FLAG_HAS_EXPIRATION;
                 }
+                buf.put_u8(flags);
+
+                let created_ts = created_at
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| SpatioError::InvalidTimestamp)?
+                    .as_secs();
+                buf.put_u64(created_ts);
+
+                if let Some(exp) = expires_at {
+                    let timestamp = exp
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|_| SpatioError::InvalidTimestamp)?
+                        .as_secs();
+                    buf.put_u64(timestamp);
+                }
+
+                Ok(buf.to_vec())
             }
             AOFCommand::Delete { key } => {
+                let mut buf = BytesMut::with_capacity(1 + 4 + key.len());
                 buf.put_u8(1); // Command type: DELETE
 
                 // Key length and data
                 buf.put_u32(key.len() as u32);
                 buf.put(key.as_ref());
+
+                Ok(buf.to_vec())
             }
         }
+    }
 
-        Ok(buf.to_vec())
+    fn calc_aof_capacity(key_len: usize, value_len: usize, has_expiration: bool) -> usize {
+        const CMD_TYPE_LEN: usize = 1;
+        const LEN_FIELD_LEN: usize = 4;
+        const FLAGS_LEN: usize = 1;
+        const TIMESTAMP_LEN: usize = 8;
+
+        let mut capacity = CMD_TYPE_LEN
+            + LEN_FIELD_LEN
+            + key_len
+            + LEN_FIELD_LEN
+            + value_len
+            + FLAGS_LEN
+            + TIMESTAMP_LEN; // created_at timestamp
+
+        if has_expiration {
+            capacity += TIMESTAMP_LEN;
+        }
+
+        capacity
     }
 
     /// Replay AOF commands and return them
@@ -280,9 +320,26 @@ impl AOFFile {
                 let key = Self::read_bytes(reader)?;
                 let value = Self::read_bytes(reader)?;
 
-                let mut has_exp_buf = [0u8; 1];
-                reader.read_exact(&mut has_exp_buf)?;
-                let has_expiration = has_exp_buf[0] != 0;
+                let mut flags_buf = [0u8; 1];
+                if let Err(err) = reader.read_exact(&mut flags_buf) {
+                    return match err.kind() {
+                        std::io::ErrorKind::UnexpectedEof => Err(SpatioError::UnexpectedEof),
+                        _ => Err(SpatioError::from(err)),
+                    };
+                }
+
+                let flags = flags_buf[0];
+                let has_expiration = (flags & Self::FLAG_HAS_EXPIRATION) != 0;
+                let has_created_at = (flags & Self::FLAG_HAS_CREATED_AT) != 0;
+
+                if !has_created_at {
+                    return Err(SpatioError::InvalidFormat);
+                }
+
+                let mut ts_buf = [0u8; 8];
+                reader.read_exact(&mut ts_buf)?;
+                let timestamp = u64::from_be_bytes(ts_buf);
+                let created_at = UNIX_EPOCH + Duration::from_secs(timestamp);
 
                 let expires_at = if has_expiration {
                     let mut timestamp_buf = [0u8; 8];
@@ -296,6 +353,7 @@ impl AOFFile {
                 Ok(AOFCommand::Set {
                     key,
                     value,
+                    created_at,
                     expires_at,
                 })
             }
@@ -363,7 +421,8 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let mut aof = AOFFile::open(temp_file.path()).unwrap();
 
-        aof.write_set(b"key1", b"value1", None).unwrap();
+        aof.write_set(b"key1", b"value1", None, SystemTime::now())
+            .unwrap();
         assert!(aof.size() > 0);
     }
 
@@ -372,8 +431,10 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let mut aof = AOFFile::open(temp_file.path()).unwrap();
 
+        let created_at = SystemTime::now();
+
         // Write some commands
-        aof.write_set(b"key1", b"value1", None).unwrap();
+        aof.write_set(b"key1", b"value1", None, created_at).unwrap();
         aof.write_delete(b"key2").unwrap();
         aof.flush().unwrap();
 
@@ -385,11 +446,16 @@ mod tests {
             AOFCommand::Set {
                 key,
                 value,
+                created_at: stored_created,
                 expires_at,
             } => {
                 assert_eq!(key.as_ref(), b"key1");
                 assert_eq!(value.as_ref(), b"value1");
                 assert!(expires_at.is_none());
+                let delta = stored_created
+                    .duration_since(created_at)
+                    .unwrap_or_else(|_| created_at.duration_since(*stored_created).unwrap());
+                assert!(delta.as_secs() < 2);
             }
             _ => panic!("Expected SET command"),
         }
@@ -413,7 +479,8 @@ mod tests {
             expires_at: Some(expires_at),
         };
 
-        aof.write_set(b"key1", b"value1", Some(&options)).unwrap();
+        aof.write_set(b"key1", b"value1", Some(&options), SystemTime::now())
+            .unwrap();
         aof.flush().unwrap();
 
         let commands = aof.replay().unwrap();
@@ -447,7 +514,7 @@ mod tests {
         for i in 0..50 {
             let key = format!("key{}", i);
             let value = format!("value{}", i);
-            aof.write_set(key.as_bytes(), value.as_bytes(), None)
+            aof.write_set(key.as_bytes(), value.as_bytes(), None, SystemTime::now())
                 .unwrap();
         }
 

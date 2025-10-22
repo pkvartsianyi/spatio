@@ -34,7 +34,7 @@ use std::sync::{Arc, RwLock};
 ///     .build()?;
 ///
 /// db.insert("key", b"value", None)?;
-/// # std::fs::remove_file(temp_path)?;
+/// # let _ = std::fs::remove_file(&temp_path);
 /// # Ok(())
 /// # }
 /// ```
@@ -66,7 +66,7 @@ use std::sync::{Arc, RwLock};
 ///     .aof_path(&temp_path)
 ///     .config(config)
 ///     .build()?;
-/// # std::fs::remove_file(temp_path)?;
+/// # let _ = std::fs::remove_file(&temp_path);
 /// # Ok(())
 /// # }
 /// ```

@@ -108,6 +108,7 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let _ = std::fs::remove_file("my_data.db");
     /// // Create persistent database with automatic AOF replay on open
     /// let persistent_db = Spatio::open("my_data.db")?;
     ///
@@ -270,9 +271,10 @@ impl DB {
             }) => DbItem::with_expiration(value_bytes, expires_at),
             _ => DbItem::new(value_bytes),
         };
+        let created_at = item.created_at;
 
         let old = inner.insert_item(key_bytes.clone(), item);
-        inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref())?;
+        inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
         Ok(old.map(|item| item.value))
     }
 
@@ -375,13 +377,14 @@ impl DB {
             }) => DbItem::with_expiration(data_ref.clone(), expires_at),
             _ => DbItem::new(data_ref.clone()),
         };
+        let created_at = item.created_at;
 
         inner.insert_item(key_bytes.clone(), item);
 
         // Add to spatial index
         inner.index_manager.insert_point(prefix, point, &data_ref)?;
 
-        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref())?;
+        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
         Ok(())
     }
 
@@ -741,6 +744,7 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let _ = std::fs::remove_file("my_data.db");
     /// let mut db = Spatio::open("my_data.db")?;
     /// db.insert("key", b"value", None)?;
     ///
@@ -883,10 +887,12 @@ impl DBInner {
                 AOFCommand::Set {
                     key,
                     value,
+                    created_at,
                     expires_at,
                 } => {
                     let item = DbItem {
                         value: value.clone(),
+                        created_at,
                         expires_at,
                     };
                     self.keys.insert(key.clone(), item);
@@ -943,10 +949,11 @@ impl DBInner {
         key: &Bytes,
         value: &[u8],
         options: Option<&SetOptions>,
+        created_at: SystemTime,
     ) -> Result<()> {
         if let Some(ref mut aof_file) = self.aof_file {
             let value_bytes = Bytes::copy_from_slice(value);
-            aof_file.write_set(key, &value_bytes, options)?;
+            aof_file.write_set(key, &value_bytes, options, created_at)?;
 
             // Flush based on sync policy
             match self.config.sync_policy {

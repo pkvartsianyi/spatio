@@ -145,35 +145,22 @@ impl AtomicBatch {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }
 
-        for operation in &self.operations {
+        for operation in self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
-                    let item = match opts {
-                        Some(SetOptions { ttl: Some(ttl), .. }) => {
-                            crate::types::DbItem::with_ttl(value.clone(), *ttl)
-                        }
-                        Some(SetOptions {
-                            expires_at: Some(expires_at),
-                            ..
-                        }) => crate::types::DbItem::with_expiration(value.clone(), *expires_at),
-                        _ => crate::types::DbItem::new(value.clone()),
-                    };
+                    let item = crate::types::DbItem::from_options(value.clone(), opts.as_ref());
+                    let created_at = item.created_at;
                     inner.insert_item(key.clone(), item);
+                    inner.write_to_aof_if_needed(
+                        &key,
+                        value.as_ref(),
+                        opts.as_ref(),
+                        created_at,
+                    )?;
                 }
                 BatchOperation::Delete { key } => {
-                    inner.remove_item(key);
-                }
-            }
-        }
-
-        // Write operations to AOF if needed
-        for operation in &self.operations {
-            match operation {
-                BatchOperation::Insert { key, value, opts } => {
-                    inner.write_to_aof_if_needed(key, value.as_ref(), opts.as_ref())?;
-                }
-                BatchOperation::Delete { key } => {
-                    inner.write_delete_to_aof_if_needed(key)?;
+                    inner.remove_item(&key);
+                    inner.write_delete_to_aof_if_needed(&key)?;
                 }
             }
         }
