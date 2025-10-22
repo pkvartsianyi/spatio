@@ -46,6 +46,9 @@ pub enum AOFCommand {
 }
 
 impl AOFFile {
+    const FLAG_HAS_EXPIRATION: u8 = 0b0000_0001;
+    const FLAG_HAS_CREATED_AT: u8 = 0b0000_0010;
+
     /// Open AOF file with default configuration
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, AOFConfig::default())
@@ -215,7 +218,8 @@ impl AOFFile {
                 expires_at,
             } => {
                 let mut buf =
-                    BytesMut::with_capacity(1 + 4 + key.len() + 4 + value.len() + 1 + 8 + 8);
+                    BytesMut::with_capacity(Self::calc_aof_capacity(key.len(), value.len()));
+
                 buf.put_u8(0); // Command type: SET
 
                 // Key length and data
@@ -227,9 +231,9 @@ impl AOFFile {
                 buf.put(value.as_ref());
 
                 let mut flags = 0u8;
-                flags |= 0b10; // created_at present
+                flags |= Self::FLAG_HAS_CREATED_AT; // created_at present
                 if expires_at.is_some() {
-                    flags |= 0b01;
+                    flags |= Self::FLAG_HAS_EXPIRATION;
                 }
                 buf.put_u8(flags);
 
@@ -260,6 +264,23 @@ impl AOFFile {
                 Ok(buf.to_vec())
             }
         }
+    }
+
+    fn calc_aof_capacity(key_len: usize, value_len: usize) -> usize {
+        const CMD_TYPE_LEN: usize = 1;
+        const LEN_FIELD_LEN: usize = 4;
+        const FLAGS_LEN: usize = 1;
+        const TIMESTAMP_LEN: usize = 8;
+        const EXPIRATION_LEN: usize = 8;
+
+        CMD_TYPE_LEN
+            + LEN_FIELD_LEN
+            + key_len
+            + LEN_FIELD_LEN
+            + value_len
+            + FLAGS_LEN
+            + TIMESTAMP_LEN
+            + EXPIRATION_LEN
     }
 
     /// Replay AOF commands and return them
@@ -302,8 +323,8 @@ impl AOFFile {
                 }
 
                 let flags = flags_buf[0];
-                let has_expiration = (flags & 0b01) != 0;
-                let has_created_at = (flags & 0b10) != 0;
+                let has_expiration = (flags & Self::FLAG_HAS_EXPIRATION) != 0;
+                let has_created_at = (flags & Self::FLAG_HAS_CREATED_AT) != 0;
 
                 let created_at = if has_created_at {
                     let mut ts_buf = [0u8; 8];
