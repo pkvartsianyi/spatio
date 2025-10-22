@@ -108,6 +108,7 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let _ = std::fs::remove_file("my_data.db");
     /// // Create persistent database with automatic AOF replay on open
     /// let persistent_db = Spatio::open("my_data.db")?;
     ///
@@ -743,6 +744,7 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let _ = std::fs::remove_file("my_data.db");
     /// let mut db = Spatio::open("my_data.db")?;
     /// db.insert("key", b"value", None)?;
     ///

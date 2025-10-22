@@ -233,7 +233,7 @@ impl AOFFile {
                 buf.put_u32(value.len() as u32);
                 buf.put(value.as_ref());
 
-                let mut flags = Self::FLAG_HAS_CREATED_AT; // created_at present
+                let mut flags = Self::FLAG_HAS_CREATED_AT;
                 if expires_at.is_some() {
                     flags |= Self::FLAG_HAS_EXPIRATION;
                 }
@@ -280,7 +280,7 @@ impl AOFFile {
             + LEN_FIELD_LEN
             + value_len
             + FLAGS_LEN
-            + TIMESTAMP_LEN;
+            + TIMESTAMP_LEN; // created_at timestamp
 
         if has_expiration {
             capacity += TIMESTAMP_LEN;
@@ -332,13 +332,14 @@ impl AOFFile {
                 let has_expiration = (flags & Self::FLAG_HAS_EXPIRATION) != 0;
                 let has_created_at = (flags & Self::FLAG_HAS_CREATED_AT) != 0;
 
-                let mut created_at_opt = None;
-                if has_created_at {
-                    let mut ts_buf = [0u8; 8];
-                    reader.read_exact(&mut ts_buf)?;
-                    let timestamp = u64::from_be_bytes(ts_buf);
-                    created_at_opt = Some(UNIX_EPOCH + Duration::from_secs(timestamp));
+                if !has_created_at {
+                    return Err(SpatioError::InvalidFormat);
                 }
+
+                let mut ts_buf = [0u8; 8];
+                reader.read_exact(&mut ts_buf)?;
+                let timestamp = u64::from_be_bytes(ts_buf);
+                let created_at = UNIX_EPOCH + Duration::from_secs(timestamp);
 
                 let expires_at = if has_expiration {
                     let mut timestamp_buf = [0u8; 8];
@@ -348,8 +349,6 @@ impl AOFFile {
                 } else {
                     None
                 };
-
-                let created_at = created_at_opt.unwrap_or_else(|| expires_at.unwrap_or(UNIX_EPOCH));
 
                 Ok(AOFCommand::Set {
                     key,
