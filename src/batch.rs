@@ -2,6 +2,7 @@ use crate::DB;
 use crate::error::Result;
 use crate::types::SetOptions;
 use bytes::Bytes;
+use std::time::SystemTime;
 
 /// Atomic batch for grouping multiple operations together.
 ///
@@ -145,6 +146,8 @@ impl AtomicBatch {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }
 
+        let mut created_at_log: Vec<Option<SystemTime>> = Vec::with_capacity(self.operations.len());
+
         for operation in &self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
@@ -158,19 +161,23 @@ impl AtomicBatch {
                         }) => crate::types::DbItem::with_expiration(value.clone(), *expires_at),
                         _ => crate::types::DbItem::new(value.clone()),
                     };
+                    let created_at = item.created_at;
                     inner.insert_item(key.clone(), item);
+                    created_at_log.push(Some(created_at));
                 }
                 BatchOperation::Delete { key } => {
                     inner.remove_item(key);
+                    created_at_log.push(None);
                 }
             }
         }
 
         // Write operations to AOF if needed
-        for operation in &self.operations {
+        for (operation, created_at_opt) in self.operations.iter().zip(created_at_log.into_iter()) {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
-                    inner.write_to_aof_if_needed(key, value.as_ref(), opts.as_ref())?;
+                    let created_at = created_at_opt.unwrap_or_else(SystemTime::now);
+                    inner.write_to_aof_if_needed(key, value.as_ref(), opts.as_ref(), created_at)?;
                 }
                 BatchOperation::Delete { key } => {
                     inner.write_delete_to_aof_if_needed(key)?;

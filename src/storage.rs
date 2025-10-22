@@ -348,8 +348,12 @@ impl StorageBackend for AOFBackend {
     fn put(&mut self, key: &[u8], item: &DbItem) -> Result<()> {
         // Write to AOF first for durability
         let opts = item.expires_at.map(SetOptions::with_expiration);
-        self.aof_writer
-            .write_set(&Bytes::copy_from_slice(key), &item.value, opts.as_ref())?;
+        self.aof_writer.write_set(
+            &Bytes::copy_from_slice(key),
+            &item.value,
+            opts.as_ref(),
+            item.created_at,
+        )?;
 
         // Then update in-memory state
         self.memory.put(key, item)
@@ -406,7 +410,8 @@ impl StorageBackend for AOFBackend {
             match op {
                 StorageOp::Put { key, item } => {
                     let opts = item.expires_at.map(SetOptions::with_expiration);
-                    self.aof_writer.write_set(key, &item.value, opts.as_ref())?;
+                    self.aof_writer
+                        .write_set(key, &item.value, opts.as_ref(), item.created_at)?;
                 }
                 StorageOp::Delete { key } => {
                     self.aof_writer.write_delete(key)?;
@@ -458,6 +463,7 @@ mod tests {
         let key = b"test_key";
         let item = DbItem {
             value: b"test_value".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         };
 
@@ -482,6 +488,7 @@ mod tests {
 
         let item = DbItem {
             value: b"value".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         };
 
@@ -501,6 +508,7 @@ mod tests {
         let mut backend = MemoryBackend::new();
         let item = DbItem {
             value: b"value".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         };
 
@@ -541,6 +549,7 @@ mod tests {
         let mut backend = MemoryBackend::new();
         let item = DbItem {
             value: b"value".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         };
 
@@ -565,6 +574,7 @@ mod tests {
         let mut backend = MemoryBackend::new();
         let item = DbItem {
             value: b"value".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: None,
         };
 
@@ -607,11 +617,13 @@ mod tests {
 
         let expired_item = DbItem {
             value: b"expired".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: Some(past),
         };
 
         let valid_item = DbItem {
             value: b"valid".to_vec().into(),
+            created_at: SystemTime::now(),
             expires_at: Some(future),
         };
 
@@ -633,6 +645,7 @@ mod tests {
                 key: b"key1".to_vec().into(),
                 item: DbItem {
                     value: b"value1".to_vec().into(),
+                    created_at: SystemTime::now(),
                     expires_at: None,
                 },
             },
@@ -640,6 +653,7 @@ mod tests {
                 key: b"key2".to_vec().into(),
                 item: DbItem {
                     value: b"value2".to_vec().into(),
+                    created_at: SystemTime::now(),
                     expires_at: None,
                 },
             },
