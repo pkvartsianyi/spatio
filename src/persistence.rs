@@ -217,8 +217,11 @@ impl AOFFile {
                 created_at,
                 expires_at,
             } => {
-                let mut buf =
-                    BytesMut::with_capacity(Self::calc_aof_capacity(key.len(), value.len()));
+                let mut buf = BytesMut::with_capacity(Self::calc_aof_capacity(
+                    key.len(),
+                    value.len(),
+                    expires_at.is_some(),
+                ));
 
                 buf.put_u8(0); // Command type: SET
 
@@ -230,8 +233,7 @@ impl AOFFile {
                 buf.put_u32(value.len() as u32);
                 buf.put(value.as_ref());
 
-                let mut flags = 0u8;
-                flags |= Self::FLAG_HAS_CREATED_AT; // created_at present
+                let mut flags = Self::FLAG_HAS_CREATED_AT; // created_at present
                 if expires_at.is_some() {
                     flags |= Self::FLAG_HAS_EXPIRATION;
                 }
@@ -266,21 +268,25 @@ impl AOFFile {
         }
     }
 
-    fn calc_aof_capacity(key_len: usize, value_len: usize) -> usize {
+    fn calc_aof_capacity(key_len: usize, value_len: usize, has_expiration: bool) -> usize {
         const CMD_TYPE_LEN: usize = 1;
         const LEN_FIELD_LEN: usize = 4;
         const FLAGS_LEN: usize = 1;
         const TIMESTAMP_LEN: usize = 8;
-        const EXPIRATION_LEN: usize = 8;
 
-        CMD_TYPE_LEN
+        let mut capacity = CMD_TYPE_LEN
             + LEN_FIELD_LEN
             + key_len
             + LEN_FIELD_LEN
             + value_len
             + FLAGS_LEN
-            + TIMESTAMP_LEN
-            + EXPIRATION_LEN
+            + TIMESTAMP_LEN;
+
+        if has_expiration {
+            capacity += TIMESTAMP_LEN;
+        }
+
+        capacity
     }
 
     /// Replay AOF commands and return them
@@ -326,14 +332,13 @@ impl AOFFile {
                 let has_expiration = (flags & Self::FLAG_HAS_EXPIRATION) != 0;
                 let has_created_at = (flags & Self::FLAG_HAS_CREATED_AT) != 0;
 
-                let created_at = if has_created_at {
+                let mut created_at_opt = None;
+                if has_created_at {
                     let mut ts_buf = [0u8; 8];
                     reader.read_exact(&mut ts_buf)?;
                     let timestamp = u64::from_be_bytes(ts_buf);
-                    UNIX_EPOCH + Duration::from_secs(timestamp)
-                } else {
-                    SystemTime::now()
-                };
+                    created_at_opt = Some(UNIX_EPOCH + Duration::from_secs(timestamp));
+                }
 
                 let expires_at = if has_expiration {
                     let mut timestamp_buf = [0u8; 8];
@@ -343,6 +348,8 @@ impl AOFFile {
                 } else {
                     None
                 };
+
+                let created_at = created_at_opt.unwrap_or_else(|| expires_at.unwrap_or(UNIX_EPOCH));
 
                 Ok(AOFCommand::Set {
                     key,
