@@ -55,12 +55,16 @@ no SQL parser, no external dependencies, and no setup required.
 ### Data Management
 - **Namespaces** — Isolate data logically within the same instance
 - **TTL Support** — Auto-expiring data for temporal use cases
+- **Temporal Queries** — Filter keys by recent activity with optional history tracking
 - **Atomic Batches** — Transaction-like grouped operations
 - **Custom Configs** — JSON/TOML serializable configuration
 
 ### Language Support
 - **Rust** — Native API for maximum performance
 - **Python** — Native bindings via PyO3 (`pip install spatio`)
+
+### Compile-Time Feature Flags
+- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="aof,geojson"`.
 
 ## Installation
 

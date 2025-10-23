@@ -4,10 +4,16 @@ use crate::index::IndexManager;
 use crate::persistence::{AOFCommand, AOFFile};
 use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions};
+#[cfg(feature = "time-index")]
+use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
 use std::collections::BTreeMap;
+#[cfg(feature = "time-index")]
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(feature = "time-index")]
+use std::time::Duration;
 use std::time::SystemTime;
 
 /// Main Spatio database structure providing spatial and temporal data storage.
@@ -71,10 +77,16 @@ pub(crate) struct DBInner {
     pub keys: BTreeMap<Bytes, DbItem>,
     /// Items ordered by expiration time
     pub expirations: BTreeMap<SystemTime, Vec<Bytes>>,
+    #[cfg(feature = "time-index")]
+    /// Items indexed by creation time for time-range queries
+    pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
     /// Index manager for spatial operations
     pub index_manager: IndexManager,
     /// Append-only file for persistence
     pub aof_file: Option<AOFFile>,
+    #[cfg(feature = "time-index")]
+    /// Optional per-key history tracker
+    pub history: Option<HistoryTracker>,
     /// Whether the database is closed
     pub closed: bool,
     /// Database statistics
@@ -147,6 +159,7 @@ impl DB {
     /// let config = Config::with_geohash_precision(10)
     ///     .with_sync_policy(SyncPolicy::Always)
     ///     .with_default_ttl(Duration::from_secs(3600));
+    /// # let _ = std::fs::remove_file("my_database.db");
     ///
     /// let db = Spatio::open_with_config("my_database.db", config)?;
     /// # Ok(())
@@ -156,15 +169,7 @@ impl DB {
         let path = path.as_ref();
         let is_memory = path.to_str() == Some(":memory:");
 
-        let mut inner = DBInner {
-            keys: BTreeMap::new(),
-            expirations: BTreeMap::new(),
-            index_manager: IndexManager::with_config(&config),
-            aof_file: None,
-            closed: false,
-            stats: DbStats::default(),
-            config: config.clone(),
-        };
+        let mut inner = DBInner::new_with_config(&config);
 
         // Initialize persistence if not in-memory
         // This automatically replays the AOF to restore previous state
@@ -309,6 +314,78 @@ impl DB {
             Ok(Some(item.value))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Remove all expired keys and compact indexes.
+    pub fn cleanup_expired(&self) -> Result<usize> {
+        let mut inner = self.write()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let now = SystemTime::now();
+        let expired_times: Vec<SystemTime> =
+            inner.expirations.range(..=now).map(|(&ts, _)| ts).collect();
+
+        let mut removed = 0;
+        for ts in expired_times {
+            if let Some(keys) = inner.expirations.remove(&ts) {
+                for key in keys {
+                    if let Some(_item) = inner.remove_item(&key) {
+                        inner.write_delete_to_aof_if_needed(&key)?;
+                        removed += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+
+    #[cfg(feature = "time-index")]
+    /// Return keys whose last update occurred within the given duration.
+    pub fn keys_created_since(&self, duration: Duration) -> Result<Vec<Bytes>> {
+        let inner = self.read()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let end = SystemTime::now();
+        let start = end.checked_sub(duration).unwrap_or(SystemTime::UNIX_EPOCH);
+
+        Ok(inner.collect_keys_created_between(start, end))
+    }
+
+    #[cfg(feature = "time-index")]
+    /// Return keys whose last update timestamp falls within the specified interval.
+    pub fn keys_created_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<Bytes>> {
+        let inner = self.read()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        Ok(inner.collect_keys_created_between(start, end))
+    }
+
+    #[cfg(feature = "time-index")]
+    /// Retrieve the recent history of mutations for a specific key.
+    pub fn history(&self, key: impl AsRef<[u8]>) -> Result<Vec<HistoryEntry>> {
+        let inner = self.read()?;
+        if inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        if let Some(ref tracker) = inner.history {
+            let key_bytes = Bytes::copy_from_slice(key.as_ref());
+            Ok(tracker.history_for(&key_bytes).unwrap_or_default())
+        } else {
+            Ok(Vec::new())
         }
     }
 
@@ -776,6 +853,63 @@ impl DB {
     }
 }
 
+#[cfg(feature = "time-index")]
+#[derive(Debug)]
+pub(crate) struct HistoryTracker {
+    capacity: usize,
+    entries: HashMap<Bytes, VecDeque<HistoryEntry>>,
+}
+
+#[cfg(feature = "time-index")]
+impl HistoryTracker {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn record_set(
+        &mut self,
+        key: &Bytes,
+        value: Bytes,
+        timestamp: SystemTime,
+        expires_at: Option<SystemTime>,
+    ) {
+        let capacity = self.capacity;
+        let deque = self.entries.entry(key.clone()).or_default();
+        deque.push_back(HistoryEntry {
+            timestamp,
+            kind: HistoryEventKind::Set,
+            value: Some(value),
+            expires_at,
+        });
+        while deque.len() > capacity {
+            deque.pop_front();
+        }
+    }
+
+    fn record_delete(&mut self, key: &Bytes, timestamp: SystemTime, value: Option<Bytes>) {
+        let capacity = self.capacity;
+        let deque = self.entries.entry(key.clone()).or_default();
+        deque.push_back(HistoryEntry {
+            timestamp,
+            kind: HistoryEventKind::Delete,
+            value,
+            expires_at: None,
+        });
+        while deque.len() > capacity {
+            deque.pop_front();
+        }
+    }
+
+    fn history_for(&self, key: &Bytes) -> Option<Vec<HistoryEntry>> {
+        self.entries
+            .get(key)
+            .map(|deque| deque.iter().cloned().collect())
+    }
+}
+
 /// Automatic graceful shutdown on drop.
 ///
 /// When the last reference to the database is dropped, it automatically performs a graceful shutdown:
@@ -803,49 +937,99 @@ impl Drop for DB {
 }
 
 impl DBInner {
+    pub(crate) fn new_with_config(config: &Config) -> Self {
+        Self {
+            keys: BTreeMap::new(),
+            expirations: BTreeMap::new(),
+            index_manager: IndexManager::with_config(config),
+            aof_file: None,
+            closed: false,
+            stats: DbStats::default(),
+            config: config.clone(),
+            #[cfg(feature = "time-index")]
+            created_index: BTreeMap::new(),
+            #[cfg(feature = "time-index")]
+            history: config.history_capacity.map(HistoryTracker::new),
+        }
+    }
+
+    fn add_expiration(&mut self, key: &Bytes, expires_at: Option<SystemTime>) {
+        if let Some(exp) = expires_at {
+            self.expirations.entry(exp).or_default().push(key.clone());
+        }
+    }
+
+    fn remove_expiration_entry(&mut self, key: &Bytes, item: &DbItem) {
+        if let Some(exp) = item.expires_at
+            && let Some(keys) = self.expirations.get_mut(&exp)
+        {
+            keys.retain(|k| k != key);
+            if keys.is_empty() {
+                self.expirations.remove(&exp);
+            }
+        }
+    }
+
+    #[cfg(feature = "time-index")]
+    fn add_created_index(&mut self, key: &Bytes, created_at: SystemTime) {
+        self.created_index
+            .entry(created_at)
+            .or_default()
+            .insert(key.clone());
+    }
+
+    #[cfg(feature = "time-index")]
+    fn remove_created_index(&mut self, key: &Bytes, item: &DbItem) {
+        if let Some(keys) = self.created_index.get_mut(&item.created_at) {
+            keys.remove(key);
+            if keys.is_empty() {
+                self.created_index.remove(&item.created_at);
+            }
+        }
+    }
+
     /// Insert an item into the database
     pub fn insert_item(&mut self, key: Bytes, item: DbItem) -> Option<DbItem> {
-        // Remove from old expiration index if updating
-        let old_item = if let Some(old) = self.keys.get(&key) {
-            if let Some(expires_at) = old.expires_at
-                && let Some(keys) = self.expirations.get_mut(&expires_at)
-            {
-                keys.retain(|k| k != &key);
-                if keys.is_empty() {
-                    self.expirations.remove(&expires_at);
-                }
-            }
-            Some(old.clone())
-        } else {
-            None
-        };
+        let expires_at = item.expires_at;
+        #[cfg(feature = "time-index")]
+        let created_at = item.created_at;
+        #[cfg(feature = "time-index")]
+        let history_value = self.history.as_ref().map(|_| item.value.clone());
 
-        // Add to expiration index if TTL is set
-        if let Some(expires_at) = item.expires_at {
-            self.expirations
-                .entry(expires_at)
-                .or_default()
-                .push(key.clone());
+        let old_item = self.keys.insert(key.clone(), item);
+        if let Some(ref old) = old_item {
+            self.remove_expiration_entry(&key, old);
+            #[cfg(feature = "time-index")]
+            self.remove_created_index(&key, old);
         }
 
-        // Insert into main storage
-        self.keys.insert(key, item);
-        self.stats.key_count = self.keys.len();
+        self.add_expiration(&key, expires_at);
+        #[cfg(feature = "time-index")]
+        self.add_created_index(&key, created_at);
 
+        #[cfg(feature = "time-index")]
+        if let Some(history) = self.history.as_mut()
+            && let Some(value) = history_value
+        {
+            history.record_set(&key, value, created_at, expires_at);
+        }
+
+        self.stats.key_count = self.keys.len();
         old_item
     }
 
     /// Remove an item from the database
     pub fn remove_item(&mut self, key: &Bytes) -> Option<DbItem> {
         if let Some(item) = self.keys.remove(key) {
-            // Remove from expiration index
-            if let Some(expires_at) = item.expires_at
-                && let Some(keys) = self.expirations.get_mut(&expires_at)
-            {
-                keys.retain(|k| k != key);
-                if keys.is_empty() {
-                    self.expirations.remove(&expires_at);
-                }
+            #[cfg(feature = "time-index")]
+            let history_value = self.history.as_ref().map(|_| item.value.clone());
+            self.remove_expiration_entry(key, &item);
+            #[cfg(feature = "time-index")]
+            self.remove_created_index(key, &item);
+
+            #[cfg(feature = "time-index")]
+            if let Some(history) = self.history.as_mut() {
+                history.record_delete(key, SystemTime::now(), history_value);
             }
 
             self.stats.key_count = self.keys.len();
@@ -858,6 +1042,22 @@ impl DBInner {
     /// Get an item from the database
     pub fn get_item(&self, key: &Bytes) -> Option<&DbItem> {
         self.keys.get(key)
+    }
+
+    #[cfg(feature = "time-index")]
+    fn collect_keys_created_between(&self, start: SystemTime, end: SystemTime) -> Vec<Bytes> {
+        let mut results = Vec::new();
+        let now = SystemTime::now();
+        for (_timestamp, keys) in self.created_index.range(start..=end) {
+            for key in keys {
+                if let Some(item) = self.keys.get(key)
+                    && !item.is_expired_at(now)
+                {
+                    results.push(key.clone());
+                }
+            }
+        }
+        results
     }
 
     /// Load data from AOF file
@@ -895,7 +1095,15 @@ impl DBInner {
                         created_at,
                         expires_at,
                     };
-                    self.keys.insert(key.clone(), item);
+
+                    if let Some(old) = self.keys.insert(key.clone(), item) {
+                        self.remove_expiration_entry(&key, &old);
+                        #[cfg(feature = "time-index")]
+                        self.remove_created_index(&key, &old);
+                    }
+                    self.add_expiration(&key, expires_at);
+                    #[cfg(feature = "time-index")]
+                    self.add_created_index(&key, created_at);
 
                     // Rebuild spatial index if this is a spatial key
                     if let Ok(key_str) = std::str::from_utf8(&key)
@@ -906,7 +1114,11 @@ impl DBInner {
                     }
                 }
                 AOFCommand::Delete { key } => {
-                    self.keys.remove(&key);
+                    if let Some(item) = self.keys.remove(&key) {
+                        self.remove_expiration_entry(&key, &item);
+                        #[cfg(feature = "time-index")]
+                        self.remove_created_index(&key, &item);
+                    }
 
                     // Remove from spatial index if this was a spatial key
                     if let Ok(key_str) = std::str::from_utf8(&key)
@@ -999,7 +1211,11 @@ pub use DB as Spatio;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "time-index")]
+    use bytes::Bytes;
     use std::sync::Arc;
+    use std::thread::sleep;
+    use std::time::Duration;
 
     #[test]
     fn test_drop_only_syncs_on_last_reference() {
@@ -1064,5 +1280,64 @@ mod tests {
         assert_eq!(db.get("key2").unwrap().unwrap().as_ref(), b"value2");
         assert_eq!(db2.get("key1").unwrap().unwrap().as_ref(), b"value1");
         assert_eq!(db2.get("key2").unwrap().unwrap().as_ref(), b"value2");
+    }
+
+    #[test]
+    fn test_cleanup_expired_removes_keys() {
+        let db = DB::memory().unwrap();
+        db.insert(
+            "ttl",
+            b"value",
+            Some(SetOptions::with_ttl(Duration::from_millis(20))),
+        )
+        .unwrap();
+
+        sleep(Duration::from_millis(40));
+
+        let removed = db.cleanup_expired().unwrap();
+        assert_eq!(removed, 1);
+        assert!(db.get("ttl").unwrap().is_none());
+        assert_eq!(db.cleanup_expired().unwrap(), 0);
+    }
+
+    #[cfg(feature = "time-index")]
+    #[test]
+    fn test_keys_created_time_filters() {
+        let db = DB::memory().unwrap();
+        db.insert("old", b"1", None).unwrap();
+        sleep(Duration::from_millis(30));
+        db.insert("recent", b"2", None).unwrap();
+
+        let recent_keys = db.keys_created_since(Duration::from_millis(20)).unwrap();
+        assert!(recent_keys.iter().any(|k| k.as_ref() == b"recent"));
+        assert!(!recent_keys.iter().any(|k| k.as_ref() == b"old"));
+
+        let old_key = Bytes::copy_from_slice(b"old");
+        let new_key = Bytes::copy_from_slice(b"recent");
+        let inner = db.read().unwrap();
+        let old_created = inner.get_item(&old_key).unwrap().created_at;
+        let new_created = inner.get_item(&new_key).unwrap().created_at;
+        drop(inner);
+
+        let between = db.keys_created_between(old_created, new_created).unwrap();
+        assert!(between.iter().any(|k| k.as_ref() == b"old"));
+        assert!(between.iter().any(|k| k.as_ref() == b"recent"));
+    }
+
+    #[cfg(feature = "time-index")]
+    #[test]
+    fn test_history_tracking_with_capacity() {
+        let config = Config::default().with_history_capacity(2);
+        let db = DB::open_with_config(":memory:", config).unwrap();
+
+        db.insert("key", b"v1", None).unwrap();
+        db.insert("key", b"v2", None).unwrap();
+        db.delete("key").unwrap();
+
+        let history = db.history("key").unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].kind, HistoryEventKind::Set);
+        assert_eq!(history[0].value.as_ref().unwrap().as_ref(), b"v2");
+        assert_eq!(history[1].kind, HistoryEventKind::Delete);
     }
 }

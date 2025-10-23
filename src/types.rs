@@ -62,6 +62,11 @@ pub struct Config {
     /// Higher values = more precision but more memory usage
     #[serde(default = "Config::default_geohash_precision")]
     pub geohash_precision: usize,
+
+    /// Optional history capacity per key (number of events to retain)
+    #[cfg(feature = "time-index")]
+    #[serde(default)]
+    pub history_capacity: Option<usize>,
 }
 
 impl Config {
@@ -81,6 +86,8 @@ impl Config {
             sync_policy: SyncPolicy::default(),
             default_ttl_seconds: None,
             geohash_precision: precision,
+            #[cfg(feature = "time-index")]
+            history_capacity: None,
         }
     }
 
@@ -93,6 +100,14 @@ impl Config {
     /// Set sync policy
     pub fn with_sync_policy(mut self, policy: SyncPolicy) -> Self {
         self.sync_policy = policy;
+        self
+    }
+
+    /// Enable update history with a maximum number of entries per key.
+    #[cfg(feature = "time-index")]
+    pub fn with_history_capacity(mut self, capacity: usize) -> Self {
+        assert!(capacity > 0, "History capacity must be greater than zero");
+        self.history_capacity = Some(capacity);
         self
     }
 
@@ -123,6 +138,13 @@ impl Config {
             if ttl > u64::MAX as f64 {
                 return Err("Default TTL is too large".to_string());
             }
+        }
+
+        #[cfg(feature = "time-index")]
+        if let Some(capacity) = self.history_capacity
+            && capacity == 0
+        {
+            return Err("History capacity must be greater than zero".to_string());
         }
 
         Ok(())
@@ -165,6 +187,8 @@ impl Default for Config {
             sync_policy: SyncPolicy::default(),
             default_ttl_seconds: None,
             geohash_precision: Self::default_geohash_precision(),
+            #[cfg(feature = "time-index")]
+            history_capacity: None,
         }
     }
 }
@@ -209,6 +233,22 @@ pub struct DbItem {
     pub value: Bytes,
     pub created_at: SystemTime,
     /// Expiration time (if any)
+    pub expires_at: Option<SystemTime>,
+}
+
+/// Operation types captured in history tracking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryEventKind {
+    Set,
+    Delete,
+}
+
+/// Historical record for key mutations.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub timestamp: SystemTime,
+    pub kind: HistoryEventKind,
+    pub value: Option<Bytes>,
     pub expires_at: Option<SystemTime>,
 }
 
@@ -338,6 +378,8 @@ mod tests {
         assert_eq!(config.sync_policy, SyncPolicy::EverySecond);
         assert_eq!(config.geohash_precision, 8);
         assert!(config.default_ttl_seconds.is_none());
+        #[cfg(feature = "time-index")]
+        assert!(config.history_capacity.is_none());
     }
 
     #[test]
@@ -367,6 +409,13 @@ mod tests {
             deserialized.default_ttl().unwrap(),
             Duration::from_secs(3600)
         );
+    }
+
+    #[cfg(feature = "time-index")]
+    #[test]
+    fn test_config_history_capacity() {
+        let config = Config::default().with_history_capacity(5);
+        assert_eq!(config.history_capacity, Some(5));
     }
 
     #[test]

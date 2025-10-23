@@ -153,6 +153,8 @@ pub use spatial::{BoundingBox, Point};
 
 // Configuration and options
 pub use types::{Config, DbStats, SetOptions, SyncPolicy};
+#[cfg(feature = "time-index")]
+pub use types::{HistoryEntry, HistoryEventKind};
 
 // Namespace support for data organization
 pub use namespace::{Namespace, NamespaceManager};

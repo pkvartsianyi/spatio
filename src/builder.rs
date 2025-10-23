@@ -5,10 +5,8 @@
 
 use crate::db::{DB, DBInner};
 use crate::error::Result;
-use crate::index::IndexManager;
 use crate::persistence::AOFFile;
-use crate::types::{Config, DbStats};
-use std::collections::BTreeMap;
+use crate::types::Config;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -193,6 +191,15 @@ impl DBBuilder {
         self
     }
 
+    /// Enable update history tracking with a fixed per-key capacity.
+    ///
+    /// Each key retains at most `capacity` recent operations (set/delete).
+    #[cfg(feature = "time-index")]
+    pub fn history_capacity(mut self, capacity: usize) -> Self {
+        self.config = self.config.clone().with_history_capacity(capacity);
+        self
+    }
+
     /// Build the database with the configured options.
     ///
     /// This method:
@@ -226,15 +233,7 @@ impl DBBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Result<DB> {
-        let mut inner = DBInner {
-            keys: BTreeMap::new(),
-            expirations: BTreeMap::new(),
-            index_manager: IndexManager::with_config(&self.config),
-            aof_file: None,
-            closed: false,
-            stats: DbStats::default(),
-            config: self.config.clone(),
-        };
+        let mut inner = DBInner::new_with_config(&self.config);
 
         // Initialize persistence if AOF path is specified
         if !self.in_memory
@@ -261,6 +260,8 @@ impl Default for DBBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "time-index")]
+    use crate::types::HistoryEventKind;
     use crate::types::SyncPolicy;
     use std::time::Duration;
 
@@ -286,6 +287,21 @@ mod tests {
 
         let db = DBBuilder::new().config(config).build().unwrap();
         db.insert("test", b"value", None).unwrap();
+    }
+
+    #[cfg(feature = "time-index")]
+    #[test]
+    fn test_builder_history_capacity() {
+        let db = DBBuilder::new().history_capacity(2).build().unwrap();
+
+        db.insert("key", b"v1", None).unwrap();
+        db.insert("key", b"v2", None).unwrap();
+        db.delete("key").unwrap();
+
+        let history = db.history("key").unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].kind, HistoryEventKind::Set);
+        assert_eq!(history[1].kind, HistoryEventKind::Delete);
     }
 
     #[test]

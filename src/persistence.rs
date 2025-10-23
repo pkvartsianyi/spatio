@@ -30,6 +30,7 @@ pub struct AOFFile {
     config: AOFConfig,
     last_rewrite_size: u64,
     rewrite_in_progress: bool,
+    scratch: BytesMut,
 }
 
 #[derive(Debug)]
@@ -76,6 +77,7 @@ impl AOFFile {
             config,
             last_rewrite_size: size,
             rewrite_in_progress: false,
+            scratch: BytesMut::with_capacity(4096),
         })
     }
 
@@ -121,9 +123,9 @@ impl AOFFile {
             return Err(SpatioError::RewriteInProgress);
         }
 
-        let serialized = self.serialize_command(command)?;
-        self.writer.write_all(&serialized)?;
-        self.size += serialized.len() as u64;
+        let written_len = self.serialize_command(command)?;
+        self.writer.write_all(&self.scratch[..written_len])?;
+        self.size += written_len as u64;
 
         // Check if we should trigger a rewrite
         if self.should_rewrite() {
@@ -208,8 +210,8 @@ impl AOFFile {
         result
     }
 
-    /// Serialize a command to bytes
-    fn serialize_command(&self, command: &AOFCommand) -> Result<Vec<u8>> {
+    /// Serialize a command into the reusable scratch buffer.
+    fn serialize_command(&mut self, command: &AOFCommand) -> Result<usize> {
         match command {
             AOFCommand::Set {
                 key,
@@ -217,11 +219,11 @@ impl AOFFile {
                 created_at,
                 expires_at,
             } => {
-                let mut buf = BytesMut::with_capacity(Self::calc_aof_capacity(
-                    key.len(),
-                    value.len(),
-                    expires_at.is_some(),
-                ));
+                let capacity =
+                    Self::calc_aof_capacity(key.len(), value.len(), expires_at.is_some());
+                self.scratch.clear();
+                self.scratch.reserve(capacity);
+                let buf = &mut self.scratch;
 
                 buf.put_u8(0); // Command type: SET
 
@@ -253,17 +255,19 @@ impl AOFFile {
                     buf.put_u64(timestamp);
                 }
 
-                Ok(buf.to_vec())
+                Ok(buf.len())
             }
             AOFCommand::Delete { key } => {
-                let mut buf = BytesMut::with_capacity(1 + 4 + key.len());
+                self.scratch.clear();
+                self.scratch.reserve(1 + 4 + key.len());
+                let buf = &mut self.scratch;
                 buf.put_u8(1); // Command type: DELETE
 
                 // Key length and data
                 buf.put_u32(key.len() as u32);
                 buf.put(key.as_ref());
 
-                Ok(buf.to_vec())
+                Ok(buf.len())
             }
         }
     }

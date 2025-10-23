@@ -32,15 +32,12 @@ toml = { version = "0.8", optional = true }
 uuid = { version = "1.0", features = ["v4"] }
 
 [features]
-default = ["aof", "geojson"]
-# GeoJSON I/O support (conditionally compiled)
+default = ["aof", "geojson", "time-index"]
 geojson = []
-# Append-only file persistence
 aof = ["dep:bincode"]
-# TOML configuration support
 toml = ["dep:toml"]
-# All features
-full = ["geojson", "aof", "toml"]
+time-index = []
+full = ["geojson", "aof", "toml", "time-index"]
 
 [dev-dependencies]
 tempfile = "3.8"
