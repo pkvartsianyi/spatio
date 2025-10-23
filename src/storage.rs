@@ -117,7 +117,6 @@ impl MemoryBackend {
 
     /// Create with initial capacity hint
     pub fn with_capacity(capacity: usize) -> Self {
-        // BTreeMap doesn't have with_capacity, but we can still track the hint
         let mut backend = Self::new();
         backend.stats.size_bytes = capacity * 64; // Rough estimate
         backend
@@ -328,8 +327,8 @@ impl AOFBackend {
 
     /// Load existing data from AOF file
     pub fn load_from_aof(&mut self) -> Result<()> {
+        // TODO: Implement loading from AOF file
         // Implementation would replay AOF file to restore state
-        // This is a placeholder for the actual implementation
         Ok(())
     }
 }
