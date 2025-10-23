@@ -91,6 +91,10 @@ pub struct Config {
     #[cfg(feature = "time-index")]
     #[serde(default)]
     pub history_capacity: Option<usize>,
+
+    /// Batch size for amortized cleanup
+    #[serde(default = "Config::default_amortized_cleanup_batch_size")]
+    pub amortized_cleanup_batch: usize,
 }
 
 impl Config {
@@ -101,6 +105,15 @@ impl Config {
 
     const fn default_sync_batch_size() -> usize {
         1
+    }
+
+    const fn default_amortized_cleanup_batch_size() -> usize {
+        10
+    }
+
+    pub fn with_amortized_cleanup(mut self, batch_size: usize) -> Self {
+        self.amortized_cleanup_batch = batch_size;
+        self
     }
 
     /// Create a configuration with custom geohash precision
@@ -118,6 +131,7 @@ impl Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
+            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
         }
     }
 
@@ -238,6 +252,7 @@ impl Default for Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
+            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
         }
     }
 }

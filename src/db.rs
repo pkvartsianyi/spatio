@@ -267,6 +267,11 @@ impl DB {
             return Err(SpatioError::DatabaseClosed);
         }
 
+        let cleanup_batch = inner.config.amortized_cleanup_batch;
+        if cleanup_batch > 0 {
+            let _ = inner.amortized_cleanup(cleanup_batch)?;
+        }
+
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let value_bytes = Bytes::copy_from_slice(value.as_ref());
 
@@ -287,18 +292,45 @@ impl DB {
 
     /// Get a value by key
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let inner = self.read()?;
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
+
+        // Fast path: read-only lock
+        {
+            let inner = self.read()?;
+            if inner.closed {
+                return Err(SpatioError::DatabaseClosed);
+            }
+
+            if let Some(item) = inner.get_item(&key_bytes) {
+                if !item.is_expired() {
+                    return Ok(Some(item.value.clone()));
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+
+        // Slow path: expired item needs removal
+        let mut inner = self.write()?;
         if inner.closed {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let key_bytes = Bytes::copy_from_slice(key.as_ref());
+        if let Some(item) = inner.get_item(&key_bytes) {
+            if item.is_expired() {
+                if let Some(_old) = inner.remove_item(&key_bytes) {
+                    inner.write_delete_to_aof_if_needed(&key_bytes)?;
 
-        if let Some(item) = inner.get_item(&key_bytes)
-            && !item.is_expired()
-        {
+                    let cleanup_batch = inner.config.amortized_cleanup_batch;
+                    if cleanup_batch > 0 {
+                        let _ = inner.amortized_cleanup(cleanup_batch)?;
+                    }
+                }
+                return Ok(None);
+            }
             return Ok(Some(item.value.clone()));
         }
+
         Ok(None)
     }
 
@@ -1052,6 +1084,43 @@ impl DBInner {
         } else {
             None
         }
+    }
+
+    fn amortized_cleanup(&mut self, max_items: usize) -> Result<usize> {
+        if max_items == 0 {
+            return Ok(0);
+        }
+
+        let now = SystemTime::now();
+        let mut removed = 0;
+
+        while removed < max_items {
+            let Some(ts) = self.expirations.range(..=now).next().map(|(ts, _)| *ts) else {
+                break;
+            };
+
+            let mut keys = match self.expirations.remove(&ts) {
+                Some(keys) => keys,
+                None => continue,
+            };
+
+            while removed < max_items {
+                let Some(key) = keys.pop() else {
+                    break;
+                };
+
+                if let Some(_item) = self.remove_item(&key) {
+                    self.write_delete_to_aof_if_needed(&key)?;
+                    removed += 1;
+                }
+            }
+
+            if !keys.is_empty() {
+                self.expirations.insert(ts, keys);
+            }
+        }
+
+        Ok(removed)
     }
 
     /// Get an item from the database
