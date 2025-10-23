@@ -5,8 +5,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "bench-prof")]
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(feature = "bench-prof")]
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -35,23 +33,22 @@ pub struct AOFFile {
     last_rewrite_size: u64,
     rewrite_in_progress: bool,
     scratch: BytesMut,
+    #[cfg(feature = "bench-prof")]
+    profile: AOFProfile,
 }
 
 const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
 const SCRATCH_SHRINK_THRESHOLD: usize = 1 << 20;
 
 #[cfg(feature = "bench-prof")]
-static SERIALIZE_TIME_NS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "bench-prof")]
-static WRITE_TIME_NS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "bench-prof")]
-static COMMAND_COUNT: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "bench-prof")]
-static SYNC_TIME_NS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "bench-prof")]
-static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "bench-prof")]
-static HAS_REPORTED: AtomicBool = AtomicBool::new(false);
+#[derive(Default)]
+struct AOFProfile {
+    serialize_ns: u128,
+    write_ns: u128,
+    sync_ns: u128,
+    commands: u64,
+    syncs: u64,
+}
 
 #[derive(Debug)]
 pub enum AOFCommand {
@@ -98,6 +95,8 @@ impl AOFFile {
             last_rewrite_size: size,
             rewrite_in_progress: false,
             scratch: BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY),
+            #[cfg(feature = "bench-prof")]
+            profile: AOFProfile::default(),
         })
     }
 
@@ -149,8 +148,8 @@ impl AOFFile {
         #[cfg(feature = "bench-prof")]
         {
             let elapsed = serialize_start.elapsed();
-            SERIALIZE_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            COMMAND_COUNT.fetch_add(1, Ordering::Relaxed);
+            self.profile.serialize_ns += elapsed.as_nanos();
+            self.profile.commands += 1;
         }
         #[cfg(feature = "bench-prof")]
         let write_start = Instant::now();
@@ -158,7 +157,7 @@ impl AOFFile {
         #[cfg(feature = "bench-prof")]
         {
             let elapsed = write_start.elapsed();
-            WRITE_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+            self.profile.write_ns += elapsed.as_nanos();
         }
         self.size += written_len as u64;
 
@@ -450,8 +449,9 @@ impl AOFFile {
         }
         #[cfg(feature = "bench-prof")]
         {
-            SYNC_TIME_NS.fetch_add(sync_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
-            SYNC_COUNT.fetch_add(1, Ordering::Relaxed);
+            let elapsed = sync_start.elapsed();
+            self.profile.sync_ns += elapsed.as_nanos();
+            self.profile.syncs += 1;
         }
         Ok(())
     }
@@ -473,30 +473,21 @@ impl Drop for AOFFile {
                 return;
             }
 
-            if HAS_REPORTED.swap(true, Ordering::Relaxed) {
+            if self.profile.commands == 0 {
                 return;
             }
 
-            let count = COMMAND_COUNT.load(Ordering::Relaxed);
-            if count == 0 {
-                return;
-            }
+            let avg_serialize = self.profile.serialize_ns / self.profile.commands as u128;
+            let avg_write = self.profile.write_ns / self.profile.commands as u128;
+            let avg_sync = if self.profile.syncs > 0 {
+                self.profile.sync_ns / self.profile.syncs as u128
+            } else {
+                0
+            };
 
-            let serialize_ns = SERIALIZE_TIME_NS.load(Ordering::Relaxed);
-            let write_ns = WRITE_TIME_NS.load(Ordering::Relaxed);
-            let sync_count = SYNC_COUNT.load(Ordering::Relaxed);
-            let sync_ns = SYNC_TIME_NS.load(Ordering::Relaxed);
             eprintln!(
                 "[bench-prof] AOF stats: serialize avg = {} ns, write avg = {} ns over {} commands; sync avg = {} ns over {} calls",
-                serialize_ns / count,
-                write_ns / count,
-                count,
-                if sync_count > 0 {
-                    sync_ns / sync_count
-                } else {
-                    0
-                },
-                sync_count
+                avg_serialize, avg_write, self.profile.commands, avg_sync, self.profile.syncs
             );
         }
     }
