@@ -102,7 +102,7 @@ fn calculate_prefix_end(prefix: &[u8]) -> Vec<u8> {
 
 /// In-memory storage backend using BTreeMap
 pub struct MemoryBackend {
-    data: BTreeMap<Bytes, DbItem>,
+    data: BTreeMap<Vec<u8>, DbItem>,
     stats: StorageStats,
 }
 
@@ -122,6 +122,10 @@ impl MemoryBackend {
         backend.stats.size_bytes = capacity * 64; // Rough estimate
         backend
     }
+
+    pub fn iter_ref(&self) -> impl Iterator<Item = (&[u8], &DbItem)> {
+        self.data.iter().map(|(k, v)| (k.as_slice(), v))
+    }
 }
 
 impl Default for MemoryBackend {
@@ -132,8 +136,7 @@ impl Default for MemoryBackend {
 
 impl StorageBackend for MemoryBackend {
     fn put(&mut self, key: &[u8], item: &DbItem) -> Result<()> {
-        let key_bytes = Bytes::copy_from_slice(key);
-        let old_item = self.data.insert(key_bytes, item.clone());
+        let old_item = self.data.insert(key.to_vec(), item.clone());
 
         if old_item.is_none() {
             self.stats.key_count += 1;
@@ -144,13 +147,11 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn get(&self, key: &[u8]) -> Result<Option<DbItem>> {
-        let key_bytes = Bytes::copy_from_slice(key);
-        Ok(self.data.get(&key_bytes).cloned())
+        Ok(self.data.get(key).cloned())
     }
 
     fn delete(&mut self, key: &[u8]) -> Result<Option<DbItem>> {
-        let key_bytes = Bytes::copy_from_slice(key);
-        let old_item = self.data.remove(&key_bytes);
+        let old_item = self.data.remove(key);
 
         if old_item.is_some() {
             self.stats.key_count = self.stats.key_count.saturating_sub(1);
@@ -161,38 +162,29 @@ impl StorageBackend for MemoryBackend {
     }
 
     fn contains_key(&self, key: &[u8]) -> Result<bool> {
-        let key_bytes = Bytes::copy_from_slice(key);
-        Ok(self.data.contains_key(&key_bytes))
+        Ok(self.data.contains_key(key))
     }
 
     fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Bytes>> {
         let mut keys = Vec::new();
 
         if prefix.is_empty() {
-            // If prefix is empty, return all keys
             for key in self.data.keys() {
-                keys.push(key.clone());
+                keys.push(Bytes::copy_from_slice(key));
             }
             return Ok(keys);
         }
 
-        // Compute the upper bound for the range scan
         let prefix_end = calculate_prefix_end(prefix);
-
-        // Use BTreeMap's range() for efficient iteration over only matching keys
         let range = if prefix_end.len() < prefix.len() {
-            // All trailing bytes were 0xFF, scan from prefix to end
-            self.data.range(Bytes::from(prefix.to_vec())..)
+            self.data.range(prefix.to_vec()..)
         } else {
-            // Normal case: scan from prefix to computed upper bound
-            self.data
-                .range(Bytes::from(prefix.to_vec())..Bytes::from(prefix_end))
+            self.data.range(prefix.to_vec()..prefix_end)
         };
 
         for (key, _) in range {
-            // Defensive check: should always be true with correct range bounds
             if key.starts_with(prefix) {
-                keys.push(key.clone());
+                keys.push(Bytes::copy_from_slice(key));
             }
         }
 
@@ -217,9 +209,8 @@ impl StorageBackend for MemoryBackend {
         let mut result = BTreeMap::new();
 
         if prefix.is_empty() {
-            // If prefix is empty, return all keys
             for (key, item) in &self.data {
-                result.insert(key.clone(), item.clone());
+                result.insert(Bytes::copy_from_slice(key), item.clone());
             }
             return Ok(result);
         }
@@ -231,18 +222,17 @@ impl StorageBackend for MemoryBackend {
         let range = if prefix_end.len() < prefix.len() {
             // All trailing bytes were 0xFF, scan from prefix to end of map
             // Example: prefix "\xFF\xFF\xFF" scans to end
-            self.data.range(Bytes::from(prefix.to_vec())..)
+            self.data.range(prefix.to_vec()..)
         } else {
             // Normal case: scan from prefix to computed upper bound (exclusive)
             // Example: prefix "abc" scans range ["abc", "abd")
-            self.data
-                .range(Bytes::from(prefix.to_vec())..Bytes::from(prefix_end))
+            self.data.range(prefix.to_vec()..prefix_end)
         };
 
         for (key, item) in range {
             // Defensive check: should always be true with correct range bounds
             if key.starts_with(prefix) {
-                result.insert(key.clone(), item.clone());
+                result.insert(Bytes::copy_from_slice(key), item.clone());
             }
         }
 
@@ -291,7 +281,8 @@ impl StorageBackend for MemoryBackend {
 
     fn iter(&self) -> Result<Box<dyn Iterator<Item = (Bytes, DbItem)> + '_>> {
         Ok(Box::new(
-            self.data.iter().map(|(k, v)| (k.clone(), v.clone())),
+            self.iter_ref()
+                .map(|(k, v)| (Bytes::copy_from_slice(k), v.clone())),
         ))
     }
 
