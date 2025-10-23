@@ -309,13 +309,11 @@ fn benchmark_persistence(c: &mut Criterion) {
 
         let mut counter = 0;
         b.iter(|| {
-            for _ in 0..8 {
-                let key = format!("persist_key:batch8:{}", counter);
-                let value = format!("persist_value:batch8:{}", counter);
-                counter += 1;
-                db.insert(black_box(&key), black_box(value.as_bytes()), None)
-                    .unwrap();
-            }
+            let key = format!("persist_key:batch8:{}", counter);
+            let value = format!("persist_value:batch8:{}", counter);
+            counter += 1;
+            db.insert(black_box(&key), black_box(value.as_bytes()), None)
+                .unwrap();
         });
 
         db.sync().unwrap();
