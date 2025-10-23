@@ -62,10 +62,20 @@ no SQL parser, no external dependencies, and no setup required.
 ### Language Support
 - **Rust** — Native API for maximum performance
 - **Python** — Native bindings via PyO3 (`pip install spatio`)
-- **C / C++** — Stable ABI exposed as `extern "C"` functions (see [C API](#c-api))
+- **C / C++** — Stable ABI exposed as `extern "C"` functions (see [C ABI](#c-abi))
+
 
 ### Compile-Time Feature Flags
 - `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="aof,geojson"`.
+
+### Sync Strategy Configuration
+- `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
+  of writes (durable but slower).
+- `SyncMode::Data` — use `fdatasync`/`File::sync_data` when your platform
+  supports it (data-only durability).
+- `sync_batch_size` — number of write operations to batch before a sync when
+  `SyncPolicy::Always` is selected (default: 1). Tune via
+  `Config::with_sync_batch_size` to reduce syscall frequency.
 
 ## Installation
 
@@ -148,7 +158,7 @@ fn main() -> Result<()> {
 }
 ```
 
-### C API
+### C ABI
 
 The crate ships with a C-compatible ABI for embedding. Build the shared
 library once:
