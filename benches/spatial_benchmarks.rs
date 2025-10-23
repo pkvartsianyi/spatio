@@ -299,7 +299,7 @@ fn benchmark_persistence(c: &mut Criterion) {
         db.sync().unwrap();
     });
 
-    group.bench_function("aof_sync_always_batch8", |b| {
+    group.bench_function("aof_sync_always_batch8_single_insert", |b| {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().unwrap();
         let config = Config::default()
