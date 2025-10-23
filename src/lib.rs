@@ -131,6 +131,7 @@ pub mod batch;
 pub mod builder;
 pub mod db;
 pub mod error;
+pub mod ffi;
 pub mod index;
 pub mod namespace;
 pub mod spatial;
