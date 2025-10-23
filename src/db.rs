@@ -285,6 +285,9 @@ impl DB {
         };
         let created_at = item.created_at;
 
+        // NOTE: We hold the write lock throughout the insertion, including any
+        // amortised cleanup. This guarantees that AOF appends (inserts + deletes)
+        // remain strictly ordered for deterministic replay.
         let old = inner.insert_item(key_bytes.clone(), item);
         inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
         Ok(old.map(|item| item.value))
@@ -309,6 +312,10 @@ impl DB {
                 return Ok(None);
             }
         }
+
+        // NOTE: expired-key removal (and any amortised cleanup it triggers)
+        // runs while holding the same exclusive lock, so AOF delete entries are
+        // ordered consistently with preceding writes.
 
         // Slow path: expired item needs removal
         let mut inner = self.write()?;
