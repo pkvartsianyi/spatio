@@ -38,11 +38,11 @@ no SQL parser, no external dependencies, and no setup required.
 - **Fully Self-Contained** — No servers, daemons, or dependencies
 - **Simple API** — Just open, insert, and query
 - **Low Memory Usage** — Ideal for IoT, edge, and embedded devices
-- **Thread-Safe by Design** — Safe concurrent read/write via `Arc<RwLock>`
+- **Single-Writer Thread Safety** — Shared `Arc<RwLock>` allows concurrent readers with one writer at a time
 
-### Performance-Focused
-- **High Throughput** — Millions of operations per second in-memory
-- **Low Latency** — Microsecond-level point and radius queries
+### Performance Scope
+- **High Throughput Reads** — Concurrent readers avoid blocking each other; writes remain single-owner under the global lock
+- **Low-Latency Spatial Queries** — Geohash + R-tree hybrid keeps point/radius lookups fast for moderate datasets
 - **Configurable Persistence** — Append-Only File (AOF) with sync policies
 - **Graceful Startup and Shutdown** — Automatic AOF replay and sync
 
@@ -330,16 +330,6 @@ db.atomic(|batch| {
 let opts = SetOptions::with_ttl(Duration::from_secs(3600));
 db.insert("temp_key", b"temp_value", Some(opts))?;
 ```
-
-## Performance Highlights
-
-Recent release-build benchmarks on Apple Silicon show:
-
-- **Key-value operations**: ~1.6M ops/sec (≈600ns per write)
-- **Spatial insertions**: ~1.9M points/sec (≈530ns per point)
-- **Spatial queries**: ~225K queries/sec (≈4.4µs per query)
-
-Throughput depends on workload and hardware, but the engine is tuned for low-latency, in-memory operation with optional append-only persistence.
 
 ## Architecture Overview
 
