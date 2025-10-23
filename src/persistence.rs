@@ -1,9 +1,13 @@
 use crate::error::{Result, SpatioError};
-use crate::types::SetOptions;
+use crate::types::{SetOptions, SyncMode};
 use bytes::{BufMut, Bytes, BytesMut};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "bench-prof")]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(feature = "bench-prof")]
+use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// AOF configuration for rewriting
@@ -30,7 +34,24 @@ pub struct AOFFile {
     config: AOFConfig,
     last_rewrite_size: u64,
     rewrite_in_progress: bool,
+    scratch: BytesMut,
 }
+
+const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
+const SCRATCH_SHRINK_THRESHOLD: usize = 1 << 20;
+
+#[cfg(feature = "bench-prof")]
+static SERIALIZE_TIME_NS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "bench-prof")]
+static WRITE_TIME_NS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "bench-prof")]
+static COMMAND_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "bench-prof")]
+static SYNC_TIME_NS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "bench-prof")]
+static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "bench-prof")]
+static HAS_REPORTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug)]
 pub enum AOFCommand {
@@ -76,6 +97,7 @@ impl AOFFile {
             config,
             last_rewrite_size: size,
             rewrite_in_progress: false,
+            scratch: BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY),
         })
     }
 
@@ -121,9 +143,30 @@ impl AOFFile {
             return Err(SpatioError::RewriteInProgress);
         }
 
-        let serialized = self.serialize_command(command)?;
-        self.writer.write_all(&serialized)?;
-        self.size += serialized.len() as u64;
+        #[cfg(feature = "bench-prof")]
+        let serialize_start = Instant::now();
+        let written_len = self.serialize_command(command)?;
+        #[cfg(feature = "bench-prof")]
+        {
+            let elapsed = serialize_start.elapsed();
+            SERIALIZE_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+            COMMAND_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(feature = "bench-prof")]
+        let write_start = Instant::now();
+        self.writer.write_all(&self.scratch[..written_len])?;
+        #[cfg(feature = "bench-prof")]
+        {
+            let elapsed = write_start.elapsed();
+            WRITE_TIME_NS.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+        }
+        self.size += written_len as u64;
+
+        if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD
+            && written_len <= SCRATCH_INITIAL_CAPACITY
+        {
+            self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
+        }
 
         // Check if we should trigger a rewrite
         if self.should_rewrite() {
@@ -208,8 +251,8 @@ impl AOFFile {
         result
     }
 
-    /// Serialize a command to bytes
-    fn serialize_command(&self, command: &AOFCommand) -> Result<Vec<u8>> {
+    /// Serialize a command into the reusable scratch buffer.
+    fn serialize_command(&mut self, command: &AOFCommand) -> Result<usize> {
         match command {
             AOFCommand::Set {
                 key,
@@ -217,11 +260,13 @@ impl AOFFile {
                 created_at,
                 expires_at,
             } => {
-                let mut buf = BytesMut::with_capacity(Self::calc_aof_capacity(
-                    key.len(),
-                    value.len(),
-                    expires_at.is_some(),
-                ));
+                let capacity =
+                    Self::calc_aof_capacity(key.len(), value.len(), expires_at.is_some());
+                self.scratch.clear();
+                if self.scratch.capacity() < capacity {
+                    self.scratch.reserve(capacity - self.scratch.capacity());
+                }
+                let buf = &mut self.scratch;
 
                 buf.put_u8(0); // Command type: SET
 
@@ -253,17 +298,22 @@ impl AOFFile {
                     buf.put_u64(timestamp);
                 }
 
-                Ok(buf.to_vec())
+                Ok(buf.len())
             }
             AOFCommand::Delete { key } => {
-                let mut buf = BytesMut::with_capacity(1 + 4 + key.len());
+                self.scratch.clear();
+                let needed = 1 + 4 + key.len();
+                if self.scratch.capacity() < needed {
+                    self.scratch.reserve(needed - self.scratch.capacity());
+                }
+                let buf = &mut self.scratch;
                 buf.put_u8(1); // Command type: DELETE
 
                 // Key length and data
                 buf.put_u32(key.len() as u32);
                 buf.put(key.as_ref());
 
-                Ok(buf.to_vec())
+                Ok(buf.len())
             }
         }
     }
@@ -386,8 +436,23 @@ impl AOFFile {
 
     /// Flush and sync to disk
     pub fn sync(&mut self) -> Result<()> {
+        self.sync_with_mode(SyncMode::All)
+    }
+
+    /// Flush and sync using the provided mode.
+    pub fn sync_with_mode(&mut self, mode: SyncMode) -> Result<()> {
+        #[cfg(feature = "bench-prof")]
+        let sync_start = Instant::now();
         self.writer.flush()?;
-        self.file.sync_all()?;
+        match mode {
+            SyncMode::All => self.file.sync_all()?,
+            SyncMode::Data => self.file.sync_data()?,
+        }
+        #[cfg(feature = "bench-prof")]
+        {
+            SYNC_TIME_NS.fetch_add(sync_start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            SYNC_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
         Ok(())
     }
 
@@ -401,6 +466,39 @@ impl Drop for AOFFile {
     fn drop(&mut self) {
         // Best effort flush on drop, ignore errors
         let _ = self.writer.flush();
+
+        #[cfg(feature = "bench-prof")]
+        {
+            if std::thread::panicking() {
+                return;
+            }
+
+            if HAS_REPORTED.swap(true, Ordering::Relaxed) {
+                return;
+            }
+
+            let count = COMMAND_COUNT.load(Ordering::Relaxed);
+            if count == 0 {
+                return;
+            }
+
+            let serialize_ns = SERIALIZE_TIME_NS.load(Ordering::Relaxed);
+            let write_ns = WRITE_TIME_NS.load(Ordering::Relaxed);
+            let sync_count = SYNC_COUNT.load(Ordering::Relaxed);
+            let sync_ns = SYNC_TIME_NS.load(Ordering::Relaxed);
+            eprintln!(
+                "[bench-prof] AOF stats: serialize avg = {} ns, write avg = {} ns over {} commands; sync avg = {} ns over {} calls",
+                serialize_ns / count,
+                write_ns / count,
+                count,
+                if sync_count > 0 {
+                    sync_ns / sync_count
+                } else {
+                    0
+                },
+                sync_count
+            );
+        }
     }
 }
 

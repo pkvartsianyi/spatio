@@ -152,7 +152,9 @@ pub type Spatio = DB;
 pub use spatial::{BoundingBox, Point};
 
 // Configuration and options
-pub use types::{Config, DbStats, SetOptions, SyncPolicy};
+pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy};
+#[cfg(feature = "time-index")]
+pub use types::{HistoryEntry, HistoryEventKind};
 
 // Namespace support for data organization
 pub use namespace::{Namespace, NamespaceManager};

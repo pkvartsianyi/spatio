@@ -537,24 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn test_constants_are_reasonable() {
-        // Ensure constants are within valid geohash precision range
-        assert!((1..=12).contains(&DEFAULT_GEOHASH_PRECISION));
-
-        for &precision in DEFAULT_SEARCH_PRECISIONS {
-            assert!((1..=12).contains(&precision));
-        }
-
-        // Ensure search precisions include the default precision or are around it
-        assert!(
-            DEFAULT_SEARCH_PRECISIONS.contains(&DEFAULT_GEOHASH_PRECISION)
-                || DEFAULT_SEARCH_PRECISIONS
-                    .iter()
-                    .any(|&p| (p as i32 - DEFAULT_GEOHASH_PRECISION as i32).abs() <= 1)
-        );
-    }
-
-    #[test]
     fn test_search_precisions_exact_values() {
         // Test precision 1: should be [1]
         let config = Config::with_geohash_precision(1);
@@ -631,5 +613,21 @@ mod tests {
             let manager = IndexManager::with_config(&config);
             assert!(manager.search_precisions.contains(&precision.min(12)));
         }
+    }
+
+    #[test]
+    fn test_constants_are_reasonable() {
+        assert!((1..=12).contains(&DEFAULT_GEOHASH_PRECISION));
+
+        for &precision in DEFAULT_SEARCH_PRECISIONS {
+            assert!((1..=12).contains(&precision));
+        }
+
+        assert!(
+            DEFAULT_SEARCH_PRECISIONS.contains(&DEFAULT_GEOHASH_PRECISION)
+                || DEFAULT_SEARCH_PRECISIONS
+                    .iter()
+                    .any(|&p| (p as i32 - DEFAULT_GEOHASH_PRECISION as i32).abs() <= 1)
+        );
     }
 }

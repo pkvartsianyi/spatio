@@ -26,6 +26,22 @@ impl Default for SyncPolicy {
     }
 }
 
+/// File synchronization strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    /// Call `fsync` / `File::sync_all` to persist metadata + data.
+    All,
+    /// Call `fdatasync` / `File::sync_data` to persist data only.
+    Data,
+}
+
+impl Default for SyncMode {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
 /// Simplified database configuration
 ///
 /// This configuration is designed to be easily serializable and loadable
@@ -62,12 +78,29 @@ pub struct Config {
     /// Higher values = more precision but more memory usage
     #[serde(default = "Config::default_geohash_precision")]
     pub geohash_precision: usize,
+
+    /// Controls whether the database issues `fsync` or `fdatasync`.
+    #[serde(default)]
+    pub sync_mode: SyncMode,
+
+    /// Number of writes to batch before forcing a sync when `SyncPolicy::Always`.
+    #[serde(default = "Config::default_sync_batch_size")]
+    pub sync_batch_size: usize,
+
+    /// Optional history capacity per key (number of events to retain)
+    #[cfg(feature = "time-index")]
+    #[serde(default)]
+    pub history_capacity: Option<usize>,
 }
 
 impl Config {
     /// Default geohash precision
     const fn default_geohash_precision() -> usize {
         8
+    }
+
+    const fn default_sync_batch_size() -> usize {
+        1
     }
 
     /// Create a configuration with custom geohash precision
@@ -81,6 +114,10 @@ impl Config {
             sync_policy: SyncPolicy::default(),
             default_ttl_seconds: None,
             geohash_precision: precision,
+            sync_mode: SyncMode::default(),
+            sync_batch_size: Self::default_sync_batch_size(),
+            #[cfg(feature = "time-index")]
+            history_capacity: None,
         }
     }
 
@@ -93,6 +130,27 @@ impl Config {
     /// Set sync policy
     pub fn with_sync_policy(mut self, policy: SyncPolicy) -> Self {
         self.sync_policy = policy;
+        self
+    }
+
+    /// Select the underlying file sync mode (fsync vs fdatasync).
+    pub fn with_sync_mode(mut self, mode: SyncMode) -> Self {
+        self.sync_mode = mode;
+        self
+    }
+
+    /// Adjust the number of writes to batch before syncing when `SyncPolicy::Always`.
+    pub fn with_sync_batch_size(mut self, batch_size: usize) -> Self {
+        assert!(batch_size > 0, "Sync batch size must be greater than zero");
+        self.sync_batch_size = batch_size;
+        self
+    }
+
+    /// Enable update history with a maximum number of entries per key.
+    #[cfg(feature = "time-index")]
+    pub fn with_history_capacity(mut self, capacity: usize) -> Self {
+        assert!(capacity > 0, "History capacity must be greater than zero");
+        self.history_capacity = Some(capacity);
         self
     }
 
@@ -123,6 +181,17 @@ impl Config {
             if ttl > u64::MAX as f64 {
                 return Err("Default TTL is too large".to_string());
             }
+        }
+
+        #[cfg(feature = "time-index")]
+        if let Some(capacity) = self.history_capacity
+            && capacity == 0
+        {
+            return Err("History capacity must be greater than zero".to_string());
+        }
+
+        if self.sync_batch_size == 0 {
+            return Err("Sync batch size must be greater than zero".to_string());
         }
 
         Ok(())
@@ -165,6 +234,10 @@ impl Default for Config {
             sync_policy: SyncPolicy::default(),
             default_ttl_seconds: None,
             geohash_precision: Self::default_geohash_precision(),
+            sync_mode: SyncMode::default(),
+            sync_batch_size: Self::default_sync_batch_size(),
+            #[cfg(feature = "time-index")]
+            history_capacity: None,
         }
     }
 }
@@ -209,6 +282,22 @@ pub struct DbItem {
     pub value: Bytes,
     pub created_at: SystemTime,
     /// Expiration time (if any)
+    pub expires_at: Option<SystemTime>,
+}
+
+/// Operation types captured in history tracking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryEventKind {
+    Set,
+    Delete,
+}
+
+/// Historical record for key mutations.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub timestamp: SystemTime,
+    pub kind: HistoryEventKind,
+    pub value: Option<Bytes>,
     pub expires_at: Option<SystemTime>,
 }
 
@@ -336,8 +425,12 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert_eq!(config.sync_policy, SyncPolicy::EverySecond);
+        assert_eq!(config.sync_mode, SyncMode::All);
+        assert_eq!(config.sync_batch_size, 1);
         assert_eq!(config.geohash_precision, 8);
         assert!(config.default_ttl_seconds.is_none());
+        #[cfg(feature = "time-index")]
+        assert!(config.history_capacity.is_none());
     }
 
     #[test]
@@ -356,17 +449,28 @@ mod tests {
     fn test_config_serialization() {
         let config = Config::with_geohash_precision(10)
             .with_default_ttl(Duration::from_secs(3600))
-            .with_sync_policy(SyncPolicy::Always);
+            .with_sync_policy(SyncPolicy::Always)
+            .with_sync_mode(SyncMode::Data)
+            .with_sync_batch_size(8);
 
         let json = config.to_json().unwrap();
         let deserialized: Config = Config::from_json(&json).unwrap();
 
         assert_eq!(deserialized.geohash_precision, 10);
         assert_eq!(deserialized.sync_policy, SyncPolicy::Always);
+        assert_eq!(deserialized.sync_mode, SyncMode::Data);
+        assert_eq!(deserialized.sync_batch_size, 8);
         assert_eq!(
             deserialized.default_ttl().unwrap(),
             Duration::from_secs(3600)
         );
+    }
+
+    #[cfg(feature = "time-index")]
+    #[test]
+    fn test_config_history_capacity() {
+        let config = Config::default().with_history_capacity(5);
+        assert_eq!(config.history_capacity, Some(5));
     }
 
     #[test]
