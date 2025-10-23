@@ -98,7 +98,6 @@ pub struct Config {
 }
 
 impl Config {
-    /// Default geohash precision
     const fn default_geohash_precision() -> usize {
         8
     }
@@ -108,7 +107,7 @@ impl Config {
     }
 
     const fn default_amortized_cleanup_batch_size() -> usize {
-        10
+        0
     }
 
     pub fn with_amortized_cleanup(mut self, batch_size: usize) -> Self {
@@ -116,7 +115,6 @@ impl Config {
         self
     }
 
-    /// Create a configuration with custom geohash precision
     pub fn with_geohash_precision(precision: usize) -> Self {
         assert!(
             (1..=12).contains(&precision),
@@ -135,19 +133,16 @@ impl Config {
         }
     }
 
-    /// Set default TTL
     pub fn with_default_ttl(mut self, ttl: Duration) -> Self {
         self.default_ttl_seconds = Some(ttl.as_secs_f64());
         self
     }
 
-    /// Set sync policy
     pub fn with_sync_policy(mut self, policy: SyncPolicy) -> Self {
         self.sync_policy = policy;
         self
     }
 
-    /// Select the underlying file sync mode (fsync vs fdatasync).
     pub fn with_sync_mode(mut self, mode: SyncMode) -> Self {
         self.sync_mode = mode;
         self

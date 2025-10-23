@@ -38,7 +38,7 @@ no SQL parser, no external dependencies, and no setup required.
 - **Fully Self-Contained** — No servers, daemons, or dependencies
 - **Simple API** — Just open, insert, and query
 - **Low Memory Usage** — Ideal for IoT, edge, and embedded devices
-- **Single-Writer Thread Safety** — Shared `Arc<RwLock>` allows concurrent readers with one writer at a time
+- **Single-Writer Thread Safety** — Shared `Arc<RwLock>` (no lock upgrades) allows many readers concurrently, one writer at a time
 
 ### Performance Scope
 - **High Throughput Reads** — Concurrent readers avoid blocking each other; writes remain single-owner under the global lock
