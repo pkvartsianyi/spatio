@@ -182,7 +182,9 @@ impl DBBuilder {
     ///     .aof_path(&temp_path)
     ///     .config(config)
     ///     .build()?;
-    /// # std::fs::remove_file(temp_path)?;
+    /// # if temp_path.exists() {
+    /// #     std::fs::remove_file(&temp_path)?;
+    /// # }
     /// # Ok(())
     /// # }
     /// ```

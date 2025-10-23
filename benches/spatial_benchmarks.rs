@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use spatio::{Point, SetOptions, Spatio};
+use spatio::{Config, Point, SetOptions, Spatio, SyncMode, SyncPolicy};
 use std::time::Duration;
 
 fn benchmark_basic_operations(c: &mut Criterion) {
@@ -262,6 +262,63 @@ fn benchmark_persistence(c: &mut Criterion) {
             // Force sync to measure actual persistence cost
             db.sync().unwrap();
         })
+    });
+
+    group.bench_function("aof_write_operations_fdatasync", |b| {
+        use tempfile::NamedTempFile;
+        let temp_file = NamedTempFile::new().unwrap();
+        let config = Config::default().with_sync_mode(SyncMode::Data);
+        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+
+        let mut counter = 0;
+        b.iter(|| {
+            let key = format!("persist_key:fdatasync:{}", counter);
+            let value = format!("persist_value:fdatasync:{}", counter);
+            counter += 1;
+            db.insert(black_box(&key), black_box(value.as_bytes()), None)
+                .unwrap();
+            db.sync().unwrap();
+        })
+    });
+
+    group.bench_function("aof_sync_always_batch1", |b| {
+        use tempfile::NamedTempFile;
+        let temp_file = NamedTempFile::new().unwrap();
+        let config = Config::default().with_sync_policy(SyncPolicy::Always);
+        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+
+        let mut counter = 0;
+        b.iter(|| {
+            let key = format!("persist_key:always:{}", counter);
+            let value = format!("persist_value:always:{}", counter);
+            counter += 1;
+            db.insert(black_box(&key), black_box(value.as_bytes()), None)
+                .unwrap();
+        });
+
+        db.sync().unwrap();
+    });
+
+    group.bench_function("aof_sync_always_batch8", |b| {
+        use tempfile::NamedTempFile;
+        let temp_file = NamedTempFile::new().unwrap();
+        let config = Config::default()
+            .with_sync_policy(SyncPolicy::Always)
+            .with_sync_batch_size(8);
+        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+
+        let mut counter = 0;
+        b.iter(|| {
+            for _ in 0..8 {
+                let key = format!("persist_key:batch8:{}", counter);
+                let value = format!("persist_value:batch8:{}", counter);
+                counter += 1;
+                db.insert(black_box(&key), black_box(value.as_bytes()), None)
+                    .unwrap();
+            }
+        });
+
+        db.sync().unwrap();
     });
 
     group.finish();

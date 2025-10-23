@@ -93,6 +93,8 @@ pub(crate) struct DBInner {
     pub stats: DbStats,
     /// Configuration
     pub config: Config,
+    /// Number of writes since last forced sync (SyncPolicy::Always only)
+    sync_ops_since_flush: usize,
 }
 
 impl DB {
@@ -794,8 +796,10 @@ impl DB {
     /// ```
     pub fn sync(&self) -> Result<()> {
         let mut inner = self.write()?;
+        let sync_mode = inner.config.sync_mode;
         if let Some(ref mut aof_file) = inner.aof_file {
-            aof_file.sync()?;
+            aof_file.sync_with_mode(sync_mode)?;
+            inner.sync_ops_since_flush = 0;
         }
         Ok(())
     }
@@ -837,8 +841,10 @@ impl DB {
         }
 
         inner.closed = true;
+        let sync_mode = inner.config.sync_mode;
         if let Some(ref mut aof_file) = inner.aof_file {
-            aof_file.sync()?;
+            aof_file.sync_with_mode(sync_mode)?;
+            inner.sync_ops_since_flush = 0;
         }
         Ok(())
     }
@@ -923,14 +929,22 @@ impl HistoryTracker {
 impl Drop for DB {
     fn drop(&mut self) {
         // Only sync if this is the last reference to the database
-        if Arc::strong_count(&self.inner) == 1 {
-            // Best-effort sync on final drop
-            if let Ok(mut inner) = self.inner.write()
-                && !inner.closed
-                && let Some(ref mut aof_file) = inner.aof_file
-            {
+        if Arc::strong_count(&self.inner) != 1 {
+            return;
+        }
+
+        // Best-effort sync on final drop
+        if let Ok(mut inner) = self.inner.write() {
+            if inner.closed {
+                return;
+            }
+
+            let sync_mode = inner.config.sync_mode;
+            if let Some(ref mut aof_file) = inner.aof_file {
                 // Attempt to sync on drop, but don't panic if it fails
-                let _ = aof_file.sync();
+                if aof_file.sync_with_mode(sync_mode).is_ok() {
+                    inner.sync_ops_since_flush = 0;
+                }
             }
         }
     }
@@ -946,6 +960,7 @@ impl DBInner {
             closed: false,
             stats: DbStats::default(),
             config: config.clone(),
+            sync_ops_since_flush: 0,
             #[cfg(feature = "time-index")]
             created_index: BTreeMap::new(),
             #[cfg(feature = "time-index")]
@@ -1105,6 +1120,11 @@ impl DBInner {
                     #[cfg(feature = "time-index")]
                     self.add_created_index(&key, created_at);
 
+                    #[cfg(feature = "time-index")]
+                    if let Some(history) = self.history.as_mut() {
+                        history.record_set(&key, value.clone(), created_at, expires_at);
+                    }
+
                     // Rebuild spatial index if this is a spatial key
                     if let Ok(key_str) = std::str::from_utf8(&key)
                         && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
@@ -1115,9 +1135,16 @@ impl DBInner {
                 }
                 AOFCommand::Delete { key } => {
                     if let Some(item) = self.keys.remove(&key) {
+                        #[cfg(feature = "time-index")]
+                        let deleted_value = item.value.clone();
                         self.remove_expiration_entry(&key, &item);
                         #[cfg(feature = "time-index")]
                         self.remove_created_index(&key, &item);
+
+                        #[cfg(feature = "time-index")]
+                        if let Some(history) = self.history.as_mut() {
+                            history.record_delete(&key, SystemTime::now(), Some(deleted_value));
+                        }
                     }
 
                     // Remove from spatial index if this was a spatial key
@@ -1163,44 +1190,52 @@ impl DBInner {
         options: Option<&SetOptions>,
         created_at: SystemTime,
     ) -> Result<()> {
-        if let Some(ref mut aof_file) = self.aof_file {
+        if self.aof_file.is_some() {
             let value_bytes = Bytes::copy_from_slice(value);
-            aof_file.write_set(key, &value_bytes, options, created_at)?;
-
-            // Flush based on sync policy
-            match self.config.sync_policy {
-                crate::types::SyncPolicy::Always => {
-                    aof_file.sync()?;
-                }
-                crate::types::SyncPolicy::EverySecond => {
-                    aof_file.flush()?;
-                }
-                crate::types::SyncPolicy::Never => {
-                    // Don't flush
+            {
+                if let Some(ref mut aof_file) = self.aof_file {
+                    aof_file.write_set(key, &value_bytes, options, created_at)?;
                 }
             }
+            self.maybe_flush_or_sync()?;
         }
         Ok(())
     }
 
     /// Write delete operation to AOF if needed
     pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
-        if let Some(ref mut aof_file) = self.aof_file {
-            aof_file.write_delete(key)?;
-
-            // Flush based on sync policy
-            match self.config.sync_policy {
-                crate::types::SyncPolicy::Always => {
-                    aof_file.sync()?;
-                }
-                crate::types::SyncPolicy::EverySecond => {
-                    aof_file.flush()?;
-                }
-                crate::types::SyncPolicy::Never => {
-                    // Don't flush
+        if self.aof_file.is_some() {
+            {
+                if let Some(ref mut aof_file) = self.aof_file {
+                    aof_file.write_delete(key)?;
                 }
             }
+            self.maybe_flush_or_sync()?;
         }
+        Ok(())
+    }
+
+    fn maybe_flush_or_sync(&mut self) -> Result<()> {
+        use crate::types::SyncPolicy;
+
+        if let Some(ref mut aof_file) = self.aof_file {
+            match self.config.sync_policy {
+                SyncPolicy::Always => {
+                    self.sync_ops_since_flush += 1;
+                    if self.sync_ops_since_flush >= self.config.sync_batch_size {
+                        aof_file.sync_with_mode(self.config.sync_mode)?;
+                        self.sync_ops_since_flush = 0;
+                    } else {
+                        aof_file.flush()?;
+                    }
+                }
+                SyncPolicy::EverySecond => {
+                    aof_file.flush()?;
+                }
+                SyncPolicy::Never => {}
+            }
+        }
+
         Ok(())
     }
 }

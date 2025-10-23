@@ -37,6 +37,7 @@ geojson = []
 aof = ["dep:bincode"]
 toml = ["dep:toml"]
 time-index = []
+bench-prof = []
 full = ["geojson", "aof", "toml", "time-index"]
 
 [dev-dependencies]
