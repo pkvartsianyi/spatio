@@ -209,9 +209,8 @@ impl AOFFile {
             let rewrite_path = self.path.with_extension("aof.rewrite");
             let mut rewrite_file = Self::open_with_config(&rewrite_path, self.config.clone())?;
 
-            // For simplicity, just copy the existing file
-            // In a real implementation, you'd want to compact by removing deleted keys
-            // and only keeping the latest value for each key
+            // Current rewrite strategy copies the entire AOF.
+            // TODO: replace with compaction that keeps only the latest value per key.
             self.file.seek(SeekFrom::Start(0))?;
             let mut buffer = Vec::new();
             self.file.read_to_end(&mut buffer)?;

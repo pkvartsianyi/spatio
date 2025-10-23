@@ -1190,41 +1190,31 @@ impl DBInner {
         options: Option<&SetOptions>,
         created_at: SystemTime,
     ) -> Result<()> {
-        if self.aof_file.is_none() {
+        let Some(aof_file) = self.aof_file.as_mut() else {
             return Ok(());
-        }
+        };
 
         let sync_policy = self.config.sync_policy;
         let sync_mode = self.config.sync_mode;
         let batch_size = self.config.sync_batch_size;
         let value_bytes = Bytes::copy_from_slice(value);
 
-        {
-            if let Some(ref mut aof_file) = self.aof_file {
-                aof_file.write_set(key, &value_bytes, options, created_at)?;
-            }
-        }
-
+        aof_file.write_set(key, &value_bytes, options, created_at)?;
         self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
         Ok(())
     }
 
     /// Write delete operation to AOF if needed
     pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
-        if self.aof_file.is_none() {
+        let Some(aof_file) = self.aof_file.as_mut() else {
             return Ok(());
-        }
+        };
 
         let sync_policy = self.config.sync_policy;
         let sync_mode = self.config.sync_mode;
         let batch_size = self.config.sync_batch_size;
 
-        {
-            if let Some(ref mut aof_file) = self.aof_file {
-                aof_file.write_delete(key)?;
-            }
-        }
-
+        aof_file.write_delete(key)?;
         self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
         Ok(())
     }
@@ -1237,22 +1227,24 @@ impl DBInner {
     ) -> Result<()> {
         use crate::types::SyncPolicy;
 
-        if let Some(ref mut aof_file) = self.aof_file {
-            match policy {
-                SyncPolicy::Always => {
-                    self.sync_ops_since_flush += 1;
-                    if self.sync_ops_since_flush >= batch_size {
-                        aof_file.sync_with_mode(mode)?;
-                        self.sync_ops_since_flush = 0;
-                    } else {
-                        aof_file.flush()?;
-                    }
-                }
-                SyncPolicy::EverySecond => {
+        let Some(aof_file) = self.aof_file.as_mut() else {
+            return Ok(());
+        };
+
+        match policy {
+            SyncPolicy::Always => {
+                self.sync_ops_since_flush += 1;
+                if self.sync_ops_since_flush >= batch_size {
+                    aof_file.sync_with_mode(mode)?;
+                    self.sync_ops_since_flush = 0;
+                } else {
                     aof_file.flush()?;
                 }
-                SyncPolicy::Never => {}
             }
+            SyncPolicy::EverySecond => {
+                aof_file.flush()?;
+            }
+            SyncPolicy::Never => {}
         }
 
         Ok(())
