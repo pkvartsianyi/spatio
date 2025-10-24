@@ -86,7 +86,7 @@ fn benchmark_spatial_operations(c: &mut Criterion) {
     let center = Point::new(40.7128, -74.0060);
     group.bench_function("nearby_search", |b| {
         b.iter(|| {
-            db.find_nearby(
+            db.query_within_radius(
                 black_box("query_bench"),
                 black_box(&center),
                 black_box(1000.0),
@@ -228,7 +228,7 @@ fn benchmark_large_datasets(c: &mut Criterion) {
             |b, &_size| {
                 let center = Point::new(40.5, -74.5);
                 b.iter(|| {
-                    db.find_nearby(
+                    db.query_within_radius(
                         black_box("large_dataset"),
                         black_box(&center),
                         black_box(10000.0),

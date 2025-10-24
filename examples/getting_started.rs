@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Distance NYC ↔ London: {:.0} km", distance_km);
 
     // Find nearby cities (within 2000km of NYC)
-    let nearby = db.find_nearby("cities", &new_york, 2_000_000.0, 5)?;
+    let nearby = db.query_within_radius("cities", &new_york, 2_000_000.0, 5)?;
     println!("Found {} cities within 2000km of NYC", nearby.len());
     for (point, data) in &nearby {
         println!(

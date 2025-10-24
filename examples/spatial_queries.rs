@@ -34,7 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find cities within 1000km of London
     println!("\nCities within 1000km of London:");
-    let nearby_cities = db.find_nearby("world_cities", &reference_point, 1_000_000.0, 10)?;
+    let nearby_cities =
+        db.query_within_radius("world_cities", &reference_point, 1_000_000.0, 10)?;
 
     for (point, data) in &nearby_cities {
         let city_name = String::from_utf8_lossy(data);
@@ -44,7 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find cities within 2000km of London
     println!("\nCities within 2000km of London:");
-    let medium_range_cities = db.find_nearby("world_cities", &reference_point, 2_000_000.0, 10)?;
+    let medium_range_cities =
+        db.query_within_radius("world_cities", &reference_point, 2_000_000.0, 10)?;
 
     for (point, data) in &medium_range_cities {
         let city_name = String::from_utf8_lossy(data);
@@ -54,7 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find the 3 closest cities to London (regardless of distance)
     println!("\n3 closest cities to London:");
-    let closest_cities = db.find_nearby("world_cities", &reference_point, f64::INFINITY, 3)?;
+    let closest_cities =
+        db.query_within_radius("world_cities", &reference_point, f64::INFINITY, 3)?;
 
     for (i, (point, data)) in closest_cities.iter().enumerate() {
         let city_name = String::from_utf8_lossy(data);
@@ -98,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Find POI within 2km of Big Ben
     let big_ben = Point::new(51.4994, -0.1245);
     println!("\nPoints of interest within 2km of Big Ben:");
-    let nearby_poi = db.find_nearby("london_poi", &big_ben, 2000.0, 10)?;
+    let nearby_poi = db.query_within_radius("london_poi", &big_ben, 2000.0, 10)?;
 
     for (point, data) in &nearby_poi {
         let poi_name = String::from_utf8_lossy(data);
@@ -127,9 +130,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Count cities within different distances from London
-    let count_500km = db.count_within_distance("world_cities", &reference_point, 500_000.0)?;
-    let count_1000km = db.count_within_distance("world_cities", &reference_point, 1_000_000.0)?;
-    let count_2000km = db.count_within_distance("world_cities", &reference_point, 2_000_000.0)?;
+    let count_500km = db.count_within_radius("world_cities", &reference_point, 500_000.0)?;
+    let count_1000km = db.count_within_radius("world_cities", &reference_point, 1_000_000.0)?;
+    let count_2000km = db.count_within_radius("world_cities", &reference_point, 2_000_000.0)?;
 
     println!("  Cities within 500km: {}", count_500km);
     println!("  Cities within 1000km: {}", count_1000km);
@@ -206,7 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nEnhanced spatial queries example completed successfully!");
     println!("\nNew spatial query features demonstrated:");
     println!("- contains_point: Check if points exist within a circular region");
-    println!("- count_within_distance: Count points within a radius (efficient)");
+    println!("- count_within_radius: Count points within a radius (efficient)");
     println!("- intersects_bounds: Check if points exist within a bounding box");
     println!("- find_within_bounds: Find all points within a rectangular region");
     println!("- BoundingBox: Dedicated struct for bounding box operations");

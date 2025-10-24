@@ -268,7 +268,7 @@ impl PySpatio {
     }
 
     /// Find nearby points within a radius
-    fn find_nearby(
+    fn query_within_radius(
         &self,
         prefix: &str,
         center: &PyPoint,
@@ -278,7 +278,7 @@ impl PySpatio {
         let results =
             handle_error(
                 self.db
-                    .find_nearby(prefix, &center.inner, radius_meters, limit),
+                    .query_within_radius(prefix, &center.inner, radius_meters, limit),
             )?;
 
         Python::with_gil(|py| {
@@ -353,7 +353,7 @@ impl PySpatio {
     }
 
     /// Count points within a distance
-    fn count_within_distance(
+    fn count_within_radius(
         &self,
         prefix: &str,
         center: &PyPoint,
@@ -361,7 +361,7 @@ impl PySpatio {
     ) -> PyResult<usize> {
         handle_error(
             self.db
-                .count_within_distance(prefix, &center.inner, radius_meters),
+                .count_within_radius(prefix, &center.inner, radius_meters),
         )
     }
 

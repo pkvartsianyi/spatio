@@ -62,7 +62,7 @@ def main():
     print("\n4. Spatial queries...")
 
     # Find cities near NYC (within 6000km to include European cities)
-    nearby = db.find_nearby("cities", nyc, 6000000.0, 10)
+    nearby = db.query_within_radius("cities", nyc, 6000000.0, 10)
     print(f"[OK] Found {len(nearby)} cities within 6000km of NYC:")
 
     for _point, city_name, distance in nearby:
@@ -70,7 +70,7 @@ def main():
         print(f"  - {city_name.decode()}: {distance_km:.0f}km away")
 
     # Count points within a smaller radius
-    local_count = db.count_within_distance("cities", nyc, 1000000.0)  # 1000km
+    local_count = db.count_within_radius("cities", nyc, 1000000.0)  # 1000km
     print(f"[OK] Cities within 1000km of NYC: {local_count}")
 
     # Check if any points exist in a region
@@ -118,7 +118,9 @@ def main():
 
     # Verify operations
     batch_value = db.get(b"batch:key1")
-    sf_cities = db.find_nearby("cities", spatio.Point(37.7749, -122.4194), 10000.0, 5)
+    sf_cities = db.query_within_radius(
+        "cities", spatio.Point(37.7749, -122.4194), 10000.0, 5
+    )
     print(f"[OK] Sequential value: {batch_value.decode()}")
     print(f"[OK] SF area cities: {len(sf_cities)}")
 

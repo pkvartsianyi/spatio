@@ -195,7 +195,7 @@ class TestSpatio:
         db.insert_point("cities", brooklyn, b"Brooklyn")
 
         # Find nearby points
-        nearby = db.find_nearby("cities", nyc, 50000.0, 10)  # 50km radius
+        nearby = db.query_within_radius("cities", nyc, 50000.0, 10)  # 50km radius
         assert len(nearby) >= 1
 
         # Each result should be (point, value, distance)
@@ -219,8 +219,8 @@ class TestSpatio:
         has_nearby = db.contains_point("cities", nyc, 50000.0)
         assert has_nearby
 
-        # Test count_within_distance
-        count = db.count_within_distance("cities", nyc, 50000.0)
+        # Test count_within_radius
+        count = db.count_within_radius("cities", nyc, 50000.0)
         assert count >= 1
 
         # Test intersects_bounds (NYC area)
@@ -274,7 +274,9 @@ class TestSpatio:
         assert db.get(b"key1") == b"value1"
         assert db.get(b"key2") == b"value2"
 
-        nearby = db.find_nearby("cities", spatio.Point(40.7128, -74.0060), 1000.0, 10)
+        nearby = db.query_within_radius(
+            "cities", spatio.Point(40.7128, -74.0060), 1000.0, 10
+        )
         assert len(nearby) >= 1
 
     def test_database_stats(self):
@@ -395,7 +397,7 @@ class TestPerformance:
         start_time = time.time()
 
         for _ in range(100):
-            _ = db.find_nearby("test_points", center, 10000.0, 50)
+            _ = db.query_within_radius("test_points", center, 10000.0, 50)
 
         elapsed = time.time() - start_time
         print(f"Performed 100 spatial queries in {elapsed:.3f} seconds")

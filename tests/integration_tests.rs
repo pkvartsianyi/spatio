@@ -69,7 +69,9 @@ fn test_spatial_operations() {
     db.insert_point("cities", &paris, b"Paris", None).unwrap();
 
     // Find nearby cities
-    let nearby = db.find_nearby("cities", &london, 1_000_000.0, 10).unwrap();
+    let nearby = db
+        .query_within_radius("cities", &london, 1_000_000.0, 10)
+        .unwrap();
     assert!(!nearby.is_empty());
 
     // Should find at least London itself
@@ -126,7 +128,9 @@ fn test_points_sharing_geohash_are_preserved() {
     db.insert_point("cities", &point_a, b"A", None).unwrap();
     db.insert_point("cities", &point_b, b"B", None).unwrap();
 
-    let results = db.find_nearby("cities", &point_a, 500.0, 10).unwrap();
+    let results = db
+        .query_within_radius("cities", &point_a, 500.0, 10)
+        .unwrap();
     assert_eq!(results.len(), 2);
 
     let values: std::collections::HashSet<_> =
@@ -180,7 +184,9 @@ fn test_persistence() {
 
         // Verify geographic point data
         let point = Point::new(40.7128, -74.0060);
-        let nearby = db.find_nearby("cities", &point, 1000.0, 10).unwrap();
+        let nearby = db
+            .query_within_radius("cities", &point, 1000.0, 10)
+            .unwrap();
         assert_eq!(nearby.len(), 1);
         assert_eq!(nearby[0].1.as_ref(), b"NYC");
 
@@ -227,8 +233,10 @@ fn test_multiple_namespaces() {
     db.insert_point("cities", &london, b"London", None).unwrap();
 
     // Query each namespace separately
-    let cities = db.find_nearby("cities", &nyc, 1000.0, 10).unwrap();
-    let airports = db.find_nearby("airports", &nyc, 1000.0, 10).unwrap();
+    let cities = db.query_within_radius("cities", &nyc, 1000.0, 10).unwrap();
+    let airports = db
+        .query_within_radius("airports", &nyc, 1000.0, 10)
+        .unwrap();
 
     assert_eq!(cities.len(), 1); // Only NYC in cities
     assert_eq!(airports.len(), 1); // Only JFK in airports
@@ -262,13 +270,11 @@ fn test_spatial_query_methods() {
         .unwrap();
     assert!(!has_nearby_middle_ocean); // Should find nothing in middle of ocean
 
-    // Test count_within_distance
-    let count_near_nyc = db.count_within_distance("cities", &nyc, 50_000.0).unwrap();
+    // Test count_within_radius
+    let count_near_nyc = db.count_within_radius("cities", &nyc, 50_000.0).unwrap();
     assert!(count_near_nyc >= 3); // Should find at least NYC, Brooklyn, Manhattan
 
-    let count_near_london = db
-        .count_within_distance("cities", &london, 50_000.0)
-        .unwrap();
+    let count_near_london = db.count_within_radius("cities", &london, 50_000.0).unwrap();
     assert_eq!(count_near_london, 1); // Should only find London
 
     // Test intersects_bounds - Manhattan area
@@ -359,9 +365,11 @@ fn test_geohash_precision_configuration() {
         .unwrap();
 
     // Test spatial queries work with both configurations
-    let custom_nearby = custom_db.find_nearby("cities", &point, 1000.0, 10).unwrap();
+    let custom_nearby = custom_db
+        .query_within_radius("cities", &point, 1000.0, 10)
+        .unwrap();
     let default_nearby = default_db
-        .find_nearby("cities", &point, 1000.0, 10)
+        .query_within_radius("cities", &point, 1000.0, 10)
         .unwrap();
 
     // Both should find the inserted point

@@ -29,7 +29,7 @@ pub const DEFAULT_SEARCH_PRECISIONS: &[usize] = &[6, 7, 8];
 /// It automatically handles geohash-based indexing for points.
 pub struct IndexManager {
     /// Spatial indexes organized by prefix
-    spatial_indexes: FxHashMap<String, SpatialIndex>,
+    spatial_indexes: FxHashMap<String, SpatialIndex>, // TODO: RWLock here?
     /// Geohash precisions to use for neighbor search
     search_precisions: Vec<usize>,
 }
@@ -127,7 +127,7 @@ impl IndexManager {
     }
 
     /// Find nearby points within a radius
-    pub fn find_nearby(
+    pub fn query_within_radius(
         &self,
         prefix: &str,
         center: &Point,
@@ -246,7 +246,7 @@ impl IndexManager {
     }
 
     /// Count points within a distance from a center point
-    pub fn count_within_distance(
+    pub fn count_within_radius(
         &self,
         prefix: &str,
         center: &Point,
@@ -363,15 +363,13 @@ impl IndexManager {
     ) -> Vec<(f64, Point, Bytes)> {
         let mut matches = Vec::new();
 
-        for (stored_geohash, bucket) in &index.buckets {
-            if !Self::geohash_matches_any(stored_geohash, candidates) {
-                continue;
-            }
-
-            for entry in bucket.values() {
-                let distance = center.distance_to(&entry.point);
-                if distance <= radius_meters {
-                    matches.push((distance, entry.point, entry.data.clone()));
+        for candidate in candidates {
+            if let Some(bucket) = index.buckets.get(candidate) {
+                for entry in bucket.values() {
+                    let distance = center.distance_to(&entry.point);
+                    if distance <= radius_meters {
+                        matches.push((distance, entry.point, entry.data.clone()));
+                    }
                 }
             }
         }
@@ -421,12 +419,6 @@ impl IndexManager {
         });
 
         results.truncate(limit);
-    }
-
-    fn geohash_matches_any(stored_geohash: &str, candidates: &FxHashSet<String>) -> bool {
-        candidates.iter().any(|candidate| {
-            stored_geohash.starts_with(candidate.as_str()) || candidate.starts_with(stored_geohash)
-        })
     }
 
     /// Get statistics about spatial indexes
@@ -550,14 +542,14 @@ mod tests {
         manager.insert_point("test", &geohash, &storage_key, &point, &data)?;
 
         // Verify it exists
-        let nearby = manager.find_nearby("test", &point, 1000.0, 10)?;
+        let nearby = manager.query_within_radius("test", &point, 1000.0, 10)?;
         assert_eq!(nearby.len(), 1);
 
         // Remove point
         manager.remove_entry("test", &geohash, &storage_key)?;
 
         // Verify it's gone
-        let nearby_after = manager.find_nearby("test", &point, 1000.0, 10)?;
+        let nearby_after = manager.query_within_radius("test", &point, 1000.0, 10)?;
         assert_eq!(nearby_after.len(), 0);
 
         Ok(())
@@ -596,8 +588,8 @@ mod tests {
         manager2.insert_point("test", &geohash2, &storage_key2, &point, &data)?;
 
         // Both should find the point
-        let results1 = manager1.find_nearby("test", &point, 1000.0, 10)?;
-        let results2 = manager2.find_nearby("test", &point, 1000.0, 10)?;
+        let results1 = manager1.query_within_radius("test", &point, 1000.0, 10)?;
+        let results2 = manager2.query_within_radius("test", &point, 1000.0, 10)?;
 
         assert_eq!(results1.len(), 1);
         assert_eq!(results2.len(), 1);
@@ -646,7 +638,7 @@ mod tests {
             &Bytes::from_static(b"B"),
         )?;
 
-        let nearby = manager.find_nearby("test", &point_a, 100.0, 10)?;
+        let nearby = manager.query_within_radius("test", &point_a, 100.0, 10)?;
         assert_eq!(nearby.len(), 2);
 
         let values: FxHashSet<_> = nearby.into_iter().map(|(_, data)| data).collect();

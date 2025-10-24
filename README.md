@@ -125,7 +125,7 @@ fn main() -> Result<()> {
     ns.insert_point("truck:001", &truck, b"Truck A", None)?;
 
     // Query for nearby points
-    let results = ns.find_nearby(&truck, 1000.0, 10)?;
+    let results = ns.query_within_radius(&truck, 1000.0, 10)?;
     println!("Found {} nearby objects", results.len());
 
     // Check if a key exists
@@ -218,13 +218,13 @@ let point = Point::new(40.7128, -74.0060);
 db.insert_point("namespace", &point, b"data", None)?;
 
 // Find nearby points
-let nearby = db.find_nearby("namespace", &point, 1000.0, 10)?;
+let nearby = db.query_within_radius("namespace", &point, 1000.0, 10)?;
 
 // Check if points exist in region
 let exists = db.contains_point("namespace", &point, 1000.0)?;
 
 // Count points within distance
-let count = db.count_within_distance("namespace", &point, 1000.0)?;
+let count = db.count_within_radius("namespace", &point, 1000.0)?;
 
 // Query bounding box
 let in_bounds = db.find_within_bounds("namespace", 40.0, -75.0, 41.0, -73.0, 10)?;
