@@ -32,7 +32,7 @@ just check-version
 
 This shows:
 - Current Rust crate version
-- Current Python package version  
+- Current Python package version
 - Latest tags for each package
 - Version status and readiness for release
 
@@ -73,7 +73,7 @@ just bump-both-dry 1.0.0
 GitHub Actions automatically creates tags and releases when version changes are detected:
 
 - `rust-v1.2.3` - Automatically created for Rust crate releases
-- `python-v0.5.1` - Automatically created for Python package releases  
+- `python-v0.5.1` - Automatically created for Python package releases
 
 ## Typical Workflows
 
@@ -88,7 +88,7 @@ git push origin main
 # → GitHub Actions automatically creates rust-v0.3.0 release
 
 # Later, Python bindings get updates
-just bump-python 0.2.0  
+just bump-python 0.2.0
 git push origin main
 # → GitHub Actions automatically creates python-v0.2.0 release
 ```
@@ -112,7 +112,7 @@ Support for alpha, beta, and rc versions:
 # Rust pre-release
 just bump-rust 0.4.0-alpha.1
 
-# Python pre-release  
+# Python pre-release
 just bump-python 0.3.0-beta.2
 
 # Combined pre-release
@@ -142,7 +142,7 @@ You can also trigger the workflow manually via GitHub Actions:
 
 The scripts automatically update versions in:
 
-- **Rust crate**: `Cargo.toml` 
+- **Rust crate**: `Cargo.toml`
 - **Python package**: `py-spatio/Cargo.toml`
 - **Lock files**: Both `Cargo.lock` files are updated
 
@@ -243,7 +243,7 @@ git push origin main
 ```bash
 # Major release with breaking changes
 just bump-both-dry 1.0.0  # preview
-just bump-both 1.0.0      # actual bump  
+just bump-both 1.0.0      # actual bump
 git push origin main
 # Auto-release triggered, both packages released
 ```
@@ -256,7 +256,7 @@ git push origin main
 - **Clear audit trail** - Easy to see what triggered each release
 - **Prevents forgotten releases** - Can't forget to create a release after version bump
 - **Fast daily CI** - Linux-only testing for quick development feedback
-- **Thorough releases** - Cross-platform testing ensures release quality
+- **Thorough releases** - Cross-platform testing (Windows best-effort) ensures release quality
 - **Cost efficient** - Full testing only when it matters
 
 ## CI Strategy
@@ -270,15 +270,15 @@ git push origin main
 
 ### Release CI
 **Runs automatically when versions change:**
-- **Cross-platform testing**: Linux, Windows, macOS
+- **Cross-platform testing**: Linux, macOS (Windows best-effort)
 - **Multiple Python versions**: 3.9-3.13 across platforms
 - **Comprehensive validation** before release
-- **Only releases if all tests pass**
+- **Only releases if required tests pass** (Windows failures are tolerated while support is experimental)
 
 ### Local Testing
 ```bash
 # Security and performance testing
-just security-audit  
+just security-audit
 just benchmarks
 just coverage
 just test-examples

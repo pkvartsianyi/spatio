@@ -41,9 +41,9 @@ git push origin main
 ### 3. Automated Release
 
 The CI workflow will:
-1. Detect that `rust-v0.1.0-alpha.11` doesn't exist
-2. Run tests on Linux, macOS, and Windows
-3. Create a Git tag `rust-v0.1.0-alpha.11`
+1. Detect that `rust-vX` doesn't exist
+2. Run tests on Linux and macOS (Windows runs in best-effort mode)
+3. Create a Git tag `rust-vX`
 4. Create a GitHub release
 5. Publish to crates.io (if `CRATES_IO_TOKEN` is configured)
 
@@ -83,9 +83,9 @@ git push origin main
 ### 4. Automated Release
 
 The CI workflow will:
-1. Detect that `python-v0.1.0-alpha.11` doesn't exist
-2. Run tests on multiple OS/Python combinations
-3. Create a Git tag `python-v0.1.0-alpha.11`
+1. Detect that `python-vX` doesn't exist
+2. Run tests on multiple OS/Python combinations (Windows runs in best-effort mode)
+3. Create a Git tag `python-vX`
 4. Build Python wheels using `maturin`
 5. Create a GitHub release
 6. Publish to PyPI (if `PYPI_API_TOKEN` is configured)
@@ -153,8 +153,8 @@ If automated release fails, you can release manually:
 
 ```bash
 # Create and push tag
-git tag rust-v0.1.0-alpha.11
-git push origin rust-v0.1.0-alpha.11
+git tag rust-vX
+git push origin rust-vX
 
 # Publish to crates.io
 cargo publish
@@ -164,8 +164,8 @@ cargo publish
 
 ```bash
 # Create and push tag
-git tag python-v0.1.0-alpha.11
-git push origin python-v0.1.0-alpha.11
+git tag python-vX
+git push origin python-vX
 
 # Build and publish
 cd py-spatio
