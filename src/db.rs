@@ -1185,9 +1185,7 @@ impl DBInner {
     /// - Restore from backup if available
     /// - Or delete the AOF file to start fresh (data loss)
     pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
-        let commands = aof_file.replay()?;
-
-        for command in commands {
+        for command in aof_file.replay()? {
             match command {
                 AOFCommand::Set {
                     key,
@@ -1195,70 +1193,87 @@ impl DBInner {
                     created_at,
                     expires_at,
                 } => {
-                    let item = DbItem {
-                        value: value.clone(),
-                        created_at,
-                        expires_at,
-                    };
-
-                    if let Some(old) = self.keys.insert(key.clone(), item) {
-                        self.remove_expiration_entry(&key, &old);
-                        #[cfg(feature = "time-index")]
-                        self.remove_created_index(&key, &old);
-                    }
-                    self.add_expiration(&key, expires_at);
-                    #[cfg(feature = "time-index")]
-                    self.add_created_index(&key, created_at);
-
-                    #[cfg(feature = "time-index")]
-                    if let Some(history) = self.history.as_mut() {
-                        history.record_set(&key, value.clone(), created_at, expires_at);
-                    }
-
-                    // Rebuild spatial index if this is a spatial key
-                    if let Ok(key_str) = std::str::from_utf8(&key)
-                        && let Some((prefix, geohash, point_hint)) =
-                            self.parse_spatial_key_extended(key_str)
-                    {
-                        let point = match point_hint {
-                            Some(point) => point,
-                            None => match self.decode_geohash_to_point(geohash) {
-                                Ok(point) => point,
-                                Err(_) => continue,
-                            },
-                        };
-
-                        let _ = self
-                            .index_manager
-                            .insert_point(prefix, geohash, &key, &point, &value);
-                    }
+                    self.apply_set_from_aof(key, value, created_at, expires_at)?;
                 }
                 AOFCommand::Delete { key } => {
-                    if let Some(item) = self.keys.remove(&key) {
-                        #[cfg(feature = "time-index")]
-                        let deleted_value = item.value.clone();
-                        self.remove_expiration_entry(&key, &item);
-                        #[cfg(feature = "time-index")]
-                        self.remove_created_index(&key, &item);
-
-                        #[cfg(feature = "time-index")]
-                        if let Some(history) = self.history.as_mut() {
-                            history.record_delete(&key, SystemTime::now(), Some(deleted_value));
-                        }
-                    }
-
-                    // Remove from spatial index if this was a spatial key
-                    if let Ok(key_str) = std::str::from_utf8(&key)
-                        && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
-                    {
-                        let _ = self.index_manager.remove_entry(prefix, geohash, &key);
-                    }
+                    self.apply_delete_from_aof(key)?;
                 }
             }
         }
 
         self.stats.key_count = self.keys.len();
         Ok(())
+    }
+
+    fn apply_set_from_aof(
+        &mut self,
+        key: Bytes,
+        value: Bytes,
+        created_at: SystemTime,
+        expires_at: Option<SystemTime>,
+    ) -> Result<()> {
+        let item = DbItem {
+            value: value.clone(),
+            created_at,
+            expires_at,
+        };
+
+        if let Some(old) = self.keys.insert(key.clone(), item) {
+            self.remove_expiration_entry(&key, &old);
+            #[cfg(feature = "time-index")]
+            self.remove_created_index(&key, &old);
+        }
+
+        self.add_expiration(&key, expires_at);
+        #[cfg(feature = "time-index")]
+        self.add_created_index(&key, created_at);
+
+        #[cfg(feature = "time-index")]
+        if let Some(history) = self.history.as_mut() {
+            history.record_set(&key, value.clone(), created_at, expires_at);
+        }
+
+        self.rebuild_spatial_index(&key, &value);
+        Ok(())
+    }
+
+    fn apply_delete_from_aof(&mut self, key: Bytes) -> Result<()> {
+        if let Some(item) = self.keys.remove(&key) {
+            #[cfg(feature = "time-index")]
+            let deleted_value = item.value.clone();
+            self.remove_expiration_entry(&key, &item);
+            #[cfg(feature = "time-index")]
+            self.remove_created_index(&key, &item);
+
+            #[cfg(feature = "time-index")]
+            if let Some(history) = self.history.as_mut() {
+                history.record_delete(&key, SystemTime::now(), Some(deleted_value));
+            }
+        }
+
+        self.remove_from_spatial_index(&key);
+        Ok(())
+    }
+
+    fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
+        if let Ok(key_str) = std::str::from_utf8(key)
+            && let Some((prefix, geohash, point_hint)) = self.parse_spatial_key_extended(key_str)
+        {
+            let point = point_hint.or_else(|| self.decode_geohash_to_point(geohash).ok());
+            if let Some(point) = point {
+                let _ = self
+                    .index_manager
+                    .insert_point(prefix, geohash, key, &point, value);
+            }
+        }
+    }
+
+    fn remove_from_spatial_index(&mut self, key: &Bytes) {
+        if let Ok(key_str) = std::str::from_utf8(key)
+            && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
+        {
+            let _ = self.index_manager.remove_entry(prefix, geohash, key);
+        }
     }
 
     /// Parse a spatial key to extract prefix and geohash
