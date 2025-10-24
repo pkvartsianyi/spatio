@@ -190,8 +190,7 @@ impl AOFFile {
             self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
         }
 
-        // Check if we should trigger a rewrite
-        if self.should_rewrite() && !self.rewrite_in_progress {
+        if self.should_rewrite() {
             self.maybe_trigger_rewrite()?;
         }
 
@@ -256,7 +255,6 @@ impl AOFFile {
             let rewrite_path = Self::rewrite_path_for(&target_path);
             let mut rewrite_file = Self::open_rewrite(&rewrite_path, self.config.clone())?;
 
-            rewrite_file.rewrite_in_progress = true;
             for (key, (value, created_at, expires_at)) in latest {
                 let opts = expires_at.map(SetOptions::with_expiration);
                 rewrite_file.write_set(key.as_ref(), value.as_ref(), opts.as_ref(), created_at)?;
@@ -265,11 +263,22 @@ impl AOFFile {
             rewrite_file.sync()?;
             drop(rewrite_file);
 
-            // Atomically replace the old file
+            // Close all existing handles before rename
+            self.writer.flush().ok();
+
+            {
+                let writer =
+                    std::mem::replace(&mut self.writer, BufWriter::new(File::open(&self.path)?));
+                drop(writer);
+                let file = std::mem::replace(&mut self.file, File::open(&self.path)?);
+                drop(file);
+            }
+
+            // Now safely rename the rewritten file
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 
-            // Reopen the file with new handles
+            // Reopen new file for continued appending
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -280,7 +289,6 @@ impl AOFFile {
             let writer_file = new_file.try_clone()?;
             let new_writer = BufWriter::new(writer_file);
 
-            // Update file handles
             self.file = new_file;
             self.writer = new_writer;
             self.size = new_size;
