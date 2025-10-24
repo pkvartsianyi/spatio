@@ -3,7 +3,7 @@
 //! This module maintains geohash-backed indexes used by the database to
 //! execute nearby, bounds, and distance-based lookups efficiently.
 
-use crate::error::{Result, SpatioError};
+use crate::error::Result;
 use crate::spatial::Point;
 use crate::types::Config;
 use bytes::Bytes;
@@ -29,16 +29,21 @@ pub const DEFAULT_SEARCH_PRECISIONS: &[usize] = &[6, 7, 8];
 pub struct IndexManager {
     /// Spatial indexes organized by prefix
     spatial_indexes: FxHashMap<String, SpatialIndex>,
-    /// Geohash precision for indexing
-    geohash_precision: usize,
     /// Geohash precisions to use for neighbor search
     search_precisions: Vec<usize>,
 }
 
 /// A spatial index for a specific prefix/namespace
 struct SpatialIndex {
-    /// Points stored with their geohash keys
-    points: FxHashMap<String, (Point, Bytes)>,
+    /// Buckets of points grouped by geohash string
+    buckets: FxHashMap<String, FxHashMap<Bytes, IndexedPoint>>,
+    /// Total number of indexed points
+    len: usize,
+}
+
+struct IndexedPoint {
+    point: Point,
+    data: Bytes,
 }
 
 impl IndexManager {
@@ -46,7 +51,6 @@ impl IndexManager {
     pub fn new() -> Self {
         Self {
             spatial_indexes: FxHashMap::default(),
-            geohash_precision: DEFAULT_GEOHASH_PRECISION,
             search_precisions: DEFAULT_SEARCH_PRECISIONS.to_vec(),
         }
     }
@@ -81,9 +85,16 @@ impl IndexManager {
 
         Self {
             spatial_indexes: FxHashMap::default(),
-            geohash_precision: config.geohash_precision,
             search_precisions,
         }
+    }
+
+    #[cfg(test)]
+    fn primary_precision(&self) -> usize {
+        *self
+            .search_precisions
+            .last()
+            .unwrap_or(&DEFAULT_GEOHASH_PRECISION)
     }
 
     /// Helper method to determine if we should use full scan vs geohash optimization
@@ -93,21 +104,24 @@ impl IndexManager {
             None => return true, // No index means no optimization possible
         };
 
-        radius_meters > LARGE_RADIUS_THRESHOLD || index.points.len() < SMALL_DATASET_THRESHOLD
+        radius_meters > LARGE_RADIUS_THRESHOLD || index.len() < SMALL_DATASET_THRESHOLD
     }
 
     /// Insert a point into the spatial index
-    pub fn insert_point(&mut self, prefix: &str, point: &Point, data: &Bytes) -> Result<()> {
+    pub fn insert_point(
+        &mut self,
+        prefix: &str,
+        geohash: &str,
+        key: &Bytes,
+        point: &Point,
+        data: &Bytes,
+    ) -> Result<()> {
         let index = self
             .spatial_indexes
             .entry(prefix.to_string())
             .or_insert_with(SpatialIndex::new);
 
-        let geohash = point
-            .to_geohash(self.geohash_precision)
-            .map_err(|_| SpatioError::InvalidGeohash)?;
-
-        index.points.insert(geohash, (*point, data.clone()));
+        index.insert(geohash, key, point, data);
         Ok(())
     }
 
@@ -129,13 +143,13 @@ impl IndexManager {
         // For large search radii or small datasets, use full scan instead of geohash optimization
         if self.should_use_full_scan(prefix, radius_meters) {
             // Check all points in the index
-            for (point, data) in index.points.values() {
+            for entry in index.entries() {
                 if results.len() >= limit {
                     break;
                 }
-                let distance = center.distance_to(point);
+                let distance = center.distance_to(&entry.point);
                 if distance <= radius_meters {
-                    results.push((*point, data.clone()));
+                    results.push((entry.point, entry.data.clone()));
                 }
             }
         } else {
@@ -169,15 +183,20 @@ impl IndexManager {
             // Collect candidates with distances for sorting
             let mut candidates_with_distance = Vec::new();
 
-            // Check all candidate geohashes
-            for geohash in &candidates {
-                // Check if any point starts with this geohash prefix
-                for (stored_geohash, (point, data)) in &index.points {
-                    if stored_geohash.starts_with(geohash) || geohash.starts_with(stored_geohash) {
-                        let distance = center.distance_to(point);
-                        if distance <= radius_meters {
-                            candidates_with_distance.push((distance, *point, data.clone()));
-                        }
+            for (stored_geohash, bucket) in &index.buckets {
+                let matches_candidate = candidates.iter().any(|candidate| {
+                    stored_geohash.starts_with(candidate.as_str())
+                        || candidate.starts_with(stored_geohash.as_str())
+                });
+
+                if !matches_candidate {
+                    continue;
+                }
+
+                for entry in bucket.values() {
+                    let distance = center.distance_to(&entry.point);
+                    if distance <= radius_meters {
+                        candidates_with_distance.push((distance, entry.point, entry.data.clone()));
                     }
                 }
             }
@@ -200,10 +219,10 @@ impl IndexManager {
 
             // If we didn't find enough results, fall back to full scan
             if results.is_empty() {
-                for (point, data) in index.points.values() {
-                    let distance = center.distance_to(point);
+                for entry in index.entries() {
+                    let distance = center.distance_to(&entry.point);
                     if distance <= radius_meters {
-                        results.push((*point, data.clone()));
+                        results.push((entry.point, entry.data.clone()));
                     }
                 }
             }
@@ -240,9 +259,12 @@ impl IndexManager {
         let mut results = Vec::new();
 
         // Check all points in the index
-        for (point, data) in index.points.values() {
-            if point.within_bounds(min_lat, min_lon, max_lat, max_lon) {
-                results.push((*point, data.clone()));
+        for entry in index.entries() {
+            if entry
+                .point
+                .within_bounds(min_lat, min_lon, max_lat, max_lon)
+            {
+                results.push((entry.point, entry.data.clone()));
                 if results.len() >= limit {
                     break;
                 }
@@ -261,8 +283,8 @@ impl IndexManager {
 
         // For small datasets or large radii, just check all points
         if self.should_use_full_scan(prefix, radius_meters) {
-            for (point, _) in index.points.values() {
-                if center.distance_to(point) <= radius_meters {
+            for entry in index.entries() {
+                if center.distance_to(&entry.point) <= radius_meters {
                     return Ok(true);
                 }
             }
@@ -296,11 +318,14 @@ impl IndexManager {
         }
 
         // Check all candidate geohashes
-        for geohash in candidates {
+        for geohash in &candidates {
             // Check if any point starts with this geohash prefix
-            for (stored_geohash, (point, _)) in &index.points {
-                if (stored_geohash.starts_with(&geohash) || geohash.starts_with(stored_geohash))
-                    && center.distance_to(point) <= radius_meters
+            for (stored_geohash, bucket) in &index.buckets {
+                if (stored_geohash.starts_with(geohash.as_str())
+                    || geohash.starts_with(stored_geohash.as_str()))
+                    && bucket
+                        .values()
+                        .any(|entry| center.distance_to(&entry.point) <= radius_meters)
                 {
                     return Ok(true);
                 }
@@ -308,8 +333,8 @@ impl IndexManager {
         }
 
         // If geohash search didn't find anything, fall back to full scan
-        for (point, _) in index.points.values() {
-            if center.distance_to(point) <= radius_meters {
+        for entry in index.entries() {
+            if center.distance_to(&entry.point) <= radius_meters {
                 return Ok(true);
             }
         }
@@ -332,8 +357,11 @@ impl IndexManager {
         };
 
         // Check if any point intersects with the bounding box
-        for (point, _) in index.points.values() {
-            if point.within_bounds(min_lat, min_lon, max_lat, max_lon) {
+        for entry in index.entries() {
+            if entry
+                .point
+                .within_bounds(min_lat, min_lon, max_lat, max_lon)
+            {
                 return Ok(true);
             }
         }
@@ -357,8 +385,8 @@ impl IndexManager {
 
         // For small datasets or large radii, just check all points
         if self.should_use_full_scan(prefix, radius_meters) {
-            for (point, _) in index.points.values() {
-                if center.distance_to(point) <= radius_meters {
+            for entry in index.entries() {
+                if center.distance_to(&entry.point) <= radius_meters {
                     count += 1;
                 }
             }
@@ -391,16 +419,18 @@ impl IndexManager {
             }
         }
 
-        // Check all candidate geohashes
         let mut found_points = std::collections::HashSet::new();
-        for geohash in candidates {
-            // Check if any point starts with this geohash prefix
-            for (stored_geohash, (point, _)) in &index.points {
-                if (stored_geohash.starts_with(&geohash) || geohash.starts_with(stored_geohash))
-                    && center.distance_to(point) <= radius_meters
+        for geohash in &candidates {
+            for (stored_geohash, bucket) in &index.buckets {
+                if stored_geohash.starts_with(geohash.as_str())
+                    || geohash.starts_with(stored_geohash.as_str())
                 {
-                    // Use point coordinates as key to avoid double counting
-                    found_points.insert((point.lat.to_bits(), point.lon.to_bits()));
+                    for entry in bucket.values() {
+                        if center.distance_to(&entry.point) <= radius_meters {
+                            found_points
+                                .insert((entry.point.lat.to_bits(), entry.point.lon.to_bits()));
+                        }
+                    }
                 }
             }
         }
@@ -409,8 +439,8 @@ impl IndexManager {
 
         // If geohash search didn't find anything, fall back to full scan
         if count == 0 {
-            for (point, _) in index.points.values() {
-                if center.distance_to(point) <= radius_meters {
+            for entry in index.entries() {
+                if center.distance_to(&entry.point) <= radius_meters {
                     count += 1;
                 }
             }
@@ -419,13 +449,13 @@ impl IndexManager {
         Ok(count)
     }
 
-    /// Remove a point from the spatial index
-    pub fn remove_point(&mut self, prefix: &str, point: &Point) -> Result<()> {
+    /// Remove a specific entry from the spatial index
+    pub fn remove_entry(&mut self, prefix: &str, geohash: &str, key: &Bytes) -> Result<()> {
         if let Some(index) = self.spatial_indexes.get_mut(prefix) {
-            let geohash = point
-                .to_geohash(self.geohash_precision)
-                .map_err(|_| SpatioError::InvalidGeohash)?;
-            index.points.remove(&geohash);
+            let removed = index.remove(geohash, key);
+            if removed && index.is_empty() {
+                self.spatial_indexes.remove(prefix);
+            }
         }
         Ok(())
     }
@@ -436,7 +466,7 @@ impl IndexManager {
         let index_count = self.spatial_indexes.len();
 
         for index in self.spatial_indexes.values() {
-            total_points += index.points.len();
+            total_points += index.len();
         }
 
         IndexStats {
@@ -449,8 +479,51 @@ impl IndexManager {
 impl SpatialIndex {
     fn new() -> Self {
         Self {
-            points: FxHashMap::default(),
+            buckets: FxHashMap::default(),
+            len: 0,
         }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn insert(&mut self, geohash: &str, key: &Bytes, point: &Point, data: &Bytes) {
+        let bucket = self.buckets.entry(geohash.to_string()).or_default();
+
+        let entry = IndexedPoint {
+            point: *point,
+            data: data.clone(),
+        };
+
+        if bucket.insert(key.clone(), entry).is_none() {
+            self.len += 1;
+        }
+    }
+
+    fn remove(&mut self, geohash: &str, key: &Bytes) -> bool {
+        let mut removed = false;
+
+        if let Some(bucket) = self.buckets.get_mut(geohash) {
+            if bucket.remove(key).is_some() {
+                self.len = self.len.saturating_sub(1);
+                removed = true;
+            }
+
+            if bucket.is_empty() {
+                self.buckets.remove(geohash);
+            }
+        }
+
+        removed
+    }
+
+    fn entries(&self) -> impl Iterator<Item = &IndexedPoint> + '_ {
+        self.buckets.values().flat_map(|bucket| bucket.values())
     }
 }
 
@@ -470,13 +543,15 @@ impl Default for IndexManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::Point;
+    use crate::spatial::{Point, SpatialKey};
     use bytes::Bytes;
+    use rustc_hash::FxHashSet;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn test_default_geohash_precision() {
         let manager = IndexManager::new();
-        assert_eq!(manager.geohash_precision, DEFAULT_GEOHASH_PRECISION);
+        assert_eq!(manager.primary_precision(), DEFAULT_GEOHASH_PRECISION);
         assert_eq!(manager.search_precisions, DEFAULT_SEARCH_PRECISIONS);
     }
 
@@ -485,7 +560,7 @@ mod tests {
         let config = Config::with_geohash_precision(10);
 
         let manager = IndexManager::with_config(&config);
-        assert_eq!(manager.geohash_precision, 10);
+        assert_eq!(manager.primary_precision(), 10);
         assert_eq!(manager.search_precisions, vec![8, 9, 10]);
     }
 
@@ -498,14 +573,19 @@ mod tests {
         let data = Bytes::from("test_data");
 
         // Insert point
-        manager.insert_point("test", &point, &data)?;
+        let geohash = point.to_geohash(manager.primary_precision()).unwrap();
+        let storage_key = Bytes::from(
+            SpatialKey::geohash_unique("test", &geohash, &point, SystemTime::now()).into_bytes(),
+        );
+
+        manager.insert_point("test", &geohash, &storage_key, &point, &data)?;
 
         // Verify it exists
         let nearby = manager.find_nearby("test", &point, 1000.0, 10)?;
         assert_eq!(nearby.len(), 1);
 
         // Remove point
-        manager.remove_point("test", &point)?;
+        manager.remove_entry("test", &geohash, &storage_key)?;
 
         // Verify it's gone
         let nearby_after = manager.find_nearby("test", &point, 1000.0, 10)?;
@@ -528,8 +608,23 @@ mod tests {
         let data = Bytes::from("test_data");
 
         // Insert into both managers
-        manager1.insert_point("test", &point, &data)?;
-        manager2.insert_point("test", &point, &data)?;
+        let geohash1 = point.to_geohash(manager1.primary_precision()).unwrap();
+        let geohash2 = point.to_geohash(manager2.primary_precision()).unwrap();
+        let storage_key1 = Bytes::from(
+            SpatialKey::geohash_unique("test", &geohash1, &point, SystemTime::now()).into_bytes(),
+        );
+        let storage_key2 = Bytes::from(
+            SpatialKey::geohash_unique(
+                "test",
+                &geohash2,
+                &point,
+                SystemTime::now() + Duration::from_nanos(1),
+            )
+            .into_bytes(),
+        );
+
+        manager1.insert_point("test", &geohash1, &storage_key1, &point, &data)?;
+        manager2.insert_point("test", &geohash2, &storage_key2, &point, &data)?;
 
         // Both should find the point
         let results1 = manager1.find_nearby("test", &point, 1000.0, 10)?;
@@ -537,6 +632,57 @@ mod tests {
 
         assert_eq!(results1.len(), 1);
         assert_eq!(results2.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_points_same_geohash() -> Result<()> {
+        let config = Config::with_geohash_precision(6);
+        let mut manager = IndexManager::with_config(&config);
+
+        let point_a = Point::new(40.7128, -74.0060);
+        let point_b = Point::new(40.7129, -74.0061);
+
+        let geohash_a = point_a.to_geohash(config.geohash_precision).unwrap();
+        let geohash_b = point_b.to_geohash(config.geohash_precision).unwrap();
+        assert_eq!(geohash_a, geohash_b);
+
+        let key_a = Bytes::from(
+            SpatialKey::geohash_unique("test", &geohash_a, &point_a, SystemTime::now())
+                .into_bytes(),
+        );
+        let key_b = Bytes::from(
+            SpatialKey::geohash_unique(
+                "test",
+                &geohash_b,
+                &point_b,
+                SystemTime::now() + Duration::from_nanos(1),
+            )
+            .into_bytes(),
+        );
+
+        manager.insert_point(
+            "test",
+            &geohash_a,
+            &key_a,
+            &point_a,
+            &Bytes::from_static(b"A"),
+        )?;
+        manager.insert_point(
+            "test",
+            &geohash_b,
+            &key_b,
+            &point_b,
+            &Bytes::from_static(b"B"),
+        )?;
+
+        let nearby = manager.find_nearby("test", &point_a, 100.0, 10)?;
+        assert_eq!(nearby.len(), 2);
+
+        let values: FxHashSet<_> = nearby.into_iter().map(|(_, data)| data).collect();
+        assert!(values.contains(&Bytes::from_static(b"A")));
+        assert!(values.contains(&Bytes::from_static(b"B")));
 
         Ok(())
     }

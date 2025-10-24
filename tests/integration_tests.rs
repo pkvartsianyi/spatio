@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use spatio::{Config, Point, SetOptions, Spatio};
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -108,6 +109,30 @@ fn test_distance_calculations() {
 
     // Distance should be approximately 5585 km (allowing some variance)
     assert!((distance - 5_585_000.0).abs() < 100_000.0);
+}
+
+#[test]
+fn test_points_sharing_geohash_are_preserved() {
+    let config = Config {
+        geohash_precision: 5, // coarse precision to force shared buckets
+        ..Config::default()
+    };
+
+    let db = Spatio::memory_with_config(config).unwrap();
+
+    let point_a = Point::new(40.7128, -74.0060);
+    let point_b = Point::new(40.7130, -74.0062); // Nearby point likely in same geohash
+
+    db.insert_point("cities", &point_a, b"A", None).unwrap();
+    db.insert_point("cities", &point_b, b"B", None).unwrap();
+
+    let results = db.find_nearby("cities", &point_a, 500.0, 10).unwrap();
+    assert_eq!(results.len(), 2);
+
+    let values: std::collections::HashSet<_> =
+        results.into_iter().map(|(_, value)| value).collect();
+    assert!(values.contains(&Bytes::from_static(b"A")));
+    assert!(values.contains(&Bytes::from_static(b"B")));
 }
 
 #[test]
