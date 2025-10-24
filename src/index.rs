@@ -9,6 +9,7 @@ use crate::types::Config;
 use bytes::Bytes;
 use geohash;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cmp::Ordering;
 
 /// Threshold for large search radius in meters
 const LARGE_RADIUS_THRESHOLD: f64 = 100_000.0;
@@ -138,106 +139,24 @@ impl IndexManager {
             None => return Ok(Vec::new()),
         };
 
-        let mut results = Vec::with_capacity(limit.min(1000));
-
-        // For large search radii or small datasets, use full scan instead of geohash optimization
-        if self.should_use_full_scan(prefix, radius_meters) {
-            // Check all points in the index
-            for entry in index.entries() {
-                if results.len() >= limit {
-                    break;
-                }
-                let distance = center.distance_to(&entry.point);
-                if distance <= radius_meters {
-                    results.push((entry.point, entry.data.clone()));
-                }
-            }
-        } else {
-            // Use geohash-based search for efficiency
-            let mut candidates = FxHashSet::default();
-            candidates.reserve(27); // 9 directions * 3 precisions
-
-            // Try multiple precision levels for better coverage
-            for precision in &self.search_precisions {
-                if let Ok(center_geohash) = center.to_geohash(*precision) {
-                    candidates.insert(center_geohash.clone());
-
-                    // Add neighbors at this precision
-                    for direction in &[
-                        geohash::Direction::N,
-                        geohash::Direction::S,
-                        geohash::Direction::E,
-                        geohash::Direction::W,
-                        geohash::Direction::NE,
-                        geohash::Direction::NW,
-                        geohash::Direction::SE,
-                        geohash::Direction::SW,
-                    ] {
-                        if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
-                            candidates.insert(neighbor);
-                        }
-                    }
-                }
-            }
-
-            // Collect candidates with distances for sorting
-            let mut candidates_with_distance = Vec::new();
-
-            for (stored_geohash, bucket) in &index.buckets {
-                let matches_candidate = candidates.iter().any(|candidate| {
-                    stored_geohash.starts_with(candidate.as_str())
-                        || candidate.starts_with(stored_geohash.as_str())
-                });
-
-                if !matches_candidate {
-                    continue;
-                }
-
-                for entry in bucket.values() {
-                    let distance = center.distance_to(&entry.point);
-                    if distance <= radius_meters {
-                        candidates_with_distance.push((distance, entry.point, entry.data.clone()));
-                    }
-                }
-            }
-
-            // Sort by distance and take closest results, naturally handling duplicates
-            candidates_with_distance
-                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Take unique points (deduplicate by point coordinates) up to limit
-            let mut seen_points = FxHashSet::default();
-            for (_, point, data) in candidates_with_distance {
-                let point_key = (point.lat.to_bits(), point.lon.to_bits());
-                if seen_points.insert(point_key) {
-                    results.push((point, data));
-                    if results.len() >= limit {
-                        break;
-                    }
-                }
-            }
-
-            // If we didn't find enough results, fall back to full scan
-            if results.is_empty() {
-                for entry in index.entries() {
-                    let distance = center.distance_to(&entry.point);
-                    if distance <= radius_meters {
-                        results.push((entry.point, entry.data.clone()));
-                    }
-                }
-            }
+        if limit == 0 {
+            return Ok(Vec::new());
         }
 
-        // Sort by distance and limit results
-        results.sort_by(|a, b| {
-            let dist_a = center.distance_to(&a.0);
-            let dist_b = center.distance_to(&b.0);
-            dist_a
-                .partial_cmp(&dist_b)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let mut results = if self.should_use_full_scan(prefix, radius_meters) {
+            self.collect_full_scan(index, center, radius_meters, limit)
+        } else {
+            let candidates = self.collect_geohash_candidates(center);
+            let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
 
-        results.truncate(limit);
+            if matches.is_empty() {
+                self.collect_full_scan(index, center, radius_meters, limit)
+            } else {
+                self.dedupe_matches(matches, limit)
+            }
+        };
+
+        self.sort_and_limit(&mut results, center, limit);
         Ok(results)
     }
 
@@ -292,30 +211,7 @@ impl IndexManager {
         }
 
         // Use geohash-based search for efficiency
-        let mut candidates = std::collections::HashSet::new();
-
-        // Try multiple precision levels for better coverage
-        for precision in &self.search_precisions {
-            if let Ok(center_geohash) = center.to_geohash(*precision) {
-                candidates.insert(center_geohash.clone());
-
-                // Add neighbors at this precision
-                for direction in &[
-                    geohash::Direction::N,
-                    geohash::Direction::S,
-                    geohash::Direction::E,
-                    geohash::Direction::W,
-                    geohash::Direction::NE,
-                    geohash::Direction::NW,
-                    geohash::Direction::SE,
-                    geohash::Direction::SW,
-                ] {
-                    if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
-                        candidates.insert(neighbor);
-                    }
-                }
-            }
-        }
+        let candidates = self.collect_geohash_candidates(center);
 
         // Check all candidate geohashes
         for geohash in &candidates {
@@ -394,30 +290,7 @@ impl IndexManager {
         }
 
         // Use geohash-based search for efficiency
-        let mut candidates = std::collections::HashSet::new();
-
-        // Try multiple precision levels for better coverage
-        for precision in &self.search_precisions {
-            if let Ok(center_geohash) = center.to_geohash(*precision) {
-                candidates.insert(center_geohash.clone());
-
-                // Add neighbors at this precision
-                for direction in &[
-                    geohash::Direction::N,
-                    geohash::Direction::S,
-                    geohash::Direction::E,
-                    geohash::Direction::W,
-                    geohash::Direction::NE,
-                    geohash::Direction::NW,
-                    geohash::Direction::SE,
-                    geohash::Direction::SW,
-                ] {
-                    if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
-                        candidates.insert(neighbor);
-                    }
-                }
-            }
-        }
+        let candidates = self.collect_geohash_candidates(center);
 
         let mut found_points = std::collections::HashSet::new();
         for geohash in &candidates {
@@ -458,6 +331,133 @@ impl IndexManager {
             }
         }
         Ok(())
+    }
+
+    fn collect_full_scan(
+        &self,
+        index: &SpatialIndex,
+        center: &Point,
+        radius_meters: f64,
+        limit: usize,
+    ) -> Vec<(Point, Bytes)> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let mut results = Vec::with_capacity(limit.min(1000));
+        for entry in index.entries() {
+            if results.len() >= limit {
+                break;
+            }
+
+            if center.distance_to(&entry.point) <= radius_meters {
+                results.push((entry.point, entry.data.clone()));
+            }
+        }
+        results
+    }
+
+    fn collect_geohash_candidates(&self, center: &Point) -> FxHashSet<String> {
+        let mut candidates = FxHashSet::default();
+        candidates.reserve(self.search_precisions.len() * 9);
+
+        for precision in &self.search_precisions {
+            if let Ok(center_geohash) = center.to_geohash(*precision) {
+                candidates.insert(center_geohash.clone());
+
+                for direction in &[
+                    geohash::Direction::N,
+                    geohash::Direction::S,
+                    geohash::Direction::E,
+                    geohash::Direction::W,
+                    geohash::Direction::NE,
+                    geohash::Direction::NW,
+                    geohash::Direction::SE,
+                    geohash::Direction::SW,
+                ] {
+                    if let Ok(neighbor) = geohash::neighbor(&center_geohash, *direction) {
+                        candidates.insert(neighbor);
+                    }
+                }
+            }
+        }
+
+        candidates
+    }
+
+    fn collect_geohash_matches(
+        &self,
+        index: &SpatialIndex,
+        candidates: &FxHashSet<String>,
+        center: &Point,
+        radius_meters: f64,
+    ) -> Vec<(f64, Point, Bytes)> {
+        let mut matches = Vec::new();
+
+        for (stored_geohash, bucket) in &index.buckets {
+            if !Self::geohash_matches_any(stored_geohash, candidates) {
+                continue;
+            }
+
+            for entry in bucket.values() {
+                let distance = center.distance_to(&entry.point);
+                if distance <= radius_meters {
+                    matches.push((distance, entry.point, entry.data.clone()));
+                }
+            }
+        }
+
+        matches
+    }
+
+    fn dedupe_matches(
+        &self,
+        mut matches: Vec<(f64, Point, Bytes)>,
+        limit: usize,
+    ) -> Vec<(Point, Bytes)> {
+        if matches.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        matches.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+        let mut seen_points = FxHashSet::default();
+        let mut results = Vec::with_capacity(matches.len().min(limit));
+
+        for (_, point, data) in matches {
+            let point_key = (point.lat.to_bits(), point.lon.to_bits());
+            if seen_points.insert(point_key) {
+                results.push((point, data));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        results
+    }
+
+    fn sort_and_limit(&self, results: &mut Vec<(Point, Bytes)>, center: &Point, limit: usize) {
+        if results.len() <= 1 {
+            if results.len() > limit {
+                results.truncate(limit);
+            }
+            return;
+        }
+
+        results.sort_by(|a, b| {
+            let dist_a = center.distance_to(&a.0);
+            let dist_b = center.distance_to(&b.0);
+            dist_a.partial_cmp(&dist_b).unwrap_or(Ordering::Equal)
+        });
+
+        results.truncate(limit);
+    }
+
+    fn geohash_matches_any(stored_geohash: &str, candidates: &FxHashSet<String>) -> bool {
+        candidates.iter().any(|candidate| {
+            stored_geohash.starts_with(candidate.as_str()) || candidate.starts_with(stored_geohash)
+        })
     }
 
     /// Get statistics about spatial indexes
