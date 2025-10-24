@@ -263,16 +263,26 @@ impl IndexManager {
                 .len());
         }
 
-        let candidates = self.collect_geohash_candidates(center);
-        let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
+        self.traverse_nearby(center, radius_meters, |_, _| true)
+    }
 
-        if matches.is_empty() {
-            Ok(self
-                .collect_full_scan(index, center, radius_meters, usize::MAX)
-                .len())
-        } else {
-            Ok(self.dedupe_matches(matches, usize::MAX).len())
+    fn traverse_nearby<F>(&self, center: &Point, radius_meters: f64, mut visit: F) -> Result<usize>
+    where
+        F: FnMut(&Bytes, &Point) -> bool,
+    {
+        let candidates = self.collect_geohash_candidates(center);
+        let mut count = 0;
+
+        for index in self.spatial_indexes.values() {
+            let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
+            for (_distance, point, data) in matches {
+                if visit(&data, &point) {
+                    count += 1;
+                }
+            }
         }
+
+        Ok(count)
     }
 
     /// Remove a specific entry from the spatial index
