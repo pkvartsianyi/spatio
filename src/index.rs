@@ -200,42 +200,22 @@ impl IndexManager {
             None => return Ok(false),
         };
 
-        // For small datasets or large radii, just check all points
         if self.should_use_full_scan(prefix, radius_meters) {
-            for entry in index.entries() {
-                if center.distance_to(&entry.point) <= radius_meters {
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
+            return Ok(!self
+                .collect_full_scan(index, center, radius_meters, 1)
+                .is_empty());
         }
 
-        // Use geohash-based search for efficiency
         let candidates = self.collect_geohash_candidates(center);
+        let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
 
-        // Check all candidate geohashes
-        for geohash in &candidates {
-            // Check if any point starts with this geohash prefix
-            for (stored_geohash, bucket) in &index.buckets {
-                if (stored_geohash.starts_with(geohash.as_str())
-                    || geohash.starts_with(stored_geohash.as_str()))
-                    && bucket
-                        .values()
-                        .any(|entry| center.distance_to(&entry.point) <= radius_meters)
-                {
-                    return Ok(true);
-                }
-            }
+        if matches.is_empty() {
+            Ok(!self
+                .collect_full_scan(index, center, radius_meters, 1)
+                .is_empty())
+        } else {
+            Ok(true)
         }
-
-        // If geohash search didn't find anything, fall back to full scan
-        for entry in index.entries() {
-            if center.distance_to(&entry.point) <= radius_meters {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
     }
 
     /// Check if there are any points within a bounding box
@@ -277,49 +257,22 @@ impl IndexManager {
             None => return Ok(0),
         };
 
-        let mut count = 0;
-
-        // For small datasets or large radii, just check all points
         if self.should_use_full_scan(prefix, radius_meters) {
-            for entry in index.entries() {
-                if center.distance_to(&entry.point) <= radius_meters {
-                    count += 1;
-                }
-            }
-            return Ok(count);
+            return Ok(self
+                .collect_full_scan(index, center, radius_meters, usize::MAX)
+                .len());
         }
 
-        // Use geohash-based search for efficiency
         let candidates = self.collect_geohash_candidates(center);
+        let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
 
-        let mut found_points = std::collections::HashSet::new();
-        for geohash in &candidates {
-            for (stored_geohash, bucket) in &index.buckets {
-                if stored_geohash.starts_with(geohash.as_str())
-                    || geohash.starts_with(stored_geohash.as_str())
-                {
-                    for entry in bucket.values() {
-                        if center.distance_to(&entry.point) <= radius_meters {
-                            found_points
-                                .insert((entry.point.lat.to_bits(), entry.point.lon.to_bits()));
-                        }
-                    }
-                }
-            }
+        if matches.is_empty() {
+            Ok(self
+                .collect_full_scan(index, center, radius_meters, usize::MAX)
+                .len())
+        } else {
+            Ok(self.dedupe_matches(matches, usize::MAX).len())
         }
-
-        count = found_points.len();
-
-        // If geohash search didn't find anything, fall back to full scan
-        if count == 0 {
-            for entry in index.entries() {
-                if center.distance_to(&entry.point) <= radius_meters {
-                    count += 1;
-                }
-            }
-        }
-
-        Ok(count)
     }
 
     /// Remove a specific entry from the spatial index
