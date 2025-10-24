@@ -101,29 +101,8 @@ spatio = "0.1"
 
 ## Quick Start
 
-### Python
-
-```python
-from spatio import Point, Spatio
-
-# Open (or create) a persistent database backed by an append-only file
-db = Spatio.open("data/spatio.aof")
-
-prefix = "cities"
-nyc = Point(40.7128, -74.0060)
-
-# Insert a geographic point; keys under the same prefix are indexed together
-db.insert_point(prefix, nyc, b"New York City")
-
-# Run a nearby search (returns Point, value, distance tuples)
-nearby = db.find_nearby(prefix, Point(40.7306, -73.9352), 100_000.0, 5)
-for point, value, distance in nearby:
-    print(point, value.decode(), f"{distance/1000:.1f} km away")
-
-# Store and retrieve plain key-value data alongside spatial items
-db.insert(b"user:123", b"Jane Doe")
-print(db.get(b"user:123"))  # b'Jane Doe'
-```
+Python usage lives in the dedicated bindings package—see `py-spatio/README.md`
+for up-to-date installation notes and examples.
 
 ### Rust
 ```rust
@@ -218,56 +197,8 @@ int main(void) {
 > error reporting is still in progress, so `spatio_last_error_message` currently
 > returns `NULL`.
 
-## Examples
-
-Run the included examples to see Spatio in action:
-
-### Getting Started
-```bash
-cargo run --example getting_started
-```
-
-### Spatial Queries
-```bash
-cargo run --example spatial_queries
-```
-
-### Trajectory Tracking
-```bash
-cargo run --example trajectory_tracking
-```
-
-### Architecture Demo (New!)
-```bash
-cargo run --example architecture_demo
-```
-
-### Comprehensive Demo
-```bash
-cargo run --example comprehensive_demo
-```
-
-## Use Cases
-
-### Local Spatial Analytics
-- **Proximity Search**: Efficiently find nearby features or points of interest
-- **Containment Queries**: Check if points or geometries lie within defined areas
-- **Spatial Relationships**: Analyse intersections, distances, and overlaps between geometries
-
-### Edge & Embedded Systems
-- **On-Device Processing**: Run spatial queries directly on IoT, drones, or edge devices
-- **Offline Operation**: Perform location analytics without cloud or network access
-- **Energy Efficiency**: Optimised for low memory and CPU usage in constrained environments
-
-### Developer & Research Tools
-- **Python Integration**: Use Spatio natively in data analysis or geospatial notebooks
-- **Simulation Support**: Model trajectories and spatial behaviours locally
-- **Lightweight Backend**: Ideal for prototypes, research projects, or local GIS tools
-
-### Offline & Mobile Applications
-- **Local Data Storage**: Keep spatial data close to the application
-- **Fast Query Engine**: Sub-millisecond lookups for geometry and location queries
-- **Self-Contained**: No external dependencies or server required
+For runnable demos and extended use-case walkthroughs, check
+`examples/README.md`.
 
 ## API Overview
 

@@ -1,3 +1,8 @@
+//! Core database implementation for Spatio.
+//!
+//! This module defines the main `DB` type along with spatial helpers and
+//! persistence wiring that power the public `Spatio` API.
+
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
 use crate::index::IndexManager;

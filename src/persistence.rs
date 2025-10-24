@@ -1,3 +1,8 @@
+//! Append-only persistence layer for Spatio (feature `aof`).
+//!
+//! Provides simplified AOF file management, rewrite logic, and command
+//! serialization used when durability is enabled.
+
 use crate::error::{Result, SpatioError};
 use crate::types::{SetOptions, SyncMode};
 use bytes::{BufMut, Bytes, BytesMut};

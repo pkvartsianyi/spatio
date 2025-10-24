@@ -1,3 +1,8 @@
+//! Spatial index manager powering geospatial queries.
+//!
+//! This module maintains geohash-backed indexes used by the database to
+//! execute nearby, bounds, and distance-based lookups efficiently.
+
 use crate::error::{Result, SpatioError};
 use crate::spatial::Point;
 use crate::types::Config;
