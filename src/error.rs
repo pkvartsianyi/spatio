@@ -27,6 +27,8 @@ pub enum SpatioError {
     Io(std::io::Error),
     /// Generic error with message
     Other(String),
+    /// Geohash error
+    GeohashError(geohash::GeohashError),
 }
 
 impl fmt::Display for SpatioError {
@@ -45,6 +47,7 @@ impl fmt::Display for SpatioError {
             SpatioError::InvalidFormat => write!(f, "Invalid data format"),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),
+            SpatioError::GeohashError(err) => write!(f, "Geohash error: {}", err),
         }
     }
 }
@@ -61,6 +64,12 @@ impl std::error::Error for SpatioError {
 impl From<std::io::Error> for SpatioError {
     fn from(err: std::io::Error) -> Self {
         SpatioError::Io(err)
+    }
+}
+
+impl From<geohash::GeohashError> for SpatioError {
+    fn from(err: geohash::GeohashError) -> Self {
+        SpatioError::GeohashError(err)
     }
 }
 

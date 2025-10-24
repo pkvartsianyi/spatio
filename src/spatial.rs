@@ -293,7 +293,7 @@ impl Point {
             },
             precision,
         )
-        .map_err(|_| SpatioError::InvalidGeohash)
+        .map_err(SpatioError::from)
     }
 
     /// Generate an S2 cell ID for this point.
