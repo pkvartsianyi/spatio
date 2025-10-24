@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "spatio"
-description = "Blazingly fast spatial database library"
+description = "Blazingly fast spatio-temporal database library"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
   { name = "Petro Kvartsianyi", email = "pkvartsianyi@example.com" },
@@ -17,7 +17,7 @@ include-package-data = true
 "*" = ["LICENSE"]
 requires-python = ">=3.8"
 
-keywords = ["spatial", "database", "geospatial", "embedded", "temporal", "gis"]
+keywords = ["spatio-temporal", "spatial", "database", "geospatial", "embedded", "temporal", "gis"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

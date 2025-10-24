@@ -4,7 +4,7 @@ This project uses **version-driven releases** with **independent versioning** fo
 
 ## Overview
 
-- **Rust crate** (`spatio`): Core spatial database library
+- **Rust crate** (`spatio`): Core spatio-temporal database library
 - **Python package** (`spatio`): Python bindings for the Rust library
 - **Independent versions**: Each can be released separately with different version numbers
 - **Automatic releases**: GitHub Actions detects version changes and creates releases automatically

@@ -267,6 +267,7 @@ impl AOFFile {
 
             // Atomically replace the old file
             std::fs::rename(&rewrite_path, &target_path)?;
+            Self::sync_parent_dir(&target_path)?;
 
             // Reopen the file with new handles
             let new_file = OpenOptions::new()
@@ -292,6 +293,33 @@ impl AOFFile {
         self.rewrite_in_progress = false;
 
         result
+    }
+
+    fn sync_parent_dir(path: &Path) -> Result<()> {
+        let Some(parent) = path.parent() else {
+            return Ok(());
+        };
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            const FILE_SHARE_ALL: u32 = 0x0000_0007;
+            let dir = OpenOptions::new()
+                .read(true)
+                .share_mode(FILE_SHARE_ALL)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(parent)?;
+            dir.sync_all()?;
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let dir = File::open(parent)?;
+            dir.sync_all()?;
+        }
+
+        Ok(())
     }
 
     /// Serialize a command into the reusable scratch buffer.

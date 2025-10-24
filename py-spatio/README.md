@@ -1,4 +1,4 @@
-# Spatio: Python Bindings for High-Performance Spatial Database
+# Spatio: Python Bindings for High-Performance Spatio-Temporal Database
 
 [![PyPI version](https://badge.fury.io/py/spatio.svg)](https://pypi.org/project/spatio)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@ Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a high-per
 ## Features
 
 - **High Performance**: Built on Rust for maximum speed and memory efficiency
-- **Spatial Operations**: Geographic point storage with automatic spatial indexing
+- **Spatio-Temporal Operations**: Geographic point storage with automatic spatial indexing and optional time filters
 - **Trajectory Tracking**: Store and query movement data over time
 - **TTL Support**: Automatic data expiration with time-to-live
 - **Thread-Safe**: Concurrent access (atomic operations coming soon for Python)

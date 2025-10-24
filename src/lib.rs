@@ -1,6 +1,6 @@
-//! # Spatio - A simple embedded spatial database
+//! # Spatio - A simple embedded spatio-temporal database
 //!
-//! Spatio is a fast, embedded spatial database designed for applications
+//! Spatio is a fast, embedded spatio-temporal database designed for applications
 //! that need to store and query location-based data efficiently.
 //!
 //! ## Core Features

@@ -24,10 +24,10 @@
   </a>
 </p>
 
-**Spatio** is a lightweight, high-performance **embedded spatial database** written in Rust.
+**Spatio** is a lightweight, high-performance **embedded spatio-temporal database** written in Rust.
 It’s designed for **real-time location data**, with **low memory usage**, **optional persistence**, and **native Python bindings**.
 
-Unlike traditional GIS or SQL-based systems, Spatio offers a **direct API** for spatial operations —
+Unlike traditional GIS or SQL-based systems, Spatio offers a **direct API** for spatio-temporal operations —
 no SQL parser, no external dependencies, and no setup required.
 
 ---
@@ -42,13 +42,13 @@ no SQL parser, no external dependencies, and no setup required.
 
 ### Performance Scope
 - **High Throughput Reads** — Concurrent readers avoid blocking each other; writes remain single-owner under the global lock
-- **Low-Latency Spatial Queries** — Geohash + R-tree hybrid keeps point/radius lookups fast for moderate datasets
+- **Low-Latency Spatio-Temporal Queries** — Geohash + R-tree hybrid keeps point/radius lookups fast for moderate datasets while time windows stay cheap
 - **Configurable Persistence** — Append-Only File (AOF) with sync policies
 - **Graceful Startup and Shutdown** — Automatic AOF replay and sync
 
-### Spatial Intelligence
-- **Spatial Indexing** — R-Tree + geohash hybrid indexing
-- **Spatial Queries** — Nearby search, bounding box, distance, containment
+### Spatio-Temporal Intelligence
+- **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
+- **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **Trajectory Support** — Store and query movement over time
 - **GeoJSON I/O** — Native import/export of geometries
 
