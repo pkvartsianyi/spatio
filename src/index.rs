@@ -263,17 +263,23 @@ impl IndexManager {
                 .len());
         }
 
-        self.traverse_nearby(center, radius_meters, |_, _| true)
+        self.traverse_nearby(prefix, center, radius_meters, |_, _| true)
     }
 
-    fn traverse_nearby<F>(&self, center: &Point, radius_meters: f64, mut visit: F) -> Result<usize>
+    fn traverse_nearby<F>(
+        &self,
+        prefix: &str,
+        center: &Point,
+        radius_meters: f64,
+        mut visit: F,
+    ) -> Result<usize>
     where
         F: FnMut(&Bytes, &Point) -> bool,
     {
         let candidates = self.collect_geohash_candidates(center);
         let mut count = 0;
 
-        for index in self.spatial_indexes.values() {
+        if let Some(index) = self.spatial_indexes.get(prefix) {
             let matches = self.collect_geohash_matches(index, &candidates, center, radius_meters);
             for (_distance, point, data) in matches {
                 if visit(&data, &point) {
