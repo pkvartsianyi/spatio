@@ -481,15 +481,13 @@ impl DB {
         let data_bytes = value;
         let data_ref = Bytes::copy_from_slice(data_bytes);
 
-        // Generate geohash key for automatic indexing
-        let geohash = point
-            .to_geohash(8)
-            .map_err(|_| SpatioError::InvalidGeohash)?;
-        let key = SpatialKey::geohash(prefix, &geohash);
-        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
-
         // Single lock acquisition for both operations
         let mut inner = self.write()?;
+
+        // Generate geohash key using configured precision
+        let geohash = point
+            .to_geohash(inner.config.geohash_precision)
+            .map_err(|_| SpatioError::InvalidGeohash)?;
 
         // Insert into main storage
         let item = match opts {
@@ -502,10 +500,15 @@ impl DB {
         };
         let created_at = item.created_at;
 
+        let key = SpatialKey::geohash_unique(prefix, &geohash, point, created_at);
+        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
         inner.insert_item(key_bytes.clone(), item);
 
         // Add to spatial index
-        inner.index_manager.insert_point(prefix, point, &data_ref)?;
+        inner
+            .index_manager
+            .insert_point(prefix, &geohash, &key_bytes, point, &data_ref)?;
 
         inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
         Ok(())
@@ -1086,6 +1089,12 @@ impl DBInner {
             #[cfg(feature = "time-index")]
             self.remove_created_index(key, &item);
 
+            if let Ok(key_str) = std::str::from_utf8(key)
+                && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
+            {
+                let _ = self.index_manager.remove_entry(prefix, geohash, key);
+            }
+
             #[cfg(feature = "time-index")]
             if let Some(history) = self.history.as_mut() {
                 history.record_delete(key, SystemTime::now(), history_value);
@@ -1208,10 +1217,20 @@ impl DBInner {
 
                     // Rebuild spatial index if this is a spatial key
                     if let Ok(key_str) = std::str::from_utf8(&key)
-                        && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
-                        && let Ok(point) = self.decode_geohash_to_point(geohash)
+                        && let Some((prefix, geohash, point_hint)) =
+                            self.parse_spatial_key_extended(key_str)
                     {
-                        let _ = self.index_manager.insert_point(prefix, &point, &value);
+                        let point = match point_hint {
+                            Some(point) => point,
+                            None => match self.decode_geohash_to_point(geohash) {
+                                Ok(point) => point,
+                                Err(_) => continue,
+                            },
+                        };
+
+                        let _ = self
+                            .index_manager
+                            .insert_point(prefix, geohash, &key, &point, &value);
                     }
                 }
                 AOFCommand::Delete { key } => {
@@ -1231,9 +1250,8 @@ impl DBInner {
                     // Remove from spatial index if this was a spatial key
                     if let Ok(key_str) = std::str::from_utf8(&key)
                         && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
-                        && let Ok(point) = self.decode_geohash_to_point(geohash)
                     {
-                        let _ = self.index_manager.remove_point(prefix, &point);
+                        let _ = self.index_manager.remove_entry(prefix, geohash, &key);
                     }
                 }
             }
@@ -1245,12 +1263,32 @@ impl DBInner {
 
     /// Parse a spatial key to extract prefix and geohash
     fn parse_spatial_key<'a>(&self, key: &'a str) -> Option<(&'a str, &'a str)> {
-        // Spatial keys have format: "prefix:gh:geohash" for geographic points
+        self.parse_spatial_key_extended(key)
+            .map(|(prefix, geohash, _)| (prefix, geohash))
+    }
+
+    fn parse_spatial_key_extended<'a>(
+        &self,
+        key: &'a str,
+    ) -> Option<(&'a str, &'a str, Option<Point>)> {
+        // Spatial keys have format: "prefix:gh:geohash[:lat_hex:lon_hex:timestamp_hex]"
         let parts: Vec<&str> = key.split(':').collect();
         if parts.len() >= 3 && parts[1] == "gh" {
             let prefix = parts[0];
             let geohash = parts[2];
-            Some((prefix, geohash))
+
+            let point = if parts.len() >= 5 {
+                let lat_bits = u64::from_str_radix(parts[3], 16).ok()?;
+                let lon_bits = u64::from_str_radix(parts[4], 16).ok()?;
+                Some(Point::new(
+                    f64::from_bits(lat_bits),
+                    f64::from_bits(lon_bits),
+                ))
+            } else {
+                None
+            };
+
+            Some((prefix, geohash, point))
         } else {
             None
         }

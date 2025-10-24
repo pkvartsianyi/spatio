@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "geojson")]
 use serde_json::{Map, Value};
 use std::fmt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// A geographic point representing a location on Earth's surface.
 ///
@@ -524,6 +525,32 @@ impl SpatialKey {
         format!("{}:gh:{}", prefix, geohash)
     }
 
+    /// Generate a geohash-based key with a uniqueness suffix derived from point metadata.
+    ///
+    /// The generated key has the format:
+    /// `{prefix}:gh:{geohash}:{lat_bits_hex}:{lon_bits_hex}:{timestamp_hex}`
+    ///
+    /// This preserves the original geohash prefix while ensuring that multiple points
+    /// sharing the same geohash bucket can coexist without overwriting one another.
+    pub fn geohash_unique(
+        prefix: &str,
+        geohash: &str,
+        point: &Point,
+        created_at: SystemTime,
+    ) -> String {
+        let lat_bits = point.lat.to_bits();
+        let lon_bits = point.lon.to_bits();
+        let timestamp = created_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_nanos();
+
+        format!(
+            "{}:gh:{}:{:016x}:{:016x}:{:016x}",
+            prefix, geohash, lat_bits, lon_bits, timestamp
+        )
+    }
+
     /// Generate an S2 cell-based key for database storage.
     ///
     /// # Arguments
@@ -572,6 +599,16 @@ mod tests {
         let point = Point::new(40.7128, -74.0060);
         let geohash = point.to_geohash(8).unwrap();
         assert_eq!(geohash.len(), 8);
+    }
+
+    #[test]
+    fn test_geohash_unique_format() {
+        let point = Point::new(40.7128, -74.0060);
+        let created_at = UNIX_EPOCH + Duration::from_secs(1);
+        let key = SpatialKey::geohash_unique("cities", "dr5regw3", &point, created_at);
+
+        assert!(key.starts_with("cities:gh:dr5regw3:"));
+        assert!(key.split(':').count() >= 6);
     }
 
     #[test]
