@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  London ↔ Paris: {:.0} km", distance_km);
 
     // Find cities near London (within 1000km)
-    let nearby_london = db.find_nearby("cities", &london, 1_000_000.0, 5)?;
+    let nearby_london = db.query_within_radius("cities", &london, 1_000_000.0, 5)?;
     println!("  Cities within 1000km of London:");
     for (point, data) in &nearby_london {
         let city_name = String::from_utf8_lossy(data);
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find restaurants near a specific location (Covent Garden)
     let covent_garden = Point::new(51.5118, -0.1226);
-    let nearby_food = db.find_nearby("london_food", &covent_garden, 2000.0, 10)?;
+    let nearby_food = db.query_within_radius("london_food", &covent_garden, 2000.0, 10)?;
     println!("  Restaurants within 2km of Covent Garden:");
     for (point, data) in &nearby_food {
         let restaurant_name = String::from_utf8_lossy(data);
@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Find sensors near a specific location
     let monitoring_center = Point::new(51.5100, -0.1200);
-    let nearby_sensors = db.find_nearby("sensors", &monitoring_center, 5000.0, 10)?;
+    let nearby_sensors = db.query_within_radius("sensors", &monitoring_center, 5000.0, 10)?;
     println!("  Sensors within 5km of monitoring center:");
     for (point, data) in &nearby_sensors {
         let sensor_info = String::from_utf8_lossy(data);

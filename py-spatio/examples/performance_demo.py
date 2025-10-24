@@ -196,7 +196,7 @@ def benchmark_spatial_operations():
     # Spatial query benchmark
     def spatial_query():
         center_point = random.choice(points)
-        return db.find_nearby("locations", center_point, 1000.0, 10)
+        return db.query_within_radius("locations", center_point, 1000.0, 10)
 
     query_stats = benchmark_operation(spatial_query, iterations=1000)
     print(
@@ -209,7 +209,7 @@ def benchmark_spatial_operations():
     for radius in radii:
 
         def query_with_radius(r=radius):
-            return db.find_nearby("locations", center, r, 50)
+            return db.query_within_radius("locations", center, r, 50)
 
         radius_stats = benchmark_operation(query_with_radius, iterations=100)
         result_count = len(radius_stats["result"])
@@ -302,7 +302,9 @@ def benchmark_configuration_impact():
         center = spatio.Point(40.7128, -74.0060)
 
         def spatial_query_precision(test_db=db, query_center=center):
-            return test_db.find_nearby("test_locations", query_center, 1000.0, 20)
+            return test_db.query_within_radius(
+                "test_locations", query_center, 1000.0, 20
+            )
 
         precision_stats = benchmark_operation(spatial_query_precision, iterations=100)
         accuracy = (
@@ -417,7 +419,7 @@ def performance_comparison():
         # Query every 10 inserts
         if i % 10 == 0:
             center = spatio.Point(40.7128, -74.0060)
-            db3.find_nearby("mixed", center, 5000.0, 10)
+            db3.query_within_radius("mixed", center, 5000.0, 10)
 
     mixed_ops_time = time.perf_counter() - start_time
     print(

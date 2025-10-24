@@ -18,7 +18,7 @@ Example usage:
     >>> db.insert_point("cities", nyc, b"New York City")
     >>>
     >>> # Find nearby points within 100km
-    >>> nearby = db.find_nearby("cities", nyc, 100_000.0, 10)
+    >>> nearby = db.query_within_radius("cities", nyc, 100_000.0, 10)
     >>> print(f"Found {len(nearby)} cities nearby")
 """
 

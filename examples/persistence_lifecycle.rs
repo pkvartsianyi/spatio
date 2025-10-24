@@ -158,7 +158,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
 
         // Find cities near New York
         let nyc = Point::new(40.7128, -74.0060);
-        let nearby = db.find_nearby("cities", &nyc, 500_000.0, 10)?; // 500km radius
+        let nearby = db.query_within_radius("cities", &nyc, 500_000.0, 10)?; // 500km radius
 
         println!(
             "  ✓ Found {} cities within 500km of New York:",
@@ -170,7 +170,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Count cities in a bounding box
-        let count = db.count_within_distance("cities", &nyc, 500_000.0)?;
+        let count = db.count_within_radius("cities", &nyc, 500_000.0)?;
         println!("  ✓ Count verification: {} cities", count);
     }
 

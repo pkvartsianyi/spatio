@@ -30,7 +30,7 @@
 //! db.insert_point("cities", &nyc, b"New York City", None)?;
 //!
 //! // Find nearby points within 100km
-//! let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
+//! let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
 //! println!("Found {} cities nearby", nearby.len());
 //!
 //! // Atomic batch operations
@@ -113,7 +113,7 @@
 //! assert!(has_nearby);
 //!
 //! // Count points within distance
-//! let count = db.count_within_distance("cities", &nyc, 50_000.0)?;
+//! let count = db.count_within_radius("cities", &nyc, 50_000.0)?;
 //! println!("Found {} cities within 50km", count);
 //!
 //! // Check if any points exist within a bounding box

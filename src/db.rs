@@ -67,7 +67,7 @@ use std::time::SystemTime;
 /// db.insert_point("cities", &london, b"London", None)?;
 ///
 /// // Find nearby cities within 100km
-/// let nearby = db.find_nearby("cities", &nyc, 100_000.0, 10)?;
+/// let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
 /// println!("Found {} cities within 100km", nearby.len());
 /// # Ok(())
 /// # }
@@ -536,11 +536,11 @@ impl DB {
     /// let center = Point::new(40.7128, -74.0060);
     ///
     /// // Find up to 10 points within 1km
-    /// let nearby = db.find_nearby("cities", &center, 1000.0, 10)?;
+    /// let nearby = db.query_within_radius("cities", &center, 1000.0, 10)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn find_nearby(
+    pub fn query_within_radius(
         &self,
         prefix: &str,
         center: &Point,
@@ -550,7 +550,7 @@ impl DB {
         let inner = self.read()?;
         inner
             .index_manager
-            .find_nearby(prefix, center, radius_meters, limit)
+            .query_within_radius(prefix, center, radius_meters, limit)
     }
 
     /// Insert a trajectory (sequence of points over time).
@@ -742,7 +742,7 @@ impl DB {
     ///
     /// This method counts how many points exist within the specified
     /// distance from a center point without returning the actual points.
-    /// More efficient than `find_nearby` when you only need the count.
+    /// More efficient than `query_within_radius` when you only need the count.
     ///
     /// # Arguments
     ///
@@ -760,12 +760,12 @@ impl DB {
     /// let center = Point::new(40.7128, -74.0060);
     ///
     /// // Count how many sensors are within 1km
-    /// let count = db.count_within_distance("sensors", &center, 1000.0)?;
+    /// let count = db.count_within_radius("sensors", &center, 1000.0)?;
     /// println!("Found {} sensors within 1km", count);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn count_within_distance(
+    pub fn count_within_radius(
         &self,
         prefix: &str,
         center: &Point,
@@ -774,7 +774,7 @@ impl DB {
         let inner = self.read()?;
         inner
             .index_manager
-            .count_within_distance(prefix, center, radius_meters)
+            .count_within_radius(prefix, center, radius_meters)
     }
 
     /// Find all points within a bounding box.

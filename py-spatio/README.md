@@ -58,7 +58,7 @@ db.insert_point("cities", nyc, b"New York City")
 db.insert_point("cities", london, b"London")
 
 # Find nearby points within 6000km
-nearby = db.find_nearby("cities", nyc, 6000000.0, 10)
+nearby = db.query_within_radius("cities", nyc, 6000000.0, 10)
 for point, city_name, distance in nearby:
     print(f"{city_name.decode()}: {distance/1000:.0f}km away")
 ```
@@ -82,8 +82,8 @@ old_value = db.delete(key)
 
 # Spatial operations
 db.insert_point(prefix, point, value, options=None)
-nearby = db.find_nearby(prefix, center, radius_meters, limit)
-count = db.count_within_distance(prefix, center, radius_meters)
+nearby = db.query_within_radius(prefix, center, radius_meters, limit)
+count = db.count_within_radius(prefix, center, radius_meters)
 
 # Trajectory operations
 db.insert_trajectory(object_id, trajectory, options=None)
@@ -154,7 +154,7 @@ for point, name in cities:
 
 # Find cities within 6000km of New York
 nyc = spatio.Point(40.7128, -74.0060)
-nearby = db.find_nearby("cities", nyc, 6000000.0, 10)
+nearby = db.query_within_radius("cities", nyc, 6000000.0, 10)
 
 print(f"Cities within 6000km of NYC:")
 for point, name, distance in nearby:
@@ -222,7 +222,7 @@ print("Operations completed")
 
 # Verify all operations were applied
 print(db.get(b"user:1"))  # b'Alice'
-nearby = db.find_nearby("locations", spatio.Point(40.7128, -74.0060), 1000, 10)
+nearby = db.query_within_radius("locations", spatio.Point(40.7128, -74.0060), 1000, 10)
 print(len(nearby))  # 1
 ```
 
@@ -391,9 +391,9 @@ just check
 | Method | Description |
 |--------|-------------|
 | `insert_point(prefix, point, value, options=None)` | Store geographic point |
-| `find_nearby(prefix, center, radius_meters, limit)` | Find points within radius |
+| `query_within_radius(prefix, center, radius_meters, limit)` | Find points within radius |
 | `contains_point(prefix, center, radius_meters)` | Check if any points exist in radius |
-| `count_within_distance(prefix, center, radius_meters)` | Count points within radius |
+| `count_within_radius(prefix, center, radius_meters)` | Count points within radius |
 | `intersects_bounds(prefix, min_lat, min_lon, max_lat, max_lon)` | Check if any points in bounding box |
 | `find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)` | Find points in bounding box |
 

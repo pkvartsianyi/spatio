@@ -241,7 +241,9 @@ fn test_aof_persistence_across_restarts() {
 
         // Check point by searching nearby
         let search_point = Point::new(40.7128, -74.0060);
-        let nearby = db.find_nearby("cities", &search_point, 1000.0, 10).unwrap();
+        let nearby = db
+            .query_within_radius("cities", &search_point, 1000.0, 10)
+            .unwrap();
         assert!(!nearby.is_empty());
         assert_eq!(nearby[0].1.as_ref(), b"New York City");
 
@@ -294,11 +296,15 @@ fn test_aof_persistence_across_restarts() {
 
         // Original data should still exist
         let nyc_search = Point::new(40.7128, -74.0060);
-        let nyc_nearby = db.find_nearby("cities", &nyc_search, 1000.0, 10).unwrap();
+        let nyc_nearby = db
+            .query_within_radius("cities", &nyc_search, 1000.0, 10)
+            .unwrap();
         assert!(!nyc_nearby.is_empty());
 
         let la_search = Point::new(34.0522, -118.2437);
-        let la_nearby = db.find_nearby("cities", &la_search, 1000.0, 10).unwrap();
+        let la_nearby = db
+            .query_within_radius("cities", &la_search, 1000.0, 10)
+            .unwrap();
         assert!(!la_nearby.is_empty());
     }
 }
