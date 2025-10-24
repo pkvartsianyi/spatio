@@ -24,45 +24,44 @@
   </a>
 </p>
 
-**Spatio** is a lightweight, high-performance **embedded spatio-temporal database** written in Rust.
+**Spatio** is a compact and efficient **embedded spatio-temporal database** written in Rust.
 It’s designed for **real-time location data**, with **low memory usage**, **optional persistence**, and **native Python bindings**.
 
-Unlike traditional GIS or SQL-based systems, Spatio offers a **direct API** for spatio-temporal operations —
-no SQL parser, no external dependencies, and no setup required.
+No SQL parser, no external dependencies, and requires no setup.
 
 ---
 
 ## Features
 
 ### Embedded and Lightweight
-- **Fully Self-Contained** — No servers, daemons, or dependencies
-- **Simple API** — Just open, insert, and query
-- **Low Memory Usage** — Ideal for IoT, edge, and embedded devices
-- **Single-Writer Thread Safety** — Shared `Arc<RwLock>` (no lock upgrades) allows many readers concurrently, one writer at a time
+- **Self-contained** — Runs without external services or dependencies
+- **Minimal API surface** — Open, insert, and query
+- **Low memory footprint** — Suitable for IoT, edge, and embedded environments
+- **Single-Writer Thread Safety** — Uses a shared Arc<RwLock> (without lock upgrades) to allow concurrent readers and a single writer
 
 ### Performance Scope
-- **High Throughput Reads** — Concurrent readers avoid blocking each other; writes remain single-owner under the global lock
-- **Low-Latency Spatio-Temporal Queries** — Geohash + R-tree hybrid keeps point/radius lookups fast for moderate datasets while time windows stay cheap
-- **Configurable Persistence** — Append-Only File (AOF) with sync policies
-- **Graceful Startup and Shutdown** — Automatic AOF replay and sync
+- **Concurrent read access** — Multiple readers operate without blocking; writes are serialized under a global lock
+- **Spatio-temporal queries** — Use a geohash + R-tree hybrid to balance lookup precision and performance for moderate datasets
+- **Configurable persistence** — Append-Only File (AOF) with sync policies
+- **Startup and Shutdown** — AOF logs are replayed automatically on startup
 
-### Spatio-Temporal Intelligence
+### Spatio-Temporal Indexing and Querying
 - **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **Trajectory Support** — Store and query movement over time
-- **GeoJSON I/O** — Native import/export of geometries
+- **GeoJSON I/O** — Supports import and export of geometries in GeoJSON format
 
 ### Data Management
 - **Namespaces** — Isolate data logically within the same instance
-- **TTL Support** — Auto-expiring data for temporal use cases
+- **TTL Support** — Automatically removes expired data
 - **Temporal Queries** — Filter keys by recent activity with optional history tracking
-- **Atomic Batches** — Transaction-like grouped operations
+- **Atomic Batches** — Supports grouped write operations with atomic semantics.
 - **Custom Configs** — JSON/TOML serializable configuration
 
 ### Language Support
-- **Rust** — Native API for maximum performance
-- **Python** — Native bindings via PyO3 (`pip install spatio`)
-- **C / C++** — Stable ABI exposed as `extern "C"` functions (see [C ABI](#c-abi))
+- **Rust** — Native
+- **Python** — Provides bindings implemented via PyO3 (`pip install spatio`)
+- **C / C++** — Provides an extern "C" ABI for interoperability (see [C ABI](#c-abi))
 
 
 ### Compile-Time Feature Flags
@@ -192,10 +191,9 @@ int main(void) {
 }
 ```
 
-> **Safety notes:** callers must pass valid, null-terminated strings and free
-> any buffers produced by `spatio_get` via `spatio_free_buffer`. Structured
-> error reporting is still in progress, so `spatio_last_error_message` currently
-> returns `NULL`.
+> **Safety note:**
+> Callers must pass valid, null-terminated strings and free any buffers produced by `spatio_get` using `spatio_free_buffer`.
+> Structured error reporting is under development; `spatio_last_error_message` currently returns `NULL`.
 
 For runnable demos and extended use-case walkthroughs, check
 `examples/README.md`.
@@ -275,8 +273,8 @@ See the [docs site](https://pkvartsianyi.github.io/spatio/) for deeper architect
 
 ## Project Status
 
-- Current version: **0.1.1**
-- Alpha quality: APIs may still change while we lock in the storage layout.
+- Current version: **0.1.X**
+- Active development: APIs may still change.
 - Follow [releases](https://github.com/pkvartsianyi/spatio/releases) for migration notes and roadmap updates.
 
 ## Contributing

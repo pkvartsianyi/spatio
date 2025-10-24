@@ -1,8 +1,5 @@
 //! # Spatio - A simple embedded spatio-temporal database
 //!
-//! Spatio is a fast, embedded spatio-temporal database designed for applications
-//! that need to store and query location-based data efficiently.
-//!
 //! ## Core Features
 //!
 //! - **Fast key-value storage** with optional persistence
@@ -25,11 +22,11 @@
 //! // Store a simple key-value pair
 //! db.insert("user:123", b"John Doe", None)?;
 //!
-//! // Store a geographic point (automatically indexed)
+//! // Store a geographic point, which is automatically added to the spatial index.
 //! let nyc = Point::new(40.7128, -74.0060);
 //! db.insert_point("cities", &nyc, b"New York City", None)?;
 //!
-//! // Find nearby points within 100km
+//! // Query nearby points within a 100 km radius.
 //! let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
 //! println!("Found {} cities nearby", nearby.len());
 //!
@@ -55,7 +52,7 @@
 //! use spatio::{Spatio, Config};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Default configuration (precision 8, ~39m accuracy)
+//! // Default configuration (precision 8, approximately 39 m accuracy)
 //! let db = Spatio::memory()?;
 //!
 //! // Custom precision (10 = ~61cm accuracy)

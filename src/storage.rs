@@ -33,10 +33,7 @@ pub trait StorageBackend: Send + Sync {
     /// Get all keys with a given prefix
     fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Bytes>>;
 
-    /// Get all key-value pairs with a given prefix
-    ///
-    /// This operation should be implemented efficiently using range scans
-    /// rather than linear iteration for optimal performance.
+    /// Returns all key-value pairs with keys matching the given prefix.
     fn scan_prefix(&self, prefix: &[u8]) -> Result<BTreeMap<Bytes, DbItem>>;
 
     /// Get the total number of keys
