@@ -1,6 +1,7 @@
 use crate::error::{Result, SpatioError};
 use crate::types::{SetOptions, SyncMode};
 use bytes::{BufMut, Bytes, BytesMut};
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -66,6 +67,27 @@ pub enum AOFCommand {
 impl AOFFile {
     const FLAG_HAS_EXPIRATION: u8 = 0b0000_0001;
     const FLAG_HAS_CREATED_AT: u8 = 0b0000_0010;
+
+    fn rewrite_path_for(path: &Path) -> PathBuf {
+        let mut rewrite = path.to_path_buf();
+        if let Some(name) = rewrite.file_name() {
+            let mut base = name.to_string_lossy().into_owned();
+            while base.ends_with(".rewrite") {
+                base.truncate(base.len() - ".rewrite".len());
+            }
+            base.push_str(".rewrite");
+            rewrite.set_file_name(base);
+        } else {
+            rewrite.set_extension("rewrite");
+        }
+        rewrite
+    }
+
+    fn open_rewrite<P: AsRef<Path>>(path: P, config: AOFConfig) -> Result<Self> {
+        let mut aof = Self::open_with_config(path, config)?;
+        aof.rewrite_in_progress = true;
+        Ok(aof)
+    }
 
     /// Open AOF file with default configuration
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -138,10 +160,6 @@ impl AOFFile {
 
     /// Write a command to the AOF file
     fn write_command(&mut self, command: &AOFCommand) -> Result<()> {
-        if self.rewrite_in_progress {
-            return Err(SpatioError::RewriteInProgress);
-        }
-
         #[cfg(feature = "bench-prof")]
         let serialize_start = Instant::now();
         let written_len = self.serialize_command(command)?;
@@ -168,7 +186,7 @@ impl AOFFile {
         }
 
         // Check if we should trigger a rewrite
-        if self.should_rewrite() {
+        if self.should_rewrite() && !self.rewrite_in_progress {
             self.maybe_trigger_rewrite()?;
         }
 
@@ -205,31 +223,52 @@ impl AOFFile {
             self.writer.flush()?;
             self.file.sync_all()?;
 
-            // Create temporary rewrite file
-            let rewrite_path = self.path.with_extension("aof.rewrite");
-            let mut rewrite_file = Self::open_with_config(&rewrite_path, self.config.clone())?;
-
-            // Current rewrite strategy copies the entire AOF.
-            // TODO: replace with compaction that keeps only the latest value per key.
+            let target_path = self.path.clone();
             self.file.seek(SeekFrom::Start(0))?;
-            let mut buffer = Vec::new();
-            self.file.read_to_end(&mut buffer)?;
+            let mut reader = BufReader::new(&mut self.file);
+            let mut latest: BTreeMap<Bytes, (Bytes, SystemTime, Option<SystemTime>)> =
+                BTreeMap::new();
 
-            rewrite_file.writer.write_all(&buffer)?;
-            rewrite_file.flush()?;
+            loop {
+                match Self::deserialize_command_static(&mut reader) {
+                    Ok(AOFCommand::Set {
+                        key,
+                        value,
+                        created_at,
+                        expires_at,
+                    }) => {
+                        latest.insert(key, (value, created_at, expires_at));
+                    }
+                    Ok(AOFCommand::Delete { key }) => {
+                        latest.remove(&key);
+                    }
+                    Err(SpatioError::UnexpectedEof) => break,
+                    Err(e) => return Err(e),
+                }
+            }
 
-            // CRITICAL: Sync rewritten file to disk before rename to guarantee durability
+            // Create temporary rewrite file
+            let rewrite_path = Self::rewrite_path_for(&target_path);
+            let mut rewrite_file = Self::open_rewrite(&rewrite_path, self.config.clone())?;
+
+            rewrite_file.rewrite_in_progress = true;
+            for (key, (value, created_at, expires_at)) in latest {
+                let opts = expires_at.map(SetOptions::with_expiration);
+                rewrite_file.write_set(key.as_ref(), value.as_ref(), opts.as_ref(), created_at)?;
+            }
+
             rewrite_file.sync()?;
+            drop(rewrite_file);
 
             // Atomically replace the old file
-            std::fs::rename(&rewrite_path, &self.path)?;
+            std::fs::rename(&rewrite_path, &target_path)?;
 
             // Reopen the file with new handles
             let new_file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .read(true)
-                .open(&self.path)?;
+                .open(&target_path)?;
 
             let new_size = new_file.metadata()?.len();
             let writer_file = new_file.try_clone()?;
@@ -240,6 +279,7 @@ impl AOFFile {
             self.writer = new_writer;
             self.size = new_size;
             self.last_rewrite_size = new_size;
+            self.path = target_path;
 
             Ok(())
         })();
