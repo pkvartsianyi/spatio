@@ -1,3 +1,8 @@
+//! Core database implementation for Spatio.
+//!
+//! This module defines the main `DB` type along with spatio-temporal helpers and
+//! persistence wiring that power the public `Spatio` API.
+
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
 use crate::index::IndexManager;
@@ -16,10 +21,10 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 use std::time::SystemTime;
 
-/// Main Spatio database structure providing spatial and temporal data storage.
+/// Main Spatio database structure providing spatio-temporal data storage.
 ///
 /// The `DB` struct is the core of Spatio, offering:
-/// - Key-value storage with spatial indexing
+/// - Key-value storage with spatio-temporal indexing
 /// - Geographic point operations with automatic spatial indexing
 /// - Trajectory tracking for moving objects
 /// - Time-to-live (TTL) support for temporal data

@@ -1,12 +1,12 @@
 use spatio::{BoundingBox, Point, Spatio};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Spatio - Spatial Queries Example");
+    println!("Spatio - Spatio-Temporal Queries Example");
     println!("=================================");
 
     // Create an in-memory database
     let db = Spatio::memory()?;
-    println!("Created spatial database");
+    println!("Created spatio-temporal database");
 
     // Add world cities with their coordinates
     let cities = vec![

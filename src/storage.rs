@@ -4,6 +4,8 @@
 //! allowing different storage implementations while maintaining a consistent API.
 
 use crate::error::Result;
+#[cfg(feature = "aof")]
+use crate::persistence::AOFCommand;
 use crate::types::DbItem;
 #[cfg(feature = "aof")]
 use crate::types::SetOptions;
@@ -327,8 +329,30 @@ impl AOFBackend {
 
     /// Load existing data from AOF file
     pub fn load_from_aof(&mut self) -> Result<()> {
-        // TODO: Implement loading from AOF file
-        // Implementation would replay AOF file to restore state
+        let commands = self.aof_writer.replay()?;
+        self.memory = MemoryBackend::new();
+
+        for command in commands {
+            match command {
+                AOFCommand::Set {
+                    key,
+                    value,
+                    created_at,
+                    expires_at,
+                } => {
+                    let item = DbItem {
+                        value,
+                        created_at,
+                        expires_at,
+                    };
+                    self.memory.put(key.as_ref(), &item)?;
+                }
+                AOFCommand::Delete { key } => {
+                    let _ = self.memory.delete(key.as_ref())?;
+                }
+            }
+        }
+
         Ok(())
     }
 }

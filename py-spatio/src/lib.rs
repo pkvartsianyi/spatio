@@ -1,16 +1,16 @@
 //! Python bindings for Spatio
 //!
-//! This module provides Python bindings for the Spatio spatial database using PyO3.
-//! It exposes the core functionality including database operations, spatial queries,
+//! This module provides Python bindings for the Spatio spatio-temporal database using PyO3.
+//! It exposes the core functionality including database operations, spatio-temporal queries,
 //! and trajectory tracking.
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::{
+    DB as RustDB, Result as RustResult,
     spatial::Point as RustPoint,
     types::{Config as RustConfig, SetOptions as RustSetOptions},
-    Result as RustResult, DB as RustDB,
 };
 use std::time::{Duration, UNIX_EPOCH};
 

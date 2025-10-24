@@ -1,5 +1,5 @@
 """
-Spatio: A blazingly fast spatial database library
+Spatio: A blazingly fast spatio-temporal database library
 
 Spatio is a high-performance, embedded spatio-temporal database designed for
 applications that need to store and query location-based data efficiently.

@@ -1,3 +1,8 @@
+//! Atomic batch operations for Spatio database transactions.
+//!
+//! This module exposes the `AtomicBatch` type used internally by `DB::atomic`
+//! to guarantee that grouped write operations either all succeed or none do.
+
 use crate::DB;
 use crate::error::Result;
 use crate::types::SetOptions;

@@ -1,3 +1,5 @@
+//! Error types and result aliases for Spatio operations.
+
 use std::fmt;
 
 /// Simplified error types for Spatio
