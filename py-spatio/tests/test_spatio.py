@@ -3,6 +3,7 @@ Comprehensive tests for Spatio Python bindings
 """
 
 import os
+import gc
 import platform
 import tempfile
 import time
@@ -12,30 +13,52 @@ import pytest
 import spatio
 
 
+@pytest.fixture
+def gc_collect():
+    yield
+    if platform.system() == "Windows":
+        gc.collect()
+
+
 class TestPoint:
     """Test Point class functionality"""
 
-    def test_point_creation(self):
+    def test_valid_point_creation(self):
         """Test creating valid points"""
         point = spatio.Point(40.7128, -74.0060)
         assert point.lat == 40.7128
         assert point.lon == -74.0060
 
-    def test_point_validation(self):
+    @pytest.mark.parametrize(
+        "latitude, longitude",
+        [
+            pytest.param(
+                91.0, 0.0,
+                id="north latitude",
+            ),
+            pytest.param(
+                -91.0, 0.0,
+                id="south latitude",
+            ),
+            pytest.param(
+                0.0, 181.0,
+                id="east longitude",
+            ),
+            pytest.param(
+                -0.0, -181.0,
+                id="west longitude",
+            ),
+        ]
+    )
+    def test_point_creation_invalid_bounds(
+            self,
+            latitude: float,
+            longitude: float,
+    ):
         """Test point validation"""
         # Invalid latitude
         with pytest.raises(ValueError):
-            spatio.Point(91.0, 0.0)
-
-        with pytest.raises(ValueError):
-            spatio.Point(-91.0, 0.0)
-
-        # Invalid longitude
-        with pytest.raises(ValueError):
-            spatio.Point(0.0, 181.0)
-
-        with pytest.raises(ValueError):
-            spatio.Point(0.0, -181.0)
+            spatio.Point(latitude, longitude)
 
     def test_point_distance(self):
         """Test distance calculation between points"""
@@ -65,13 +88,23 @@ class TestSetOptions:
         opts = spatio.SetOptions.with_ttl(300.0)  # 5 minutes
         assert opts is not None
 
-    def test_invalid_ttl(self):
+    @pytest.mark.parametrize(
+        "ttl",
+        [
+            pytest.param(
+                0.0,
+                id="zero ttl",
+            ),
+            pytest.param(
+                -1.0,
+                id="negative ttl",
+            ),
+        ]
+    )
+    def test_ttl_options_invalid_bounds(self, ttl: float):
         """Test invalid TTL values"""
         with pytest.raises(ValueError):
-            spatio.SetOptions.with_ttl(-1.0)
-
-        with pytest.raises(ValueError):
-            spatio.SetOptions.with_ttl(0.0)
+            spatio.SetOptions.with_ttl(ttl)
 
     def test_expiration_options(self):
         """Test expiration timestamp SetOptions"""
@@ -93,13 +126,23 @@ class TestConfig:
         config = spatio.Config.with_geohash_precision(10)
         assert config.geohash_precision == 10
 
-    def test_invalid_geohash_precision(self):
+    @pytest.mark.parametrize(
+        "geohash_precision",
+        [
+            pytest.param(
+                0,
+                id="below geohash precision",
+            ),
+            pytest.param(
+                13,
+                id="above geohash precision",
+            ),
+        ]
+    )
+    def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
         """Test invalid geohash precision values"""
         with pytest.raises(ValueError):
-            spatio.Config.with_geohash_precision(0)
-
-        with pytest.raises(ValueError):
-            spatio.Config.with_geohash_precision(13)
+            spatio.Config.with_geohash_precision(geohash_precision)
 
     def test_set_geohash_precision(self):
         """Test setting geohash precision"""
@@ -123,47 +166,108 @@ class TestSpatio:
         """Test creating in-memory database with config"""
         config = spatio.Config.with_geohash_precision(10)
         db = spatio.Spatio.memory_with_config(config)
-        assert db is not None
+        assert isinstance(db, spatio.Spatio)
 
-    def test_persistent_database(self):
-        """Test creating persistent database"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            # Normalize path for Windows compatibility
-            db_path = os.path.normpath(db_path)
-            db = spatio.Spatio.open(db_path)
-            assert db is not None
-            db.close()
-            # On Windows, ensure file is properly released
-            if platform.system() == "Windows":
-                import gc
+    def test_persistent_database_from_non_exist_file(self, gc_collect, tmp_path):
+        """Test creating persistent database using non-existing file"""
+        db_path = os.path.join(tmp_path, "test.db")
+        # Normalize path for Windows compatibility
+        db_path = os.path.normpath(db_path)
+        db = spatio.Spatio.open(db_path)
+        assert isinstance(db, spatio.Spatio)
+        db.close()
 
-                gc.collect()
+    def test_persistent_database_from_invalid_file(self, gc_collect, tmp_path):
+        """Test creating persistent database using invalid file"""
+        # Given
+        db_path = os.path.join(tmp_path, "test.db")
+        db_file = tmp_path / "test.db"
+        db_file.write_text("keyvalue")
+        # Normalize path for Windows compatibility
+        db_path = os.path.normpath(db_path)
 
-    def test_basic_key_value_operations(self):
-        """Test basic key-value operations"""
+        # When/Then
+        with pytest.raises(RuntimeError):
+            spatio.Spatio.open(db_path)
+
+    def test_get_not_exist_key(self):
+        """Test get method"""
+        # Given
         db = spatio.Spatio.memory()
 
-        # Insert
+        # When
+        result = db.delete(b"nonexistent")
+        # Then
+        assert result is None
+
+    def test_insert(self):
+        """Test insert method"""
+        # Given
+        db = spatio.Spatio.memory()
         db.insert(b"key1", b"value1")
 
-        # Get
+        # When
         result = db.get(b"key1")
+
+        # Then
         assert result == b"value1"
 
-        # Get non-existent key
-        result = db.get(b"nonexistent")
-        assert result is None
+    def test_insert_exist_key(self):
+        """Test insert method"""
+        # Given
+        db = spatio.Spatio.memory()
+        db.insert(b"key1", b"value1")
+        db.insert(b"key1", b"value2")
 
-        # Delete
+        # When
+        result = db.get(b"key1")
+
+        # the key must be overwritten
+        # Then
+        assert result == b"value2"
+
+    def test_delete(self):
+        """Test delete method"""
+        # Given
+        db = spatio.Spatio.memory()
+        db.insert(b"key1", b"value1")
+
+        # When
         old_value = db.delete(b"key1")
+        # Then
         assert old_value == b"value1"
 
-        # Verify deletion
+        # When verify deletion
         result = db.get(b"key1")
+        # Then
         assert result is None
 
-    def test_ttl_operations(self):
+    def test_delete_not_exist_key(self):
+        """Test delete method"""
+        # Given
+        db = spatio.Spatio.memory()
+
+        # When
+        result = db.delete(b"nonexistent")
+
+        # Then
+        assert result is None
+
+    @pytest.mark.parametrize(
+        "sleep_time",
+        [
+            pytest.param(
+                # Wait for expiration - use longer timeout on Windows due to timing differences
+                0.3,
+                id="windows os",
+            ),
+            pytest.param(
+                0.2,
+                id="another os",
+            ),
+        ]
+    )
+    def test_ttl_operations(self, sleep_time: float):
         """Test TTL functionality"""
         db = spatio.Spatio.memory()
 
@@ -175,8 +279,6 @@ class TestSpatio:
         result = db.get(b"temp_key")
         assert result == b"temp_value"
 
-        # Wait for expiration - use longer timeout on Windows due to timing differences
-        sleep_time = 0.3 if platform.system() == "Windows" else 0.2
         time.sleep(sleep_time)
 
         # Should be gone (or might still exist depending on cleanup timing)
@@ -302,18 +404,12 @@ class TestSpatio:
         # Should not raise any errors
         db.sync()
 
-    def test_close_operation(self):
+    def test_close_operation(self, gc_collect):
         """Test database close operation"""
         db = spatio.Spatio.memory()
 
         # Should not raise any errors
         db.close()
-
-        # On Windows, force garbage collection to ensure proper cleanup
-        if platform.system() == "Windows":
-            import gc
-
-            gc.collect()
 
     def test_database_repr(self):
         """Test database string representation"""
@@ -324,16 +420,10 @@ class TestSpatio:
 class TestErrorHandling:
     """Test error handling and edge cases"""
 
-    def test_operations_on_closed_database(self):
+    def test_operations_on_closed_database(self, gc_collect):
         """Test operations on a closed database still work (limitation)"""
         db = spatio.Spatio.memory()
         db.close()
-
-        # On Windows, ensure proper cleanup after close
-        if platform.system() == "Windows":
-            import gc
-
-            gc.collect()
 
         # Current implementation allows operations after close
         # This is a limitation of the current API
