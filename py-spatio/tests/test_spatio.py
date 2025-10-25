@@ -42,7 +42,7 @@ class TestPoint:
             ),
         ]
     )
-    def test_invalid_point_creation_equivalence_partition(
+    def test_point_creation_invalid_bounds(
             self,
             latitude: float,
             longitude: float,
@@ -80,13 +80,23 @@ class TestSetOptions:
         opts = spatio.SetOptions.with_ttl(300.0)  # 5 minutes
         assert opts is not None
 
-    def test_invalid_ttl(self):
+    @pytest.mark.parametrize(
+        "ttl",
+        [
+            pytest.param(
+                0.0,
+                id="zero ttl",
+            ),
+            pytest.param(
+                -1.0,
+                id="negative ttl",
+            ),
+        ]
+    )
+    def test_ttl_options_invalid_bounds(self, ttl: float):
         """Test invalid TTL values"""
         with pytest.raises(ValueError):
-            spatio.SetOptions.with_ttl(-1.0)
-
-        with pytest.raises(ValueError):
-            spatio.SetOptions.with_ttl(0.0)
+            spatio.SetOptions.with_ttl(ttl)
 
     def test_expiration_options(self):
         """Test expiration timestamp SetOptions"""
@@ -108,13 +118,23 @@ class TestConfig:
         config = spatio.Config.with_geohash_precision(10)
         assert config.geohash_precision == 10
 
-    def test_invalid_geohash_precision(self):
+    @pytest.mark.parametrize(
+        "geohash_precision",
+        [
+            pytest.param(
+                0,
+                id="below geohash precision",
+            ),
+            pytest.param(
+                13,
+                id="above geohash precision",
+            ),
+        ]
+    )
+    def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
         """Test invalid geohash precision values"""
         with pytest.raises(ValueError):
-            spatio.Config.with_geohash_precision(0)
-
-        with pytest.raises(ValueError):
-            spatio.Config.with_geohash_precision(13)
+            spatio.Config.with_geohash_precision(geohash_precision)
 
     def test_set_geohash_precision(self):
         """Test setting geohash precision"""
