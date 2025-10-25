@@ -168,15 +168,27 @@ class TestSpatio:
         db = spatio.Spatio.memory_with_config(config)
         assert isinstance(db, spatio.Spatio)
 
-    def test_persistent_database(self, gc_collect):
-        """Test creating persistent database"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            # Normalize path for Windows compatibility
-            db_path = os.path.normpath(db_path)
-            db = spatio.Spatio.open(db_path)
-            assert isinstance(db, spatio.Spatio)
-            db.close()
+    def test_persistent_database_from_non_exist_file(self, gc_collect, tmp_path):
+        """Test creating persistent database using non-existing file"""
+        db_path = os.path.join(tmp_path, "test.db")
+        # Normalize path for Windows compatibility
+        db_path = os.path.normpath(db_path)
+        db = spatio.Spatio.open(db_path)
+        assert isinstance(db, spatio.Spatio)
+        db.close()
+
+    def test_persistent_database_from_invalid_file(self, gc_collect, tmp_path):
+        """Test creating persistent database using invalid file"""
+        # Given
+        db_path = os.path.join(tmp_path, "test.db")
+        db_file = tmp_path / "test.db"
+        db_file.write_text("keyvalue")
+        # Normalize path for Windows compatibility
+        db_path = os.path.normpath(db_path)
+
+        # When/Then
+        with pytest.raises(RuntimeError):
+            spatio.Spatio.open(db_path)
 
     def test_get_not_exist_key(self):
         """Test get method"""
@@ -241,7 +253,21 @@ class TestSpatio:
         # Then
         assert result is None
 
-    def test_ttl_operations(self):
+    @pytest.mark.parametrize(
+        "sleep_time",
+        [
+            pytest.param(
+                # Wait for expiration - use longer timeout on Windows due to timing differences
+                0.3,
+                id="windows os",
+            ),
+            pytest.param(
+                0.2,
+                id="another os",
+            ),
+        ]
+    )
+    def test_ttl_operations(self, sleep_time: float):
         """Test TTL functionality"""
         db = spatio.Spatio.memory()
 
@@ -253,8 +279,6 @@ class TestSpatio:
         result = db.get(b"temp_key")
         assert result == b"temp_value"
 
-        # Wait for expiration - use longer timeout on Windows due to timing differences
-        sleep_time = 0.3 if platform.system() == "Windows" else 0.2
         time.sleep(sleep_time)
 
         # Should be gone (or might still exist depending on cleanup timing)
