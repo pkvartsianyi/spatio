@@ -3,6 +3,7 @@ Comprehensive tests for Spatio Python bindings
 """
 
 import os
+import gc
 import platform
 import tempfile
 import time
@@ -10,6 +11,13 @@ import time
 import pytest
 
 import spatio
+
+
+@pytest.fixture
+def gc_collect():
+    yield
+    if platform.system() == "Windows":
+        gc.collect()
 
 
 class TestPoint:
@@ -158,44 +166,79 @@ class TestSpatio:
         """Test creating in-memory database with config"""
         config = spatio.Config.with_geohash_precision(10)
         db = spatio.Spatio.memory_with_config(config)
-        assert db is not None
+        assert isinstance(db, spatio.Spatio)
 
-    def test_persistent_database(self):
+    def test_persistent_database(self, gc_collect):
         """Test creating persistent database"""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             # Normalize path for Windows compatibility
             db_path = os.path.normpath(db_path)
             db = spatio.Spatio.open(db_path)
-            assert db is not None
+            assert isinstance(db, spatio.Spatio)
             db.close()
-            # On Windows, ensure file is properly released
-            if platform.system() == "Windows":
-                import gc
 
-                gc.collect()
-
-    def test_basic_key_value_operations(self):
-        """Test basic key-value operations"""
+    def test_get_not_exist_key(self):
+        """Test get method"""
+        # Given
         db = spatio.Spatio.memory()
 
-        # Insert
-        db.insert(b"key1", b"value1")
-
-        # Get
-        result = db.get(b"key1")
-        assert result == b"value1"
-
-        # Get non-existent key
-        result = db.get(b"nonexistent")
+        # When
+        result = db.delete(b"nonexistent")
+        # Then
         assert result is None
 
-        # Delete
+    def test_insert(self):
+        """Test insert method"""
+        # Given
+        db = spatio.Spatio.memory()
+        db.insert(b"key1", b"value1")
+
+        # When
+        result = db.get(b"key1")
+
+        # Then
+        assert result == b"value1"
+
+    def test_insert_exist_key(self):
+        """Test insert method"""
+        # Given
+        db = spatio.Spatio.memory()
+        db.insert(b"key1", b"value1")
+        db.insert(b"key1", b"value2")
+
+        # When
+        result = db.get(b"key1")
+
+        # the key must be overwritten
+        # Then
+        assert result == b"value2"
+
+    def test_delete(self):
+        """Test delete method"""
+        # Given
+        db = spatio.Spatio.memory()
+        db.insert(b"key1", b"value1")
+
+        # When
         old_value = db.delete(b"key1")
+        # Then
         assert old_value == b"value1"
 
-        # Verify deletion
+        # When verify deletion
         result = db.get(b"key1")
+        # Then
+        assert result is None
+
+    def test_delete_not_exist_key(self):
+        """Test delete method"""
+        # Given
+        db = spatio.Spatio.memory()
+
+        # When
+        result = db.delete(b"nonexistent")
+
+        # Then
         assert result is None
 
     def test_ttl_operations(self):
@@ -337,18 +380,12 @@ class TestSpatio:
         # Should not raise any errors
         db.sync()
 
-    def test_close_operation(self):
+    def test_close_operation(self, gc_collect):
         """Test database close operation"""
         db = spatio.Spatio.memory()
 
         # Should not raise any errors
         db.close()
-
-        # On Windows, force garbage collection to ensure proper cleanup
-        if platform.system() == "Windows":
-            import gc
-
-            gc.collect()
 
     def test_database_repr(self):
         """Test database string representation"""
@@ -359,16 +396,10 @@ class TestSpatio:
 class TestErrorHandling:
     """Test error handling and edge cases"""
 
-    def test_operations_on_closed_database(self):
+    def test_operations_on_closed_database(self, gc_collect):
         """Test operations on a closed database still work (limitation)"""
         db = spatio.Spatio.memory()
         db.close()
-
-        # On Windows, ensure proper cleanup after close
-        if platform.system() == "Windows":
-            import gc
-
-            gc.collect()
 
         # Current implementation allows operations after close
         # This is a limitation of the current API
