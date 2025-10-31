@@ -9,37 +9,27 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
 /// Synchronization policy for persistence
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncPolicy {
     /// Never sync to disk (fastest, least safe)
     Never,
     /// Sync every second (recommended default)
+    #[default]
     EverySecond,
     /// Sync after every write (slowest, safest)
     Always,
 }
 
-impl Default for SyncPolicy {
-    fn default() -> Self {
-        Self::EverySecond
-    }
-}
-
 /// File synchronization strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
     /// Call `fsync` / `File::sync_all` to persist metadata + data.
+    #[default]
     All,
     /// Call `fdatasync` / `File::sync_data` to persist data only.
     Data,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 /// Simplified database configuration

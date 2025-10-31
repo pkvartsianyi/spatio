@@ -8,7 +8,8 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::{
-    DB as RustDB, Result as RustResult,
+    db::DB as RustDB,
+    error::Result as RustResult,
     spatial::Point as RustPoint,
     types::{Config as RustConfig, SetOptions as RustSetOptions},
 };
@@ -30,7 +31,7 @@ pub struct PyPoint {
 impl PyPoint {
     /// Create a new Point with latitude and longitude
     #[new]
-    fn new(lat: f64, lon: f64) -> PyResult<Self> {
+    fn new(lat: f64, lon: f64, alt: Option<f64>) -> PyResult<Self> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
         }
@@ -40,9 +41,12 @@ impl PyPoint {
             ));
         }
 
-        Ok(PyPoint {
-            inner: RustPoint::new(lat, lon),
-        })
+        let mut point = RustPoint::new(lat, lon);
+        if let Some(alt) = alt {
+            point = point.with_alt(alt);
+        }
+
+        Ok(PyPoint { inner: point })
     }
 
     #[getter]
@@ -55,8 +59,17 @@ impl PyPoint {
         self.inner.lon
     }
 
+    #[getter]
+    fn alt(&self) -> Option<f64> {
+        self.inner.alt
+    }
+
     fn __repr__(&self) -> String {
-        format!("Point(lat={}, lon={})", self.lat(), self.lon())
+        if let Some(alt) = self.alt() {
+            format!("Point(lat={}, lon={}, alt={})", self.lat(), self.lon(), alt)
+        } else {
+            format!("Point(lat={}, lon={})", self.lat(), self.lon())
+        }
     }
 
     fn __str__(&self) -> String {
