@@ -1,5 +1,5 @@
-use spatio::{Point, SetOptions, Spatio};
-use std::time::Duration;
+use spatio::{Point, SetOptions, Spatio, TemporalPoint};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Spatio - Getting Started Example");
@@ -60,10 +60,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Trajectory tracking example
     let vehicle_path = vec![
-        (Point::new(40.7128, -74.0060), 1640995200), // Start: NYC
-        (Point::new(40.7150, -74.0040), 1640995260), // 1 minute later
-        (Point::new(40.7172, -74.0020), 1640995320), // 2 minutes later
-        (Point::new(40.7194, -74.0000), 1640995380), // 3 minutes later
+        TemporalPoint {
+            point: Point::new(40.7128, -74.0060),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995200),
+        }, // Start: NYC
+        TemporalPoint {
+            point: Point::new(40.7150, -74.0040),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995260),
+        }, // 1 minute later
+        TemporalPoint {
+            point: Point::new(40.7172, -74.0020),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995320),
+        }, // 2 minutes later
+        TemporalPoint {
+            point: Point::new(40.7194, -74.0000),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995380),
+        }, // 3 minutes later
     ];
 
     db.insert_trajectory("vehicle:truck001", &vehicle_path, None)?;
@@ -78,6 +90,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Retrieved {} waypoints for first 2 minutes",
         path_segment.len()
     );
+    for tp in &path_segment {
+        println!(
+            "  - Point at ({:.2}, {:.2}) at {:?}",
+            tp.point.lat, tp.point.lon, tp.timestamp
+        );
+    }
 
     // Check database statistics
     let stats = db.stats()?;

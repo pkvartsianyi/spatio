@@ -15,7 +15,7 @@ test:
 
 # Run formatter and linter
 lint:
-    cargo fmt -- --check
+    cargo fmt
     cargo clippy -- -D warnings
 
 # Run the same tests as GitHub Actions

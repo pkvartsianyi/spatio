@@ -1,5 +1,6 @@
+use spatio::TemporalPoint;
 use spatio::prelude::*;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 #[test]
@@ -224,8 +225,14 @@ fn test_aof_persistence_across_restarts() {
 
         // Insert trajectory
         let trajectory = vec![
-            (Point::new(40.7128, -74.0060), 1640995200),
-            (Point::new(40.7150, -74.0040), 1640995260),
+            TemporalPoint {
+                point: Point::new(40.7128, -74.0060),
+                timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1640995200),
+            },
+            TemporalPoint {
+                point: Point::new(40.7150, -74.0040),
+                timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1640995260),
+            },
         ];
         db.insert_trajectory("vehicle:001", &trajectory, None)
             .unwrap();
@@ -256,8 +263,8 @@ fn test_aof_persistence_across_restarts() {
             .query_trajectory("vehicle:001", 1640995200, 1640995260)
             .unwrap();
         assert_eq!(path.len(), 2);
-        assert_eq!(path[0].0.lat, 40.7128);
-        assert_eq!(path[1].0.lat, 40.7150);
+        assert_eq!(path[0].point.lat, 40.7128);
+        assert_eq!(path[1].point.lat, 40.7150);
     }
 
     // Third session: modify data and verify persistence

@@ -1,5 +1,5 @@
-use spatio::{Point, SetOptions, Spatio};
-use std::time::Duration;
+use spatio::{Point, SetOptions, Spatio, TemporalPoint};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Spatio - Comprehensive Demo");
@@ -131,12 +131,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Delivery truck route through London
     let delivery_route = vec![
-        (Point::new(51.5074, -0.1278), 1640995200), // Start: London center
-        (Point::new(51.5055, -0.0931), 1640995260), // Stop 1: Borough Market (1 min)
-        (Point::new(51.5045, -0.0865), 1640995320), // Stop 2: The Shard (2 min)
-        (Point::new(51.4994, -0.1245), 1640995380), // Stop 3: Big Ben (3 min)
-        (Point::new(51.5014, -0.1419), 1640995440), // Stop 4: Buckingham Palace (4 min)
-        (Point::new(51.5118, -0.1226), 1640995500), // End: Covent Garden (5 min)
+        TemporalPoint {
+            point: Point::new(51.5074, -0.1278),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995200),
+        }, // Start: London center
+        TemporalPoint {
+            point: Point::new(51.5055, -0.0931),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995260),
+        }, // Stop 1: Borough Market (1 min)
+        TemporalPoint {
+            point: Point::new(51.5045, -0.0865),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995320),
+        }, // Stop 2: The Shard (2 min)
+        TemporalPoint {
+            point: Point::new(51.4994, -0.1245),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995380),
+        }, // Stop 3: Big Ben (3 min)
+        TemporalPoint {
+            point: Point::new(51.5014, -0.1419),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995440),
+        }, // Stop 4: Buckingham Palace (4 min)
+        TemporalPoint {
+            point: Point::new(51.5118, -0.1226),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995500),
+        }, // End: Covent Garden (5 min)
     ];
 
     db.insert_trajectory("delivery:truck001", &delivery_route, None)?;
@@ -147,9 +165,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Taxi route
     let taxi_route = vec![
-        (Point::new(51.4700, -0.4543), 1640995200), // Heathrow Airport
-        (Point::new(51.4900, -0.1743), 1640995800), // Kensington (10 min)
-        (Point::new(51.5074, -0.1278), 1640996100), // Central London (15 min)
+        TemporalPoint {
+            point: Point::new(51.4700, -0.4543),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995200),
+        }, // Heathrow Airport
+        TemporalPoint {
+            point: Point::new(51.4900, -0.1743),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995800),
+        }, // Kensington (10 min)
+        TemporalPoint {
+            point: Point::new(51.5074, -0.1278),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640996100),
+        }, // Central London (15 min)
     ];
 
     db.insert_trajectory("taxi:cab042", &taxi_route, None)?;
@@ -211,8 +238,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add new vehicle to tracking
     let bus_route = vec![
-        (Point::new(51.5155, -0.0922), 1640995600), // Liverpool Street
-        (Point::new(51.5074, -0.1278), 1640995660), // Central London
+        TemporalPoint {
+            point: Point::new(51.5155, -0.0922),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995600),
+        }, // Liverpool Street
+        TemporalPoint {
+            point: Point::new(51.5074, -0.1278),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1640995660),
+        }, // Central London
     ];
     db.insert_trajectory("bus:route25", &bus_route, None)?;
     println!("  Added new bus to tracking system");

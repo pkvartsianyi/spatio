@@ -8,7 +8,7 @@ use crate::error::{Result, SpatioError};
 use crate::index::IndexManager;
 use crate::persistence::{AOFCommand, AOFFile};
 use crate::spatial::{Point, SpatialKey};
-use crate::types::{Config, DbItem, DbStats, SetOptions};
+use crate::types::{Config, DbItem, DbStats, SetOptions, TemporalPoint};
 #[cfg(feature = "time-index")]
 use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
@@ -567,15 +567,16 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point};
+    /// use spatio::{Spatio, Point, TemporalPoint};
+    /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
     ///
     /// let trajectory = vec![
-    ///     (Point::new(40.7128, -74.0060), 1640995200), // Start
-    ///     (Point::new(40.7150, -74.0040), 1640995260), // 1 min later
-    ///     (Point::new(40.7172, -74.0020), 1640995320), // 2 min later
+    ///     TemporalPoint { point: Point::new(40.7128, -74.0060), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
+    ///     TemporalPoint { point: Point::new(40.7150, -74.0040), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
+    ///     TemporalPoint { point: Point::new(40.7172, -74.0020), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
     /// ];
     ///
     /// db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
@@ -585,12 +586,21 @@ impl DB {
     pub fn insert_trajectory(
         &self,
         object_id: &str,
-        trajectory: &[(Point, u64)],
+        trajectory: &[TemporalPoint],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        for (i, (point, timestamp)) in trajectory.iter().enumerate() {
-            let key = format!("traj:{}:{:010}:{:06}", object_id, timestamp, i);
-            let point_data = bincode::serialize(&(point, timestamp)).map_err(|e| {
+        for (i, temporal_point) in trajectory.iter().enumerate() {
+            let key = format!(
+                "traj:{}:{:010}:{:06}",
+                object_id,
+                temporal_point
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_err(|_| SpatioError::InvalidTimestamp)?
+                    .as_secs(),
+                i
+            );
+            let point_data = bincode::serialize(&temporal_point).map_err(|e| {
                 SpatioError::SerializationErrorWithContext(format!(
                     "Failed to serialize trajectory point for object '{}': {}",
                     object_id, e
@@ -616,7 +626,8 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point};
+    /// use spatio::{Spatio, TemporalPoint};
+    /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
@@ -632,7 +643,7 @@ impl DB {
         object_id: &str,
         start_time: u64,
         end_time: u64,
-    ) -> Result<Vec<(Point, u64)>> {
+    ) -> Result<Vec<TemporalPoint>> {
         let mut results = Vec::new();
         let prefix = format!("traj:{}:", object_id);
 
@@ -646,10 +657,15 @@ impl DB {
                 continue;
             }
 
-            match bincode::deserialize::<(Point, u64)>(&item.value) {
-                Ok((point, timestamp)) => {
-                    if timestamp >= start_time && timestamp <= end_time {
-                        results.push((point, timestamp));
+            match bincode::deserialize::<TemporalPoint>(&item.value) {
+                Ok(temporal_point) => {
+                    let timestamp_secs = temporal_point
+                        .timestamp
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map_err(|_| SpatioError::InvalidTimestamp)?
+                        .as_secs();
+                    if timestamp_secs >= start_time && timestamp_secs <= end_time {
+                        results.push(temporal_point);
                     }
                 }
                 Err(e) => {
@@ -662,7 +678,7 @@ impl DB {
             }
         }
 
-        results.sort_by_key(|(_, timestamp)| *timestamp);
+        results.sort_by_key(|tp| tp.timestamp);
         Ok(results)
     }
 

@@ -138,6 +138,8 @@ fn main() -> Result<()> {
 
 ### C ABI
 
+Note: The C ABI is experimental and is not actively developed.
+
 The crate ships with a C-compatible ABI for embedding. Build the shared
 library once:
 
