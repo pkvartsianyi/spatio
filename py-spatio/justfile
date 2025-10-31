@@ -4,77 +4,75 @@ default:
 
 # Set up development environment
 setup:
-    python3 -m venv .venv
-    .venv/bin/pip install --upgrade pip
-    .venv/bin/pip install -r requirements-dev.txt
+    uv venv
+    uv pip install -r requirements-dev.txt
 
 # Install requirements only
 install-deps:
-    .venv/bin/pip install --upgrade pip
-    .venv/bin/pip install -r requirements-dev.txt
+    uv pip install -r requirements-dev.txt
 
 # Build the package in development mode
 build:
-    .venv/bin/maturin develop
+    uv run maturin develop
 
 # Build optimized release version
 build-release:
-    .venv/bin/maturin develop --release
+    uv run maturin develop --release
 
 # Build with debug symbols
 build-debug:
-    .venv/bin/maturin develop --profile dev
+    uv run maturin develop --profile dev
 
 # CI-friendly build (works without pre-existing venv)
 build-ci:
-    python -m pip install -e . --verbose
+    uv pip install -e . --verbose
 
 # Install package in development mode
 install: build
-    .venv/bin/pip install -e .
+    uv pip install -e .
 
 # Run all tests
 test: build
-    .venv/bin/pytest -n auto --tb=short
+    uv run pytest -n auto --tb=short
 
 # Run tests with verbose output
 test-verbose: build
-    .venv/bin/pytest -v
+    uv run pytest -v
 
 # Run only unit tests
 test-unit: build
-    .venv/bin/pytest -n auto --tb=short -m "unit"
+    uv run pytest -n auto --tb=short -m "unit"
 
 # Run only integration tests
 test-integration: build
-    .venv/bin/pytest -n auto --tb=short -m "integration"
+    uv run pytest -n auto --tb=short -m "integration"
 
 # Run performance benchmarks
 bench: build-release
-    .venv/bin/pytest --benchmark-only -v
+    uv run pytest --benchmark-only -v
 
 # Run tests with coverage
 coverage: build
-    .venv/bin/pytest --cov=spatio --cov-report=html --cov-report=term-missing
+    uv run pytest --cov=spatio --cov-report=html --cov-report=term-missing
     @echo "Coverage report generated in htmlcov/"
 
 # Format Python code
 fmt:
-    .venv/bin/ruff check --fix src/ tests/ examples/
-    .venv/bin/ruff format src/ tests/ examples/
+    uv run ruff check --fix src/ tests/ examples/
+    uv run ruff format src/ tests/ examples/
 
 # Run linting checks
 lint:
-    .venv/bin/ruff check src/ tests/ examples/
-    .venv/bin/mypy src/
+    uv run ruff check src/ tests/ examples/
+    uv run mypy src/
 
 # Run type checking only
 typecheck:
-    .venv/bin/mypy src/
+    uv run mypy src/
 
 # Run security checks
 security:
-    .venv/bin/bandit -r src/
+    uv run bandit -r src/
 
 # Format Rust code
 fmt-rust:
@@ -93,20 +91,15 @@ pre-commit: fmt clippy fmt-rust check
 # Run all examples (performance demo runs locally but is skipped in CI)
 examples: build
     @echo "Running basic usage example..."
-    .venv/bin/python examples/basic_usage.py
+    uv run python examples/basic_usage.py
     @echo "Running trajectory example..."
-    .venv/bin/python examples/trajectory_tracking.py
+    uv run python examples/trajectory_tracking.py
     @echo "Running performance demo..."
-    .venv/bin/python examples/performance_demo.py
-
-# Run performance demo only (resource-intensive, skipped in CI)
-performance-demo: build-release
-    @echo "Running performance demonstration..."
-    .venv/bin/python examples/performance_demo.py
+    uv run python examples/performance_demo.py
 
 # Run specific example
 example name: build
-    .venv/bin/python examples/{{name}}.py
+    uv run python examples/{{name}}.py
 
 # Build wheel for distribution
 wheel:
