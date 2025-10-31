@@ -11,7 +11,6 @@ import time
 import pytest
 
 import spatio
-from spatio.types import InvalidCoordinateError
 
 
 @pytest.fixture
@@ -42,10 +41,14 @@ class TestPoint:
         ("latitude", "longitude"),
         [
             pytest.param(
-                90.1, 0.0, id="latitude_too_high",
+                90.1,
+                0.0,
+                id="latitude_too_high",
             ),
             pytest.param(
-                -90.1, 0.0, id="latitude_too_low",
+                -90.1,
+                0.0,
+                id="latitude_too_low",
             ),
         ],
     )
@@ -58,10 +61,14 @@ class TestPoint:
         ("latitude", "longitude"),
         [
             pytest.param(
-                0.0, 180.1, id="longitude_too_high",
+                0.0,
+                180.1,
+                id="longitude_too_high",
             ),
             pytest.param(
-                0.0, -180.1, id="longitude_too_low",
+                0.0,
+                -180.1,
+                id="longitude_too_low",
             ),
         ],
     )
@@ -154,7 +161,9 @@ class TestConfig:
     )
     def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
         """Test invalid geohash precision values"""
-        with pytest.raises(ValueError, match=r"Geohash precision must be between 1 and 12"):
+        with pytest.raises(
+            ValueError, match=r"Geohash precision must be between 1 and 12"
+        ):
             spatio.Config.with_geohash_precision(geohash_precision)
 
     def test_set_geohash_precision(self):
@@ -163,7 +172,9 @@ class TestConfig:
         config.geohash_precision = 6
         assert config.geohash_precision == 6
 
-        with pytest.raises(ValueError, match=r"Geohash precision must be between 1 and 12"):
+        with pytest.raises(
+            ValueError, match=r"Geohash precision must be between 1 and 12"
+        ):
             config.geohash_precision = 0
 
 
@@ -447,10 +458,14 @@ class TestErrorHandling:
         db = spatio.Spatio.memory()
 
         # Invalid trajectory format
-        with pytest.raises(ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"):
+        with pytest.raises(
+            ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"
+        ):
             db.insert_trajectory("vehicle:001", [("not_a_tuple",)])
 
-        with pytest.raises(ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"):
+        with pytest.raises(
+            ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"
+        ):
             db.insert_trajectory(
                 "vehicle:001", [(spatio.Point(0, 0, alt=0.0),)]
             )  # Missing timestamp

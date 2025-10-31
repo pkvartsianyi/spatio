@@ -122,3 +122,4 @@ flamegraph.svg
 # Local configuration files
 .local/
 local_config.toml
+settings.json

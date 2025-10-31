@@ -23,7 +23,7 @@ MILLISECOND_THRESHOLD = 1
 # Constants for geohash precision accuracies
 GEOHASH_PRECISION_HIGH = 10
 GEOHASH_PRECISION_MEDIUM = 6
-GEOHASH_PRECISION_HIGH_MEDIUM = 8 # This is likely 8 for ~39m accuracy, based on context
+GEOHASH_PRECISION_HIGH_MEDIUM = 8
 
 
 def format_number(num: float) -> str:
@@ -43,6 +43,7 @@ def format_time(seconds: float) -> str:
 
 def benchmark_operation(func, *args, iterations: int = 100, warmup: int = 10):
     """Benchmark an operation with multiple iterations."""
+    result = None
     # Warmup
     for _ in range(warmup):
         func(*args)

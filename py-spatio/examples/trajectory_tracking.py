@@ -14,11 +14,8 @@ import time
 
 import spatio
 
-# Constants for trajectory analysis
-MIN_TRAJECTORY_POINTS_FOR_ANALYSIS = 2
-
-# Constants for spatial queries
-TIMES_SQUARE_NEARBY_RADIUS_METERS = 500
+MIN_TRAJECTORY_POINTS = 2
+NEARBY_RADIUS_METERS = 500
 
 
 def generate_realistic_trajectory(start_point, num_points=20, time_interval=60):
@@ -117,12 +114,12 @@ def simulate_delivery_route():
     return trajectory
 
 
-
 def _setup_database():
     print("1. Creating database...")
     db = spatio.Spatio.memory()
     print("[OK] Database created")
     return db
+
 
 def _generate_and_store_trajectories(db):
     print("\n2. Generating vehicle trajectories...")
@@ -142,6 +139,7 @@ def _generate_and_store_trajectories(db):
         all_trajectories[vehicle_id] = trajectory
         print(f"    [OK] Stored {len(trajectory)} points for {vehicle_id}")
     return all_trajectories
+
 
 def _query_trajectory_data(db, all_trajectories):
     print("\n3. Querying trajectory data...")
@@ -165,11 +163,12 @@ def _query_trajectory_data(db, all_trajectories):
             total_distance += prev_point.distance_to(curr_point)
         print(f"  Total distance: {total_distance / 1000:.2f} km")
 
+
 def _analyze_movement_patterns(all_trajectories):
     print("\n4. Analyzing movement patterns...")
     for vehicle_id in ["truck_001", "car_001"]:
         trajectory = all_trajectories[vehicle_id]
-        if len(trajectory) < MIN_TRAJECTORY_POINTS_FOR_ANALYSIS:
+        if len(trajectory) < MIN_TRAJECTORY_POINTS:
             continue
         print(f"\n  Analysis for {vehicle_id}:")
         total_distance = 0
@@ -194,7 +193,9 @@ def _analyze_movement_patterns(all_trajectories):
             max_distance = max(max_distance, distance)
         print(f"    Farthest from start: {max_distance / 1000:.2f} km")
 
+
 def _simulate_realtime_updates(db, all_trajectories):
+    current_time = None
     print("\n5. Simulating real-time updates...")
     vehicle_id = "truck_002"
     last_trajectory = all_trajectories[vehicle_id]
@@ -216,6 +217,7 @@ def _simulate_realtime_updates(db, all_trajectories):
         print(f"  [OK] Extended trajectory now has {len(extended_trajectory)} points")
     return current_time
 
+
 def _spatial_queries_on_trajectories(all_trajectories):
     print("\n6. Spatial queries on trajectory data...")
     times_square = spatio.Point(40.7505, -73.9934)
@@ -224,7 +226,7 @@ def _spatial_queries_on_trajectories(all_trajectories):
         trajectory = all_trajectories[vehicle_id]
         for point, timestamp in trajectory:
             distance = times_square.distance_to(point)
-            if distance < TIMES_SQUARE_NEARBY_RADIUS_METERS:
+            if distance < NEARBY_RADIUS_METERS:
                 vehicles_near_times_square.append(
                     (vehicle_id, point, timestamp, distance)
                 )
@@ -232,6 +234,7 @@ def _spatial_queries_on_trajectories(all_trajectories):
     print(f"[OK] Found {len(vehicles_near_times_square)} vehicles near Times Square:")
     for vehicle_id, _point, timestamp, distance in vehicles_near_times_square:
         print(f"  - {vehicle_id}: {distance:.0f}m away at timestamp {timestamp}")
+
 
 def _time_based_analysis(all_trajectories, current_time):
     print("\n7. Time-based analysis...")
@@ -251,12 +254,14 @@ def _time_based_analysis(all_trajectories, current_time):
     for vehicle_id, point_count in active_vehicles:
         print(f"  - {vehicle_id}: {point_count} data points")
 
+
 def _display_database_statistics(db):
     print("\n8. Database statistics...")
     stats = db.stats()
     print("[OK] Final database stats:")
     print(f"  - Total keys: {stats['key_count']}")
     print(f"  - Operations: {stats['operations_count']}")
+
 
 def main():
     print("=== Spatio-Py Trajectory Tracking Example ===\n")
