@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 
 #[test]

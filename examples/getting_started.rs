@@ -1,5 +1,5 @@
 use spatio::{Point, SetOptions, Spatio, TemporalPoint};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Spatio - Getting Started Example");

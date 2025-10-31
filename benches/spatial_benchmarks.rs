@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use spatio::{Config, Point, SetOptions, Spatio, SyncMode, SyncPolicy};
-use std::time::Duration;
+use spatio::{Config, Point, SetOptions, Spatio, SyncMode, SyncPolicy, TemporalPoint};
+use std::time::{Duration, SystemTime};
 
 fn benchmark_basic_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("basic_operations");
@@ -111,14 +111,15 @@ fn benchmark_trajectory_operations(c: &mut Criterion) {
             let mut trajectory = Vec::new();
             let base_lat = 40.7128;
             let base_lon = -74.0060;
-            let base_time = 1640995200u64 + ((counter % 10000) as u64) * 1000;
+            let base_time = SystemTime::UNIX_EPOCH
+                + Duration::from_secs(1640995200u64 + ((counter % 10000) as u64) * 1000);
 
             for i in 0..100 {
                 let lat = base_lat + (i as f64 * 0.0001);
                 let lon = base_lon + (i as f64 * 0.0001);
                 let point = Point::new(lat, lon);
-                let timestamp = base_time + (i as u64) * 10;
-                trajectory.push((point, timestamp));
+                let timestamp = base_time + Duration::from_secs((i as u64) * 10);
+                trajectory.push(TemporalPoint { point, timestamp });
             }
 
             let object_id = format!("trajectory:{}", counter);
@@ -130,12 +131,13 @@ fn benchmark_trajectory_operations(c: &mut Criterion) {
 
     // Setup trajectory data for querying
     let mut trajectory = Vec::new();
+    let base_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1640995200);
     for i in 0..1000 {
         let lat = 40.7128 + (i as f64 * 0.0001);
         let lon = -74.0060 + (i as f64 * 0.0001);
         let point = Point::new(lat, lon);
-        let timestamp = 1640995200 + i * 10;
-        trajectory.push((point, timestamp));
+        let timestamp = base_time + Duration::from_secs(i * 10);
+        trajectory.push(TemporalPoint { point, timestamp });
     }
     db.insert_trajectory("benchmark_trajectory", &trajectory, None)
         .unwrap();

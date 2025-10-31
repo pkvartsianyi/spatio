@@ -327,9 +327,10 @@ impl PySpatio {
 
             let point_ref: PyRef<PyPoint> = tuple.get_item(0)?.extract()?;
             let point = point_ref.clone();
-            let timestamp: f64 = tuple.get_item(1)?.extract()?;
+            let timestamp_f64: f64 = tuple.get_item(1)?.extract()?;
+            let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp_f64 as u64);
 
-            rust_trajectory.push((point.inner, timestamp as u64));
+            rust_trajectory.push(spatio::types::TemporalPoint { point: point.inner, timestamp });
         }
 
         let opts = options.map(|o| o.inner.clone());
@@ -351,9 +352,10 @@ impl PySpatio {
 
         Python::with_gil(|py| {
             let py_list = PyList::empty(py);
-            for (point, timestamp) in results {
-                let py_point = PyPoint { inner: point };
-                let tuple = (py_point, timestamp as f64).into_pyobject(py)?;
+            for temporal_point in results {
+                let py_point = PyPoint { inner: temporal_point.point };
+                let timestamp_f64 = temporal_point.timestamp.duration_since(UNIX_EPOCH).map_err(|e| PyRuntimeError::new_err(e.to_string()))?.as_secs_f64();
+                let tuple = (py_point, timestamp_f64).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.into())

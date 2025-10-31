@@ -1,6 +1,6 @@
 use spatio::TemporalPoint;
 use spatio::prelude::*;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 
 #[test]
