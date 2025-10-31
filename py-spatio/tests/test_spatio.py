@@ -2,15 +2,16 @@
 Comprehensive tests for Spatio Python bindings
 """
 
-import os
 import gc
+import os
 import platform
-import tempfile
+import random
 import time
 
 import pytest
 
 import spatio
+from spatio.types import InvalidCoordinateError
 
 
 @pytest.fixture
@@ -38,38 +39,35 @@ class TestPoint:
         assert point.alt == 100.0
 
     @pytest.mark.parametrize(
-        "latitude, longitude",
+        ("latitude", "longitude"),
         [
             pytest.param(
-                91.0,
-                0.0,
-                id="north latitude",
+                90.1, 0.0, id="latitude_too_high",
             ),
             pytest.param(
-                -91.0,
-                0.0,
-                id="south latitude",
-            ),
-            pytest.param(
-                0.0,
-                181.0,
-                id="east longitude",
-            ),
-            pytest.param(
-                -0.0,
-                -181.0,
-                id="west longitude",
+                -90.1, 0.0, id="latitude_too_low",
             ),
         ],
     )
-    def test_point_creation_invalid_bounds(
-        self,
-        latitude: float,
-        longitude: float,
-    ):
-        """Test point validation"""
-        # Invalid latitude
-        with pytest.raises(ValueError):
+    def test_point_validation_latitude(self, latitude, longitude):
+        """Test point validation for invalid latitude"""
+        with pytest.raises(ValueError, match=r"Latitude must be between -90 and 90"):
+            spatio.Point(latitude, longitude, alt=0.0)
+
+    @pytest.mark.parametrize(
+        ("latitude", "longitude"),
+        [
+            pytest.param(
+                0.0, 180.1, id="longitude_too_high",
+            ),
+            pytest.param(
+                0.0, -180.1, id="longitude_too_low",
+            ),
+        ],
+    )
+    def test_point_validation_longitude(self, latitude, longitude):
+        """Test point validation for invalid longitude"""
+        with pytest.raises(ValueError, match=r"Longitude must be between -180 and 180"):
             spatio.Point(latitude, longitude, alt=0.0)
 
     def test_point_distance(self):
@@ -118,7 +116,7 @@ class TestSetOptions:
     )
     def test_ttl_options_invalid_bounds(self, ttl: float):
         """Test invalid TTL values"""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"TTL must be positive"):
             spatio.SetOptions.with_ttl(ttl)
 
     def test_expiration_options(self):
@@ -156,7 +154,7 @@ class TestConfig:
     )
     def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
         """Test invalid geohash precision values"""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Geohash precision must be between 1 and 12"):
             spatio.Config.with_geohash_precision(geohash_precision)
 
     def test_set_geohash_precision(self):
@@ -165,7 +163,7 @@ class TestConfig:
         config.geohash_precision = 6
         assert config.geohash_precision == 6
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Geohash precision must be between 1 and 12"):
             config.geohash_precision = 0
 
 
@@ -449,10 +447,10 @@ class TestErrorHandling:
         db = spatio.Spatio.memory()
 
         # Invalid trajectory format
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"):
             db.insert_trajectory("vehicle:001", [("not_a_tuple",)])
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Trajectory items must be \(Point, timestamp\) tuples"):
             db.insert_trajectory(
                 "vehicle:001", [(spatio.Point(0, 0, alt=0.0),)]
             )  # Missing timestamp
@@ -484,8 +482,6 @@ class TestPerformance:
         db = spatio.Spatio.memory()
 
         # Insert many points
-        import random
-
         points = []
         for i in range(100):
             # Random points around NYC

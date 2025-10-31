@@ -10,12 +10,13 @@ authors = [
   { name = "Petro Kvartsianyi", email = "pkvartsianyi@example.com" },
 ]
 dynamic = ["version"]
+requires-python = ">=3.9"
+
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.package-data]
 "*" = ["LICENSE"]
-requires-python = ">=3.8"
 
 keywords = ["spatio-temporal", "spatial", "database", "geospatial", "embedded", "temporal", "gis"]
 classifiers = [
@@ -74,17 +75,25 @@ target-version = "py38"
 
 [tool.ruff.lint]
 select = [
-  "E",    # pycodestyle errors
-  "F",    # pyflakes
-  "W",    # pycodestyle warnings
-  "I",    # isort
-  "UP",   # pyupgrade
-  "B",    # flake8-bugbear
-  "C4",   # flake8-comprehensions
-  "SIM",  # flake8-simplify
-  "TCH",  # flake8-type-checking
-  "TID",  # flake8-tidy-imports
-  "RUF",  # ruff-specific rules
+"E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "TID",  # flake8-tidy-imports
+    "RUF",  # ruff-specific rules
+    "ISC",  # flake8-implicit-str-concat
+    "N",    # flake8-naming
+    "Q",    # flake8-quotes
+    "PT",   # flake8-pytest-style (Great for your tests)
+    "T20",  # flake8-print (Good practice)
+    "PL",   # pylint subset (Adds robust checks)
+    "G",    # flake8-logging
+    "PYI",  # flake8-pyi (Good for your .pyi files)
 ]
 
 ignore = [
@@ -94,9 +103,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["F401", "F811"]  # Allow unused imports in tests
-"examples/**/*.py" = ["F401", "T201"]  # Allow prints and unused imports in examples
-"src/spatio/types.py" = ["TC004", "F821"]  # TYPE_CHECKING imports and forward references for avoiding circular imports
+"tests/**/*.py" = ["F811", "PLR2004", "T201"]
+"examples/**/*.py" = ["T201"]
+"src/spatio/types.py" = ["TC004", "F821"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["spatio"]

@@ -16,6 +16,15 @@ from typing import Tuple
 
 import spatio
 
+# Constants for time formatting
+MICROSECOND_THRESHOLD = 0.001
+MILLISECOND_THRESHOLD = 1
+
+# Constants for geohash precision accuracies
+GEOHASH_PRECISION_HIGH = 10
+GEOHASH_PRECISION_MEDIUM = 6
+GEOHASH_PRECISION_HIGH_MEDIUM = 8 # This is likely 8 for ~39m accuracy, based on context
+
 
 def format_number(num: float) -> str:
     """Format large numbers with commas."""
@@ -24,9 +33,9 @@ def format_number(num: float) -> str:
 
 def format_time(seconds: float) -> str:
     """Format time duration in human-readable format."""
-    if seconds < 0.001:
+    if seconds < MICROSECOND_THRESHOLD:
         return f"{seconds * 1_000_000:.1f}us"
-    elif seconds < 1:
+    elif seconds < MILLISECOND_THRESHOLD:
         return f"{seconds * 1000:.1f}ms"
     else:
         return f"{seconds:.2f}s"
@@ -309,11 +318,11 @@ def benchmark_configuration_impact():
         precision_stats = benchmark_operation(spatial_query_precision, iterations=100)
         accuracy = (
             "~61cm"
-            if precision == 10
+            if precision == GEOHASH_PRECISION_HIGH
             else "~610m"
-            if precision == 6
+            if precision == GEOHASH_PRECISION_MEDIUM
             else "~39m"
-            if precision == 8
+            if precision == GEOHASH_PRECISION_HIGH_MEDIUM
             else "~5cm"
         )
 
