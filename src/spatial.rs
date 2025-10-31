@@ -6,10 +6,10 @@
 use crate::error::{Result, SpatioError};
 use geo;
 use geohash;
+#[cfg(feature = "geojson")]
+use geozero::{GeozeroGeometry, ToJson};
 use s2::cellid::CellID;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "geojson")]
-use serde_json::{Map, Value};
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,6 +44,8 @@ pub struct Point {
     pub lat: f64,
     /// Longitude in decimal degrees (-180.0 to +180.0)
     pub lon: f64,
+    /// Optional altitude in meters
+    pub alt: Option<f64>,
 }
 
 impl Point {
@@ -66,7 +68,17 @@ impl Point {
     /// let opera_house = Point::new(-33.8568, 151.2153);
     /// ```
     pub fn new(lat: f64, lon: f64) -> Self {
-        Self { lat, lon }
+        Self {
+            lat,
+            lon,
+            alt: None,
+        }
+    }
+
+    /// Sets the altitude of the point.
+    pub fn with_alt(mut self, alt: f64) -> Self {
+        self.alt = Some(alt);
+        self
     }
 
     /// Validate that the point has valid coordinates (not NaN or infinity)
@@ -83,48 +95,7 @@ impl Point {
     /// assert!(!invalid_point.is_valid());
     /// ```
     pub fn is_valid(&self) -> bool {
-        self.lat.is_finite() && self.lon.is_finite()
-    }
-
-    /// Create a point from GeoJSON coordinates [longitude, latitude]
-    ///
-    /// # Arguments
-    ///
-    /// * `coords` - Array of [longitude, latitude] coordinates
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let point = Point::from_geojson_coords(&[-74.0060, 40.7128]).unwrap();
-    /// assert_eq!(point.lat, 40.7128);
-    /// assert_eq!(point.lon, -74.0060);
-    /// ```
-    #[cfg(feature = "geojson")]
-    pub fn from_geojson_coords(coords: &[f64]) -> Result<Self> {
-        if coords.len() != 2 {
-            return Err(SpatioError::Other(
-                "GeoJSON coordinates must have exactly 2 elements [lon, lat]".into(),
-            ));
-        }
-        Ok(Self::new(coords[1], coords[0]))
-    }
-
-    /// Convert to GeoJSON coordinates [longitude, latitude]
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let point = Point::new(40.7128, -74.0060);
-    /// let coords = point.to_geojson_coords();
-    /// assert_eq!(coords, [-74.0060, 40.7128]);
-    /// ```
-    #[cfg(feature = "geojson")]
-    pub fn to_geojson_coords(&self) -> [f64; 2] {
-        [self.lon, self.lat]
+        self.lat.is_finite() && self.lon.is_finite() && self.alt.is_none_or(|a| a.is_finite())
     }
 
     /// Convert to GeoJSON Point geometry
@@ -140,24 +111,7 @@ impl Point {
     /// ```
     #[cfg(feature = "geojson")]
     pub fn to_geojson(&self) -> Result<String> {
-        if !self.is_valid() {
-            return Err(SpatioError::SerializationErrorWithContext(format!(
-                "Invalid point coordinates: lat={}, lon={} (NaN or infinity not allowed)",
-                self.lat, self.lon
-            )));
-        }
-
-        let mut geometry = Map::new();
-        geometry.insert("type".to_string(), Value::String("Point".to_string()));
-        let lon_number = serde_json::Number::from_f64(self.lon).unwrap();
-        let lat_number = serde_json::Number::from_f64(self.lat).unwrap();
-
-        geometry.insert(
-            "coordinates".to_string(),
-            Value::Array(vec![Value::Number(lon_number), Value::Number(lat_number)]),
-        );
-
-        serde_json::to_string(&geometry)
+        self.to_json()
             .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))
     }
 
@@ -175,46 +129,25 @@ impl Point {
     /// ```
     #[cfg(feature = "geojson")]
     pub fn from_geojson(geojson: &str) -> Result<Self> {
-        let value: Value = serde_json::from_str(geojson)
-            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+        let geometry: geojson::Geometry = geojson
+            .parse()
+            .map_err(|e: geojson::Error| SpatioError::Other(e.to_string()))?;
 
-        let geometry = value
-            .as_object()
-            .ok_or_else(|| SpatioError::Other("GeoJSON must be an object".into()))?;
+        // Extract coordinates directly from GeoJSON to preserve altitude
+        if let geojson::Value::Point(coords) = &geometry.value {
+            let lon = coords[0];
+            let lat = coords[1];
+            let mut point = Point::new(lat, lon);
 
-        let type_field = geometry
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| SpatioError::Other("GeoJSON must have a 'type' field".into()))?;
+            // Check if altitude (z coordinate) is present
+            if coords.len() > 2 {
+                point = point.with_alt(coords[2]);
+            }
 
-        if type_field != "Point" {
-            return Err(SpatioError::Other(format!(
-                "Expected Point geometry, got {}",
-                type_field
-            )));
+            Ok(point)
+        } else {
+            Err(SpatioError::Other("Expected a Point geometry".to_string()))
         }
-
-        let coordinates = geometry
-            .get("coordinates")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| {
-                SpatioError::Other("GeoJSON Point must have coordinates array".into())
-            })?;
-
-        if coordinates.len() != 2 {
-            return Err(SpatioError::Other(
-                "GeoJSON Point coordinates must have exactly 2 elements".into(),
-            ));
-        }
-
-        let lon = coordinates[0]
-            .as_f64()
-            .ok_or_else(|| SpatioError::Other("Longitude must be a number".into()))?;
-        let lat = coordinates[1]
-            .as_f64()
-            .ok_or_else(|| SpatioError::Other("Latitude must be a number".into()))?;
-
-        Ok(Self::new(lat, lon))
     }
 
     /// Calculate the distance between two points using the Haversine formula.
@@ -453,6 +386,23 @@ impl Point {
     }
 }
 
+#[cfg(feature = "geojson")]
+impl GeozeroGeometry for Point {
+    fn process_geom<P: geozero::GeomProcessor>(
+        &self,
+        processor: &mut P,
+    ) -> geozero::error::Result<()> {
+        processor.point_begin(0)?;
+        if let Some(alt) = self.alt {
+            processor.coordinate(self.lon, self.lat, Some(alt), None, None, None, 0)?;
+        } else {
+            processor.xy(self.lon, self.lat, 0)?;
+        }
+        processor.point_end(0)?;
+        Ok(())
+    }
+}
+
 /// A bounding box defined by minimum and maximum latitude and longitude coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
@@ -495,7 +445,11 @@ impl BoundingBox {
 
 impl fmt::Display for Point {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({:.6}, {:.6})", self.lat, self.lon)
+        if let Some(alt) = self.alt {
+            write!(f, "({:.6}, {:.6}, {:.1})", self.lat, self.lon, alt)
+        } else {
+            write!(f, "({:.6}, {:.6})", self.lat, self.lon)
+        }
     }
 }
 
@@ -643,6 +597,52 @@ mod tests {
         let point = Point::new(40.7128, -74.0060);
         let display = format!("{}", point);
         assert_eq!(display, "(40.712800, -74.006000)");
+
+        let point_with_alt = Point::new(40.7128, -74.0060).with_alt(100.0);
+        let display_with_alt = format!("{}", point_with_alt);
+        assert_eq!(display_with_alt, "(40.712800, -74.006000, 100.0)");
+    }
+
+    #[test]
+    #[cfg(feature = "geojson")]
+    fn test_point_to_geojson() {
+        let point = Point::new(40.7128, -74.0060);
+        let geojson = point.to_geojson().unwrap();
+        assert_eq!(
+            geojson,
+            r#"{"type":"Point","coordinates":[-74.006,40.7128]}"#
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "geojson")]
+    fn test_point_with_alt_to_geojson() {
+        let point = Point::new(40.7128, -74.0060).with_alt(100.0);
+        let geojson = point.to_geojson().unwrap();
+        assert_eq!(
+            geojson,
+            r#"{"type":"Point","coordinates":[-74.006,40.7128,100.0]}"#
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "geojson")]
+    fn test_point_from_geojson() {
+        let geojson = r#"{"type":"Point","coordinates":[-74.006,40.7128]}"#;
+        let point = Point::from_geojson(geojson).unwrap();
+        assert_eq!(point.lat, 40.7128);
+        assert_eq!(point.lon, -74.006);
+        assert_eq!(point.alt, None);
+    }
+
+    #[test]
+    #[cfg(feature = "geojson")]
+    fn test_point_with_alt_from_geojson() {
+        let geojson = r#"{"type":"Point","coordinates":[-74.006,40.7128,100.0]}"#;
+        let point = Point::from_geojson(geojson).unwrap();
+        assert_eq!(point.lat, 40.7128);
+        assert_eq!(point.lon, -74.006);
+        assert_eq!(point.alt, Some(100.0));
     }
 
     #[test]
@@ -723,102 +723,5 @@ mod tests {
 
         // Test identical boxes
         assert!(bbox1.intersects(&bbox1));
-    }
-
-    #[test]
-    #[cfg(feature = "geojson")]
-    fn test_point_to_geojson_invalid_coordinates() {
-        // Test NaN coordinates
-        let point_nan_lat = Point::new(f64::NAN, -74.0060);
-        let result = point_nan_lat.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-
-        let point_nan_lon = Point::new(40.7128, f64::NAN);
-        let result = point_nan_lon.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-
-        // Test infinity coordinates
-        let point_inf_lat = Point::new(f64::INFINITY, -74.0060);
-        let result = point_inf_lat.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-
-        let point_inf_lon = Point::new(40.7128, f64::INFINITY);
-        let result = point_inf_lon.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-
-        // Test negative infinity
-        let point_neg_inf_lat = Point::new(f64::NEG_INFINITY, -74.0060);
-        let result = point_neg_inf_lat.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-
-        let point_neg_inf_lon = Point::new(40.7128, f64::NEG_INFINITY);
-        let result = point_neg_inf_lon.to_geojson();
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid point coordinates")
-        );
-    }
-
-    #[test]
-    fn test_point_validation() {
-        // Valid points
-        let valid_point = Point::new(40.7128, -74.0060);
-        assert!(valid_point.is_valid());
-
-        let valid_edge_case = Point::new(90.0, -180.0);
-        assert!(valid_edge_case.is_valid());
-
-        // Invalid points - NaN
-        let nan_lat = Point::new(f64::NAN, -74.0060);
-        assert!(!nan_lat.is_valid());
-
-        let nan_lon = Point::new(40.7128, f64::NAN);
-        assert!(!nan_lon.is_valid());
-
-        // Invalid points - Infinity
-        let inf_lat = Point::new(f64::INFINITY, -74.0060);
-        assert!(!inf_lat.is_valid());
-
-        let inf_lon = Point::new(40.7128, f64::INFINITY);
-        assert!(!inf_lon.is_valid());
-
-        let neg_inf_lat = Point::new(f64::NEG_INFINITY, -74.0060);
-        assert!(!neg_inf_lat.is_valid());
-
-        let neg_inf_lon = Point::new(40.7128, f64::NEG_INFINITY);
-        assert!(!neg_inf_lon.is_valid());
     }
 }

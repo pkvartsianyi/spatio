@@ -26,6 +26,8 @@ rustc-hash = "1.1"
 s2 = "0.0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
+geojson = "0.24.1"
+geozero = { version = "0.14.0", features = ["with-geojson", "with-geo"], optional = true }
 smallvec = "1.11"
 thiserror = "1.0"
 toml = { version = "0.8", optional = true }
@@ -33,7 +35,7 @@ uuid = { version = "1.0", features = ["v4"] }
 
 [features]
 default = ["aof", "geojson", "time-index"]
-geojson = []
+geojson = ["dep:geozero", "geozero/with-geojson"]
 aof = ["dep:bincode"]
 toml = ["dep:toml"]
 time-index = []

@@ -140,6 +140,14 @@ def main():
     print(f"[OK] NYC to London: {distance_ny_london / 1000:.0f}km")
     print(f"[OK] London to Paris: {distance_london_paris / 1000:.0f}km")
 
+    # 9. 3D Point Operations
+    print("\n9. 3D Point Operations...")
+    everest = spatio.Point(27.9881, 86.9250, 8848.86)
+    db.insert_point("mountains", everest, b"Mount Everest")
+    results = db.query_within_radius("mountains", everest, 1000.0, 1)
+    for point, name, _ in results:
+        print(f"[OK] Found 3D point: {name.decode()} at {point}")
+
     print("\n=== Example completed successfully! ===")
 
 
