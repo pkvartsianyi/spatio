@@ -133,13 +133,11 @@ impl Point {
             .parse()
             .map_err(|e: geojson::Error| SpatioError::Other(e.to_string()))?;
 
-        // Extract coordinates directly from GeoJSON to preserve altitude
         if let geojson::Value::Point(coords) = &geometry.value {
             let lon = coords[0];
             let lat = coords[1];
             let mut point = Point::new(lat, lon);
 
-            // Check if altitude (z coordinate) is present
             if coords.len() > 2 {
                 point = point.with_alt(coords[2]);
             }
@@ -608,10 +606,19 @@ mod tests {
     fn test_point_to_geojson() {
         let point = Point::new(40.7128, -74.0060);
         let geojson = point.to_geojson().unwrap();
-        assert_eq!(
-            geojson,
-            r#"{"type":"Point","coordinates":[-74.006,40.7128]}"#
-        );
+
+        let parsed: geojson::GeoJson = geojson.parse().unwrap();
+        if let geojson::GeoJson::Geometry(geom) = parsed {
+            if let geojson::Value::Point(coords) = geom.value {
+                assert_eq!(coords[0], -74.006);
+                assert_eq!(coords[1], 40.7128);
+                assert_eq!(coords.len(), 2);
+            } else {
+                panic!("Expected Point geometry");
+            }
+        } else {
+            panic!("Expected Geometry");
+        }
     }
 
     #[test]
@@ -619,10 +626,20 @@ mod tests {
     fn test_point_with_alt_to_geojson() {
         let point = Point::new(40.7128, -74.0060).with_alt(100.0);
         let geojson = point.to_geojson().unwrap();
-        assert_eq!(
-            geojson,
-            r#"{"type":"Point","coordinates":[-74.006,40.7128,100.0]}"#
-        );
+
+        let parsed: geojson::GeoJson = geojson.parse().unwrap();
+        if let geojson::GeoJson::Geometry(geom) = parsed {
+            if let geojson::Value::Point(coords) = geom.value {
+                assert_eq!(coords[0], -74.006);
+                assert_eq!(coords[1], 40.7128);
+                assert_eq!(coords[2], 100.0);
+                assert_eq!(coords.len(), 3);
+            } else {
+                panic!("Expected Point geometry");
+            }
+        } else {
+            panic!("Expected Geometry");
+        }
     }
 
     #[test]
