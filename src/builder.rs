@@ -187,9 +187,9 @@ impl DBBuilder {
     /// # }
     /// ```
     pub fn config(mut self, config: Config) -> Self {
-            self.config = config;
-            self
-        }
+        self.config = config;
+        self
+    }
     /// Enable update history tracking with a fixed per-key capacity.
     ///
     /// Each key retains at most `capacity` recent operations (set/delete).
