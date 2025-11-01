@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use spatio::{Config, Point, SetOptions, Spatio};
-use std::time::Duration;
+use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
+use std::time::{Duration, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -85,9 +85,18 @@ fn test_trajectory_operations() {
 
     // Create trajectory
     let trajectory = vec![
-        (Point::new(40.7128, -74.0060), 1000),
-        (Point::new(40.7150, -74.0040), 1060),
-        (Point::new(40.7172, -74.0020), 1120),
+        TemporalPoint {
+            point: Point::new(40.7128, -74.0060),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1000),
+        },
+        TemporalPoint {
+            point: Point::new(40.7150, -74.0040),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1060),
+        },
+        TemporalPoint {
+            point: Point::new(40.7172, -74.0020),
+            timestamp: UNIX_EPOCH + Duration::from_secs(1120),
+        },
     ];
 
     db.insert_trajectory("vehicle:1", &trajectory, None)
@@ -98,8 +107,11 @@ fn test_trajectory_operations() {
     assert_eq!(retrieved.len(), 3);
 
     // Verify first point
-    assert_eq!(retrieved[0].0, Point::new(40.7128, -74.0060));
-    assert_eq!(retrieved[0].1, 1000);
+    assert_eq!(retrieved[0].point, Point::new(40.7128, -74.0060));
+    assert_eq!(
+        retrieved[0].timestamp,
+        UNIX_EPOCH + Duration::from_secs(1000)
+    );
 }
 
 #[test]
@@ -164,8 +176,14 @@ fn test_persistence() {
 
         // Insert trajectory data
         let trajectory = vec![
-            (Point::new(40.7128, -74.0060), 1640995200),
-            (Point::new(40.7150, -74.0040), 1640995260),
+            TemporalPoint {
+                point: Point::new(40.7128, -74.0060),
+                timestamp: UNIX_EPOCH + Duration::from_secs(1640995200),
+            },
+            TemporalPoint {
+                point: Point::new(40.7150, -74.0040),
+                timestamp: UNIX_EPOCH + Duration::from_secs(1640995260),
+            },
         ];
         db.insert_trajectory("vehicle:car1", &trajectory, None)
             .unwrap();
@@ -195,8 +213,14 @@ fn test_persistence() {
             .query_trajectory("vehicle:car1", 1640995200, 1640995260)
             .unwrap();
         assert_eq!(trajectory_data.len(), 2);
-        assert_eq!(trajectory_data[0].1, 1640995200);
-        assert_eq!(trajectory_data[1].1, 1640995260);
+        assert_eq!(
+            trajectory_data[0].timestamp,
+            UNIX_EPOCH + Duration::from_secs(1640995200)
+        );
+        assert_eq!(
+            trajectory_data[1].timestamp,
+            UNIX_EPOCH + Duration::from_secs(1640995260)
+        );
     }
 }
 

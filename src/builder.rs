@@ -182,9 +182,7 @@ impl DBBuilder {
     ///     .aof_path(&temp_path)
     ///     .config(config)
     ///     .build()?;
-    /// # if temp_path.exists() {
-    /// #     std::fs::remove_file(&temp_path)?;
-    /// # }
+    /// # let _ = std::fs::remove_file(&temp_path);
     /// # Ok(())
     /// # }
     /// ```
@@ -192,7 +190,6 @@ impl DBBuilder {
         self.config = config;
         self
     }
-
     /// Enable update history tracking with a fixed per-key capacity.
     ///
     /// Each key retains at most `capacity` recent operations (set/delete).

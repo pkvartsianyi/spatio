@@ -7,6 +7,67 @@ use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use std::fmt;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NamespaceName(String);
+
+impl NamespaceName {
+    /// Parses and validates a string as a namespace name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The string to parse as a namespace name.
+    /// * `separator` - The separator string that the name must not contain.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(NamespaceName)` if the name is valid, `Err(SpatioError)` otherwise.
+    pub fn parse<S: Into<String>>(name: S, separator: &str) -> Result<Self> {
+        let name = name.into();
+
+        if name.is_empty() {
+            return Err(SpatioError::Other("Namespace name cannot be empty".into()));
+        }
+
+        if name.contains(separator) {
+            return Err(SpatioError::Other(format!(
+                "Namespace name '{}' cannot contain separator '{}'",
+                name, separator
+            )));
+        }
+
+        if name.contains('\0') {
+            return Err(SpatioError::Other(
+                "Namespace name cannot contain null bytes".into(),
+            ));
+        }
+
+        if name.len() > 255 {
+            return Err(SpatioError::Other(
+                "Namespace name cannot exceed 255 characters".into(),
+            ));
+        }
+
+        Ok(Self(name))
+    }
+
+    /// Returns a reference to the inner string of the namespace name.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<NamespaceName> for String {
+    fn from(name: NamespaceName) -> Self {
+        name.0
+    }
+}
+
+impl std::fmt::Display for NamespaceName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// A namespace for organizing and isolating data
 ///
 /// Namespaces provide logical separation of data within a single Spatio instance.
@@ -17,8 +78,8 @@ use std::fmt;
 /// ```rust
 /// use spatio::Namespace;
 ///
-/// let namespace_a = Namespace::new("namespace_a");
-/// let namespace_b = Namespace::new("namespace_b");
+/// let namespace_a = Namespace::new("namespace_a").unwrap();
+/// let namespace_b = Namespace::new("namespace_b").unwrap();
 ///
 /// // Keys are automatically prefixed
 /// let key_a = namespace_a.key("user:123");
@@ -28,7 +89,7 @@ use std::fmt;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Namespace {
-    name: String,
+    name: NamespaceName,
     separator: String,
 }
 
@@ -42,10 +103,14 @@ impl Namespace {
     ///
     /// * `name` - The namespace name (must not contain the separator)
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if the name contains the default separator or is empty
-    pub fn new<S: Into<String>>(name: S) -> Self {
+    /// A new `Namespace` instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SpatioError` if the name is invalid.
+    pub fn new<S: Into<String>>(name: S) -> Result<Self> {
         Self::with_separator(name, Self::DEFAULT_SEPARATOR)
     }
 
@@ -56,34 +121,30 @@ impl Namespace {
     /// * `name` - The namespace name (must not contain the separator)
     /// * `separator` - The separator string to use between namespace and key
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if the name contains the separator or if either is empty
-    pub fn with_separator<S: Into<String>, T: Into<String>>(name: S, separator: T) -> Self {
-        let name = name.into();
+    /// A new `Namespace` instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SpatioError` if the name or separator is invalid.
+    pub fn with_separator<S: Into<String>, T: Into<String>>(name: S, separator: T) -> Result<Self> {
         let separator = separator.into();
 
-        if name.is_empty() {
-            panic!("Namespace name cannot be empty");
-        }
-
         if separator.is_empty() {
-            panic!("Namespace separator cannot be empty");
+            return Err(SpatioError::Other(
+                "Namespace separator cannot be empty".into(),
+            ));
         }
 
-        if name.contains(&separator) {
-            panic!(
-                "Namespace name '{}' cannot contain separator '{}'",
-                name, separator
-            );
-        }
+        let name = NamespaceName::parse(name, &separator)?;
 
-        Self { name, separator }
+        Ok(Self { name, separator })
     }
 
     /// Get the namespace name
     pub fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Get the separator used by this namespace
@@ -103,9 +164,9 @@ impl Namespace {
     pub fn key<K: AsRef<[u8]>>(&self, key: K) -> Bytes {
         let key_bytes = key.as_ref();
         let mut result =
-            Vec::with_capacity(self.name.len() + self.separator.len() + key_bytes.len());
+            Vec::with_capacity(self.name.0.len() + self.separator.len() + key_bytes.len());
 
-        result.extend_from_slice(self.name.as_bytes());
+        result.extend_from_slice(self.name.0.as_bytes());
         result.extend_from_slice(self.separator.as_bytes());
         result.extend_from_slice(key_bytes);
 
@@ -122,8 +183,8 @@ impl Namespace {
     /// This is useful for scanning operations where you want all keys
     /// belonging to a specific namespace.
     pub fn prefix(&self) -> Bytes {
-        let mut result = Vec::with_capacity(self.name.len() + self.separator.len());
-        result.extend_from_slice(self.name.as_bytes());
+        let mut result = Vec::with_capacity(self.name.0.len() + self.separator.len());
+        result.extend_from_slice(self.name.0.as_bytes());
         result.extend_from_slice(self.separator.as_bytes());
         Bytes::from(result)
     }
@@ -162,44 +223,6 @@ impl Namespace {
             None
         }
     }
-
-    /// Validate a namespace name
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The namespace name to validate
-    /// * `separator` - The separator that will be used
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if valid, `Err(SpatioError)` if invalid
-    pub fn validate_name(name: &str, separator: &str) -> Result<()> {
-        if name.is_empty() {
-            return Err(SpatioError::Other("Namespace name cannot be empty".into()));
-        }
-
-        if name.contains(separator) {
-            return Err(SpatioError::Other(format!(
-                "Namespace name '{}' cannot contain separator '{}'",
-                name, separator
-            )));
-        }
-
-        // Additional validation rules
-        if name.contains('\0') {
-            return Err(SpatioError::Other(
-                "Namespace name cannot contain null bytes".into(),
-            ));
-        }
-
-        if name.len() > 255 {
-            return Err(SpatioError::Other(
-                "Namespace name cannot exceed 255 characters".into(),
-            ));
-        }
-
-        Ok(())
-    }
 }
 
 impl fmt::Display for Namespace {
@@ -210,7 +233,7 @@ impl fmt::Display for Namespace {
 
 impl Default for Namespace {
     fn default() -> Self {
-        Self::new("default")
+        Self::new("default").unwrap()
     }
 }
 
@@ -226,16 +249,16 @@ pub struct NamespaceManager {
 impl NamespaceManager {
     /// Create a new namespace manager with the default separator
     pub fn new() -> Self {
-        Self::with_separator(Namespace::DEFAULT_SEPARATOR)
+        Self::with_separator(Namespace::DEFAULT_SEPARATOR).unwrap()
     }
 
     /// Create a new namespace manager with a custom separator
-    pub fn with_separator<S: Into<String>>(separator: S) -> Self {
+    pub fn with_separator<S: Into<String>>(separator: S) -> Result<Self> {
         let separator = separator.into();
         if separator.is_empty() {
-            panic!("Separator cannot be empty");
+            return Err(SpatioError::Other("Separator cannot be empty".into()));
         }
-        Self { separator }
+        Ok(Self { separator })
     }
 
     /// Get the separator used by this manager
@@ -244,7 +267,7 @@ impl NamespaceManager {
     }
 
     /// Create a namespace
-    pub fn namespace<S: Into<String>>(&self, name: S) -> Namespace {
+    pub fn namespace<S: Into<String>>(&self, name: S) -> Result<Namespace> {
         Namespace::with_separator(name, &self.separator)
     }
 
@@ -322,54 +345,52 @@ mod tests {
 
     #[test]
     fn test_namespace_creation() {
-        let ns = Namespace::new("test_namespace");
+        let ns = Namespace::new("test_namespace").unwrap();
         assert_eq!(ns.name(), "test_namespace");
         assert_eq!(ns.separator(), "::");
     }
 
     #[test]
     fn test_namespace_with_custom_separator() {
-        let ns = Namespace::with_separator("test", ":");
+        let ns = Namespace::with_separator("test", ":").unwrap();
         assert_eq!(ns.name(), "test");
         assert_eq!(ns.separator(), ":");
     }
 
     #[test]
-    #[should_panic(expected = "Namespace name cannot be empty")]
-    fn test_empty_namespace_name() {
-        Namespace::new("");
+    fn test_empty_namespace_name_err() {
+        assert!(Namespace::new("").is_err());
     }
 
     #[test]
-    #[should_panic(expected = "cannot contain separator")]
-    fn test_namespace_name_with_separator() {
-        Namespace::new("test::invalid");
+    fn test_namespace_name_with_separator_err() {
+        assert!(Namespace::new("test::invalid").is_err());
     }
 
     #[test]
     fn test_key_creation() {
-        let ns = Namespace::new("tenant_a");
+        let ns = Namespace::new("tenant_a").unwrap();
         let key = ns.key("user:123");
         assert_eq!(key, Bytes::from("tenant_a::user:123"));
     }
 
     #[test]
     fn test_key_str_creation() {
-        let ns = Namespace::new("tenant_a");
+        let ns = Namespace::new("tenant_a").unwrap();
         let key = ns.key_str("user:123");
         assert_eq!(key, Bytes::from("tenant_a::user:123"));
     }
 
     #[test]
     fn test_prefix() {
-        let ns = Namespace::new("tenant_a");
+        let ns = Namespace::new("tenant_a").unwrap();
         let prefix = ns.prefix();
         assert_eq!(prefix, Bytes::from("tenant_a::"));
     }
 
     #[test]
     fn test_owns_key() {
-        let ns = Namespace::new("tenant_a");
+        let ns = Namespace::new("tenant_a").unwrap();
         let key = ns.key("user:123");
 
         assert!(ns.owns_key(&key));
@@ -379,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_strip_prefix() {
-        let ns = Namespace::new("tenant_a");
+        let ns = Namespace::new("tenant_a").unwrap();
         let original_key = b"user:123";
         let namespaced_key = ns.key(original_key);
 
@@ -391,20 +412,40 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_validation() {
-        assert!(Namespace::validate_name("valid_name", "::").is_ok());
-        assert!(Namespace::validate_name("", "::").is_err());
-        assert!(Namespace::validate_name("invalid::name", "::").is_err());
-        assert!(Namespace::validate_name("null\0byte", "::").is_err());
+    fn test_namespace_name_parse_valid() {
+        assert!(NamespaceName::parse("valid_name", "::").is_ok());
+    }
 
+    #[test]
+    fn test_namespace_name_parse_empty() {
+        assert!(NamespaceName::parse("", "::").is_err());
+    }
+
+    #[test]
+    fn test_namespace_name_parse_with_separator() {
+        assert!(NamespaceName::parse("invalid::name", "::").is_err());
+    }
+
+    #[test]
+    fn test_namespace_name_parse_with_null_byte() {
+        assert!(NamespaceName::parse("null\0byte", "::").is_err());
+    }
+
+    #[test]
+    fn test_namespace_name_parse_too_long() {
         let long_name = "a".repeat(256);
-        assert!(Namespace::validate_name(&long_name, "::").is_err());
+        assert!(NamespaceName::parse(&long_name, "::").is_err());
+    }
+
+    #[test]
+    fn test_namespace_manager_empty_separator_err() {
+        assert!(NamespaceManager::with_separator("").is_err());
     }
 
     #[test]
     fn test_namespace_manager() {
         let manager = NamespaceManager::new();
-        let ns = manager.namespace("namespace_a");
+        let ns = manager.namespace("namespace_a").unwrap();
         let key = ns.key("user:123");
 
         let (parsed_ns, parsed_key) = manager.parse_key(&key).unwrap();
@@ -444,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_namespace_display() {
-        let ns = Namespace::new("test_namespace");
+        let ns = Namespace::new("test_namespace").unwrap();
         assert_eq!(format!("{}", ns), "test_namespace");
     }
 
@@ -456,9 +497,9 @@ mod tests {
 
     #[test]
     fn test_different_separators() {
-        let ns1 = Namespace::with_separator("test", "::");
-        let ns2 = Namespace::with_separator("test", ":");
-        let ns3 = Namespace::with_separator("test", "/");
+        let ns1 = Namespace::with_separator("test", "::").unwrap();
+        let ns2 = Namespace::with_separator("test", ":").unwrap();
+        let ns3 = Namespace::with_separator("test", "/").unwrap();
 
         assert_eq!(ns1.key("key"), Bytes::from("test::key"));
         assert_eq!(ns2.key("key"), Bytes::from("test:key"));
@@ -467,9 +508,9 @@ mod tests {
 
     #[test]
     fn test_namespace_equality() {
-        let ns1 = Namespace::new("test");
-        let ns2 = Namespace::new("test");
-        let ns3 = Namespace::new("other");
+        let ns1 = Namespace::new("test").unwrap();
+        let ns2 = Namespace::new("test").unwrap();
+        let ns3 = Namespace::new("other").unwrap();
 
         assert_eq!(ns1, ns2);
         assert_ne!(ns1, ns3);
@@ -477,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_binary_keys() {
-        let ns = Namespace::new("binary");
+        let ns = Namespace::new("binary").unwrap();
         let binary_key = vec![0u8, 1, 2, 255, 254];
         let namespaced = ns.key(&binary_key);
 

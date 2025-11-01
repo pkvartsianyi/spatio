@@ -3,10 +3,18 @@
 //! This module provides streamlined, serializable types for configuration
 //! and data management with minimal complexity.
 
+use crate::spatial::Point;
 use bytes::Bytes;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
+
+/// A geographic point with an associated timestamp.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct TemporalPoint {
+    pub point: Point,
+    pub timestamp: SystemTime,
+}
 
 /// Synchronization policy for persistence
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

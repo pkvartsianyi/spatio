@@ -68,18 +68,18 @@
 //! ```
 //!
 //! ## Trajectory Tracking
-//!
 //! ```rust
-//! use spatio::{Point, Spatio};
+//! use spatio::{Point, Spatio, TemporalPoint};
+//! use std::time::{Duration, SystemTime, UNIX_EPOCH};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let db = Spatio::memory()?;
 //!
-//! // Track a vehicle's movement over time
+//! // Track a vehicle\'s movement over time
 //! let trajectory = vec![
-//!     (Point::new(40.7128, -74.0060), 1640995200), // Start
-//!     (Point::new(40.7150, -74.0040), 1640995260), // 1 min later
-//!     (Point::new(40.7172, -74.0020), 1640995320), // 2 min later
+//!     TemporalPoint { point: Point::new(40.7128, -74.0060), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
+//!     TemporalPoint { point: Point::new(40.7150, -74.0040), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
+//!     TemporalPoint { point: Point::new(40.7172, -74.0020), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
 //! ];
 //!
 //! db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
@@ -150,7 +150,7 @@ pub type Spatio = DB;
 pub use spatial::{BoundingBox, Point};
 
 // Configuration and options
-pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy};
+pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy, TemporalPoint};
 #[cfg(feature = "time-index")]
 pub use types::{HistoryEntry, HistoryEventKind};
 
