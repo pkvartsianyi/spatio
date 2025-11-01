@@ -23,7 +23,7 @@
 //! db.insert("user:123", b"John Doe", None)?;
 //!
 //! // Store a geographic point, which is automatically added to the spatial index.
-//! let nyc = Point::new(40.7128, -74.0060);
+//! let nyc = Point::new(-74.0060, 40.7128);
 //! db.insert_point("cities", &nyc, b"New York City", None)?;
 //!
 //! // Query nearby points within a 100 km radius.
@@ -77,9 +77,9 @@
 //!
 //! // Track a vehicle\'s movement over time
 //! let trajectory = vec![
-//!     TemporalPoint { point: Point::new(40.7128, -74.0060), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
-//!     TemporalPoint { point: Point::new(40.7150, -74.0040), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
-//!     TemporalPoint { point: Point::new(40.7172, -74.0020), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
+//!     TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
+//!     TemporalPoint { point: Point::new(-74.0040, 40.7150), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
+//!     TemporalPoint { point: Point::new(-74.0020, 40.7172), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
 //! ];
 //!
 //! db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
@@ -100,8 +100,8 @@
 //! let db = Spatio::memory()?;
 //!
 //! // Insert some cities
-//! let nyc = Point::new(40.7128, -74.0060);
-//! let brooklyn = Point::new(40.6782, -73.9442);
+//! let nyc = Point::new(-74.0060, 40.7128);
+//! let brooklyn = Point::new(-73.9442, 40.6782);
 //! db.insert_point("cities", &nyc, b"New York", None)?;
 //! db.insert_point("cities", &brooklyn, b"Brooklyn", None)?;
 //!
@@ -131,7 +131,6 @@ pub mod error;
 pub mod ffi;
 pub mod index;
 pub mod namespace;
-pub mod spatial;
 pub mod storage;
 pub mod types;
 
@@ -146,8 +145,8 @@ pub use error::{Result, SpatioError};
 // Main database type alias for cleaner API
 pub type Spatio = DB;
 
-// Spatial types and operations
-pub use spatial::{BoundingBox, Point};
+// Geo types
+pub use geo::Point;
 
 // Configuration and options
 pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy, TemporalPoint};
@@ -184,15 +183,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// use spatio::prelude::*;
 ///
 /// let db = Spatio::memory()?;
-/// let point = Point::new(40.7128, -74.0060);
+/// let point = Point::new(-74.0060, 40.7128);
 /// # Ok::<(), spatio::SpatioError>(())
 /// ```
 pub mod prelude {
     // Core database types
     pub use crate::{DBBuilder, Result, Spatio, SpatioError};
 
-    // Spatial types
-    pub use crate::{BoundingBox, Point};
+    // Geo types
+    pub use geo::Point;
 
     // Configuration
     pub use crate::{Config, SetOptions, SyncPolicy};

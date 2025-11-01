@@ -5,13 +5,14 @@
 
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
-use crate::index::IndexManager;
+use crate::index::{IndexManager, SpatialKey};
 use crate::persistence::{AOFCommand, AOFFile};
-use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions, TemporalPoint};
 #[cfg(feature = "time-index")]
 use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
+use geo::Point;
+use geohash;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -60,8 +61,8 @@ use std::time::SystemTime;
 /// let db = Spatio::memory()?;
 ///
 /// // Store geographic points (automatically indexed)
-/// let nyc = Point::new(40.7128, -74.0060);
-/// let london = Point::new(51.5074, -0.1278);
+/// let nyc = Point::new(-74.0060, 40.7128);
+/// let london = Point::new(-0.1278, 51.5074);
 ///
 /// db.insert_point("cities", &nyc, b"New York", None)?;
 /// db.insert_point("cities", &london, b"London", None)?;
@@ -465,7 +466,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let nyc = Point::new(40.7128, -74.0060);
+    /// let nyc = Point::new(-74.0060, 40.7128);
     ///
     /// db.insert_point("cities", &nyc, b"New York City", None)?;
     /// # Ok(())
@@ -485,8 +486,7 @@ impl DB {
         let mut inner = self.write()?;
 
         // Generate geohash key using configured precision
-        let geohash = point
-            .to_geohash(inner.config.geohash_precision)
+        let geohash = geohash::encode((*point).into(), inner.config.geohash_precision)
             .map_err(|_| SpatioError::InvalidGeohash)?;
 
         // Insert into main storage
@@ -533,7 +533,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Find up to 10 points within 1km
     /// let nearby = db.query_within_radius("cities", &center, 1000.0, 10)?;
@@ -574,9 +574,9 @@ impl DB {
     /// let db = Spatio::memory()?;
     ///
     /// let trajectory = vec![
-    ///     TemporalPoint { point: Point::new(40.7128, -74.0060), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
-    ///     TemporalPoint { point: Point::new(40.7150, -74.0040), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
-    ///     TemporalPoint { point: Point::new(40.7172, -74.0020), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
+    ///     TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
+    ///     TemporalPoint { point: Point::new(-74.0040, 40.7150), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
+    ///     TemporalPoint { point: Point::new(-74.0020, 40.7172), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
     /// ];
     ///
     /// db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
@@ -700,7 +700,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Check if there are any cities within 50km
     /// let has_nearby = db.contains_point("cities", &center, 50_000.0)?;
@@ -773,7 +773,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Count how many sensors are within 1km
     /// let count = db.count_within_radius("sensors", &center, 1000.0)?;
@@ -1273,14 +1273,14 @@ impl DBInner {
 
     fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
         if let Ok(key_str) = std::str::from_utf8(key)
-            && let Some((prefix, geohash, point_hint)) = self.parse_spatial_key_extended(key_str)
+            && let Some((prefix, _geohash_from_key, point_hint)) =
+                self.parse_spatial_key_extended(key_str)
         {
-            let point = point_hint.or_else(|| self.decode_geohash_to_point(geohash).ok());
-            if let Some(point) = point {
-                let _ = self
-                    .index_manager
-                    .insert_point(prefix, geohash, key, &point, value);
-            }
+            let point =
+                point_hint.expect("Spatial key should always contain point hint during replay");
+            let _ = self
+                .index_manager
+                .insert_point(prefix, _geohash_from_key, key, &point, value);
         }
     }
 
@@ -1312,8 +1312,8 @@ impl DBInner {
                 let lat_bits = u64::from_str_radix(parts[3], 16).ok()?;
                 let lon_bits = u64::from_str_radix(parts[4], 16).ok()?;
                 Some(Point::new(
-                    f64::from_bits(lat_bits),
                     f64::from_bits(lon_bits),
+                    f64::from_bits(lat_bits),
                 ))
             } else {
                 None
@@ -1326,12 +1326,12 @@ impl DBInner {
     }
 
     /// Decode a geohash back to a Point
-    fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
-        let (coord, _lat_err, _lon_err) =
-            geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
-        Ok(Point::new(coord.y, coord.x))
-    }
-
+    ///
+    // fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
+    //     let (coord, _lat_err, _lon_err) =
+    //         geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
+    //     Ok(Point::new(coord.y, coord.x))
+    // }
     /// Write to AOF file if needed
     pub fn write_to_aof_if_needed(
         &mut self,

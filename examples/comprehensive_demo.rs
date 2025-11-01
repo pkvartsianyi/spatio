@@ -1,4 +1,7 @@
-use spatio::{Point, SetOptions, Spatio, TemporalPoint};
+use geo::Distance;
+use geo::Haversine;
+use geo::Point;
+use spatio::{SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -89,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Calculate distances between cities
     let london = Point::new(51.5074, -0.1278);
     let paris = Point::new(48.8566, 2.3522);
-    let distance_km = london.distance_to(&paris) / 1000.0;
+    let distance_km = Haversine.distance(london, paris) / 1000.0;
     println!("  London ↔ Paris: {:.0} km", distance_km);
 
     // Find cities near London (within 1000km)
@@ -97,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Cities within 1000km of London:");
     for (point, data) in &nearby_london {
         let city_name = String::from_utf8_lossy(data);
-        let distance = london.distance_to(point) / 1000.0;
+        let distance = Haversine.distance(london, *point) / 1000.0;
         println!("    - {} ({:.0} km)", city_name, distance);
     }
 
@@ -122,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Restaurants within 2km of Covent Garden:");
     for (point, data) in &nearby_food {
         let restaurant_name = String::from_utf8_lossy(data);
-        let distance = covent_garden.distance_to(point);
+        let distance = Haversine.distance(covent_garden, *point);
         println!("    - {} ({:.0}m away)", restaurant_name, distance);
     }
 
@@ -220,7 +223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Sensors within 5km of monitoring center:");
     for (point, data) in &nearby_sensors {
         let sensor_info = String::from_utf8_lossy(data);
-        let distance = monitoring_center.distance_to(point);
+        let distance = Haversine.distance(monitoring_center, *point);
         println!("    - {} ({:.0}m away)", sensor_info, distance);
     }
 

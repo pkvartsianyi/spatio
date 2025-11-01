@@ -1,4 +1,5 @@
-use spatio::{Point, SetOptions, Spatio, TemporalPoint};
+use geo::{Distance, Haversine, Point};
+use spatio::{SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Stored geographic points for major cities");
 
     // Calculate distance between cities
-    let distance_km = new_york.distance_to(&london) / 1000.0;
+    let distance_km = Haversine.distance(new_york, london) / 1000.0;
     println!("Distance NYC ↔ London: {:.0} km", distance_km);
 
     // Find nearby cities (within 2000km of NYC)
@@ -44,8 +45,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  - {} at ({:.2}, {:.2})",
             String::from_utf8_lossy(data),
-            point.lat,
-            point.lon
+            point.y(),
+            point.x()
         );
     }
 
@@ -93,7 +94,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for tp in &path_segment {
         println!(
             "  - Point at ({:.2}, {:.2}) at {:?}",
-            tp.point.lat, tp.point.lon, tp.timestamp
+            tp.point.y(),
+            tp.point.x(),
+            tp.timestamp
         );
     }
 

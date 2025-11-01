@@ -8,7 +8,8 @@
 //! cargo run --example persistence_lifecycle
 //! ```
 
-use spatio::{Config, DBBuilder, Point, SetOptions, Spatio, SyncPolicy};
+use geo::Point;
+use spatio::{Config, DBBuilder, SetOptions, Spatio, SyncPolicy};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -166,7 +167,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
         );
         for (point, data) in nearby {
             let name = String::from_utf8_lossy(&data);
-            println!("    - {} at ({:.4}, {:.4})", name, point.lat, point.lon);
+            println!("    - {} at ({:.4}, {:.4})", name, point.y(), point.x());
         }
 
         // Count cities in a bounding box

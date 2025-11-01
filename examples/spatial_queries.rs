@@ -1,4 +1,5 @@
-use spatio::{BoundingBox, Point, Spatio};
+use geo::{Distance, Haversine, Intersects, Point, Rect};
+use spatio::Spatio;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Spatio - Spatio-Temporal Queries Example");
@@ -30,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Define a reference point (London)
     let reference_point = Point::new(51.5074, -0.1278);
-    println!("Using London as reference point: {}", reference_point);
+    println!("Using London as reference point: {:?}", reference_point);
 
     // Find cities within 1000km of London
     println!("\nCities within 1000km of London:");
@@ -39,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (point, data) in &nearby_cities {
         let city_name = String::from_utf8_lossy(data);
-        let distance_km = reference_point.distance_to(point) / 1000.0;
+        let distance_km = Haversine.distance(reference_point, *point) / 1000.0;
         println!("  - {} ({:.0} km away)", city_name, distance_km);
     }
 
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (point, data) in &medium_range_cities {
         let city_name = String::from_utf8_lossy(data);
-        let distance_km = reference_point.distance_to(point) / 1000.0;
+        let distance_km = Haversine.distance(reference_point, *point) / 1000.0;
         println!("  - {} ({:.0} km away)", city_name, distance_km);
     }
 
@@ -61,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, (point, data)) in closest_cities.iter().enumerate() {
         let city_name = String::from_utf8_lossy(data);
-        let distance_km = reference_point.distance_to(point) / 1000.0;
+        let distance_km = Haversine.distance(reference_point, *point) / 1000.0;
         println!("  {}. {} ({:.0} km away)", i + 1, city_name, distance_km);
     }
 
@@ -73,15 +74,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "  - New York ↔ London: {:.0} km",
-        nyc.distance_to(&reference_point) / 1000.0
+        Haversine.distance(nyc, reference_point) / 1000.0
     );
     println!(
         "  - London ↔ Tokyo: {:.0} km",
-        reference_point.distance_to(&tokyo) / 1000.0
+        Haversine.distance(reference_point, tokyo) / 1000.0
     );
     println!(
         "  - Tokyo ↔ Sydney: {:.0} km",
-        tokyo.distance_to(&sydney) / 1000.0
+        Haversine.distance(tokyo, sydney) / 1000.0
     );
 
     // Add some points of interest in London
@@ -105,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (point, data) in &nearby_poi {
         let poi_name = String::from_utf8_lossy(data);
-        let distance_m = big_ben.distance_to(point);
+        let distance_m = Haversine.distance(big_ben, *point);
         if distance_m < 10.0 {
             println!("  - {} (same location)", poi_name);
         } else {
@@ -162,7 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Cities in European region:");
     for (point, data) in &european_cities {
         let city_name = String::from_utf8_lossy(data);
-        println!("    - {} at {}", city_name, point);
+        println!("    - {} at {:?}", city_name, point);
     }
 
     // Test bounding box around London area
@@ -179,12 +180,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Cities in London area:");
     for (point, data) in &london_area_cities {
         let city_name = String::from_utf8_lossy(data);
-        println!("    - {} at {}", city_name, point);
+        println!("    - {} at {:?}", city_name, point);
     }
 
     // Demonstrate BoundingBox struct usage
-    let asia_pacific = BoundingBox::new(-50.0, 100.0, 50.0, 180.0);
-    let europe_box = BoundingBox::new(35.0, -10.0, 70.0, 40.0);
+    let asia_pacific = Rect::new(Point::new(100.0, -50.0), Point::new(180.0, 50.0));
+    let europe_box = Rect::new(Point::new(-10.0, 35.0), Point::new(40.0, 70.0));
 
     println!("  BoundingBox intersection test:");
     println!(
@@ -199,11 +200,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!(
         "    - Tower Bridge within 5km of Central London: {}",
-        central_london.contains_point(&tower_bridge, 5000.0)
+        Haversine.distance(central_london, tower_bridge) <= 5000.0
     );
     println!(
         "    - Central London within 2km of Tower Bridge: {}",
-        tower_bridge.contains_point(&central_london, 2000.0)
+        Haversine.distance(tower_bridge, central_london) <= 2000.0
     );
 
     println!("\nEnhanced spatial queries example completed successfully!");

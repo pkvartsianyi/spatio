@@ -1,4 +1,7 @@
-use spatio::{Point, SetOptions, Spatio, TemporalPoint};
+use geo::Distance;
+use geo::Haversine;
+use geo::Point;
+use spatio::{SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -244,9 +247,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Truck route analysis
     let mut truck_total_distance = 0.0;
     for i in 1..delivery_truck_route.len() {
-        let distance = delivery_truck_route[i - 1]
-            .point
-            .distance_to(&delivery_truck_route[i].point);
+        let distance = Haversine.distance(
+            delivery_truck_route[i - 1].point,
+            delivery_truck_route[i].point,
+        );
         truck_total_distance += distance;
     }
     let truck_duration = delivery_truck_route
@@ -273,7 +277,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Taxi route analysis
     let mut taxi_total_distance = 0.0;
     for i in 1..taxi_route.len() {
-        let distance = taxi_route[i - 1].point.distance_to(&taxi_route[i].point);
+        let distance = Haversine.distance(taxi_route[i - 1].point, taxi_route[i].point);
         taxi_total_distance += distance;
     }
     let taxi_duration = taxi_route
@@ -336,7 +340,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Checking trajectories for geofence violations...");
     println!(
         "Restricted zone: {:.4}°N, {:.4}°E (radius: {}m)",
-        restricted_center.lat, restricted_center.lon, restricted_radius
+        restricted_center.y(),
+        restricted_center.x(),
+        restricted_radius
     );
 
     // Check each trajectory for violations
@@ -350,7 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (vehicle_id, trajectory) in &trajectories {
         let mut violations = 0;
         for temporal_point in trajectory.iter() {
-            let distance = temporal_point.point.distance_to(&restricted_center);
+            let distance = Haversine.distance(restricted_center, temporal_point.point);
             if distance <= restricted_radius {
                 violations += 1;
                 if violations == 1 {
@@ -382,9 +388,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for truck_temporal_point in &delivery_truck_route {
         for taxi_temporal_point in &taxi_route {
-            let distance = truck_temporal_point
-                .point
-                .distance_to(&taxi_temporal_point.point);
+            let distance =
+                Haversine.distance(truck_temporal_point.point, taxi_temporal_point.point);
             let time_diff = truck_temporal_point
                 .timestamp
                 .duration_since(UNIX_EPOCH)

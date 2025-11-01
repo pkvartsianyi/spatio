@@ -1,5 +1,5 @@
-use spatio::TemporalPoint;
-use spatio::prelude::*;
+use geo::Point;
+use spatio::{SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 
@@ -78,7 +78,7 @@ fn test_aof_file_handle_consistency() {
     for i in 0..20 {
         let lat = 40.0 + (i as f64) * 0.01;
         let lon = -74.0 + (i as f64) * 0.01;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point("initial", &point, format!("initial_{}", i).as_bytes(), None)
             .unwrap();
     }
@@ -89,7 +89,7 @@ fn test_aof_file_handle_consistency() {
     for i in 20..40 {
         let lat = 41.0 + (i as f64) * 0.01;
         let lon = -73.0 + (i as f64) * 0.01;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point("trigger", &point, format!("trigger_{}", i).as_bytes(), None)
             .unwrap();
     }
@@ -98,7 +98,7 @@ fn test_aof_file_handle_consistency() {
     for i in 40..60 {
         let lat = 42.0 + (i as f64) * 0.01;
         let lon = -72.0 + (i as f64) * 0.01;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point("after", &point, format!("after_{}", i).as_bytes(), None)
             .unwrap();
     }
@@ -153,7 +153,7 @@ fn test_aof_rewrite_atomicity() {
     for i in 0..30 {
         let lat = 40.0 + (i as f64) * 0.01;
         let lon = -74.0 + (i as f64) * 0.01;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point("test", &point, format!("key_{}", i).as_bytes(), None)
             .unwrap();
     }
@@ -169,7 +169,7 @@ fn test_aof_rewrite_atomicity() {
     for i in 30..50 {
         let lat = 40.0 + (i as f64) * 0.01;
         let lon = -74.0 + (i as f64) * 0.01;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point("test", &point, format!("key_{}", i).as_bytes(), None)
             .unwrap();
     }
@@ -198,8 +198,8 @@ fn test_aof_rewrite_atomicity() {
         // Verify point coordinates match our formula: lat = 40.0 + index * 0.01
         let expected_lat = 40.0 + (index as f64) * 0.01;
         let expected_lon = -74.0 + (index as f64) * 0.01;
-        assert!((point.lat - expected_lat).abs() < 0.001);
-        assert!((point.lon - expected_lon).abs() < 0.001);
+        assert!((point.x() - expected_lon).abs() < 0.001);
+        assert!((point.y() - expected_lat).abs() < 0.001);
     }
 }
 
@@ -215,7 +215,7 @@ fn test_aof_persistence_across_restarts() {
         // Insert various types of data
         db.insert("simple_key", b"simple_value", None).unwrap();
 
-        let point = Point::new(40.7128, -74.0060);
+        let point = Point::new(-74.0060, 40.7128);
         db.insert_point("cities", &point, b"New York City", None)
             .unwrap();
 
@@ -226,11 +226,11 @@ fn test_aof_persistence_across_restarts() {
         // Insert trajectory
         let trajectory = vec![
             TemporalPoint {
-                point: Point::new(40.7128, -74.0060),
+                point: Point::new(-74.0060, 40.7128),
                 timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1640995200),
             },
             TemporalPoint {
-                point: Point::new(40.7150, -74.0040),
+                point: Point::new(-74.0040, 40.7150),
                 timestamp: SystemTime::UNIX_EPOCH + Duration::from_secs(1640995260),
             },
         ];
@@ -247,7 +247,7 @@ fn test_aof_persistence_across_restarts() {
         assert_eq!(value.as_ref(), b"simple_value");
 
         // Check point by searching nearby
-        let search_point = Point::new(40.7128, -74.0060);
+        let search_point = Point::new(-74.0060, 40.7128);
         let nearby = db
             .query_within_radius("cities", &search_point, 1000.0, 10)
             .unwrap();
@@ -263,8 +263,8 @@ fn test_aof_persistence_across_restarts() {
             .query_trajectory("vehicle:001", 1640995200, 1640995260)
             .unwrap();
         assert_eq!(path.len(), 2);
-        assert_eq!(path[0].point.lat, 40.7128);
-        assert_eq!(path[1].point.lat, 40.7150);
+        assert_eq!(path[0].point.y(), 40.7128);
+        assert_eq!(path[1].point.y(), 40.7150);
     }
 
     // Third session: modify data and verify persistence
@@ -278,7 +278,7 @@ fn test_aof_persistence_across_restarts() {
         db.delete("temp_key").unwrap();
 
         // Add more data
-        let point = Point::new(34.0522, -118.2437);
+        let point = Point::new(-118.2437, 34.0522);
         db.insert_point("cities", &point, b"Los Angeles", None)
             .unwrap();
     }
@@ -302,13 +302,13 @@ fn test_aof_persistence_across_restarts() {
         assert_eq!(all_cities.len(), 2);
 
         // Original data should still exist
-        let nyc_search = Point::new(40.7128, -74.0060);
+        let nyc_search = Point::new(-74.0060, 40.7128);
         let nyc_nearby = db
             .query_within_radius("cities", &nyc_search, 1000.0, 10)
             .unwrap();
         assert!(!nyc_nearby.is_empty());
 
-        let la_search = Point::new(34.0522, -118.2437);
+        let la_search = Point::new(-118.2437, 34.0522);
         let la_nearby = db
             .query_within_radius("cities", &la_search, 1000.0, 10)
             .unwrap();
@@ -327,7 +327,7 @@ fn test_synchronous_rewrite_behavior() {
     for i in 0..100 {
         let lat = 40.0 + (i as f64) * 0.001; // Smaller increments for denser data
         let lon = -74.0 + (i as f64) * 0.001;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point(
             "dense",
             &point,
@@ -351,7 +351,7 @@ fn test_synchronous_rewrite_behavior() {
     for i in 100..200 {
         let lat = 40.0 + (i as f64) * 0.001;
         let lon = -74.0 + (i as f64) * 0.001;
-        let point = Point::new(lat, lon);
+        let point = Point::new(lon, lat);
         db.insert_point(
             "dense",
             &point,
