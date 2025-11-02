@@ -47,6 +47,7 @@ No SQL parser, no external dependencies, and requires no setup.
 
 ### Spatio-Temporal Indexing and Querying
 - **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
+- **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **Trajectory Support** — Store and query movement over time
 - **GeoJSON I/O** — Supports import and export of geometries in GeoJSON format
@@ -212,10 +213,34 @@ db.delete("key")?;
 
 ### Spatial Operations
 ```rust
+use spatio::spatial::{distance_between, DistanceMetric};
+use geo::polygon;
+
 let point = Point::new(-74.0060, 40.7128);
 
 // Insert point with automatic spatial indexing
 db.insert_point("namespace", &point, b"data", None)?;
+
+// Distance calculations with multiple metrics
+let nyc = Point::new(-74.0060, 40.7128);
+let la = Point::new(-118.2437, 34.0522);
+let dist = db.distance_between(&nyc, &la, DistanceMetric::Haversine)?;
+println!("Distance: {:.2} km", dist / 1000.0); // ~3,944 km
+
+// K-nearest-neighbors search
+let nearest = db.knn("namespace", &point, 5, 500_000.0, DistanceMetric::Haversine)?;
+for (pt, data, distance) in nearest {
+    println!("Found point at {:.2} km", distance / 1000.0);
+}
+
+// Polygon queries (using geo crate)
+let area = polygon![
+    (x: -74.0, y: 40.7),
+    (x: -73.9, y: 40.7),
+    (x: -73.9, y: 40.8),
+    (x: -74.0, y: 40.8),
+];
+let in_polygon = db.query_within_polygon("namespace", &area, 100)?;
 
 // Find nearby points
 let nearby = db.query_within_radius("namespace", &point, 1000.0, 10)?;
@@ -230,6 +255,8 @@ let count = db.count_within_radius("namespace", &point, 1000.0)?;
 let in_bounds = db.find_within_bounds("namespace", 40.0, -75.0, 41.0, -73.0, 10)?;
 let intersects = db.intersects_bounds("namespace", 40.0, -75.0, 41.0, -73.0)?;
 ```
+
+**Note**: See [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md) for complete documentation on all spatial operations, including convex hull, polygon area calculations, and more.
 
 ### Trajectory Tracking
 ```rust
@@ -311,8 +338,26 @@ cargo fmt
 
 MIT License ([LICENSE](LICENSE))
 
+## Spatial Features
+
+Spatio provides comprehensive geospatial operations powered by the [georust/geo](https://github.com/georust/geo) crate:
+
+- **4 Distance Metrics**: Haversine (fast spherical), Geodesic (accurate ellipsoidal), Rhumb (constant bearing), Euclidean (planar)
+- **K-Nearest-Neighbors**: Find the K closest points efficiently using spatial index
+- **Polygon Queries**: Point-in-polygon tests, polygon area calculations
+- **Geometric Operations**: Convex hull, bounding boxes, bbox expansion and intersection
+- **Full geo Integration**: All operations leverage battle-tested geo crate implementations
+
+**Coordinate Convention**:
+- **Rust**: `Point::new(longitude, latitude)` - follows geo crate (x, y) convention
+- **Python**: `Point(latitude, longitude)` - user-friendly order, converted internally
+
+For complete documentation and examples, see:
+- [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md) - Complete API reference
+- [examples/advanced_spatial.rs](examples/advanced_spatial.rs) - Comprehensive demo
+
 ## Acknowledgments
 
-- Built with the Rust ecosystem's excellent geospatial libraries
+- Built with the Rust ecosystem's excellent geospatial libraries (especially [georust/geo](https://github.com/georust/geo))
 - Inspired by modern embedded databases and spatial indexing research
 - Thanks to the Rust community for feedback and contributions

@@ -11,6 +11,7 @@ Python bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a high-per
 
 - **High Performance**: Built on Rust for maximum speed and memory efficiency
 - **Spatio-Temporal Operations**: Geographic point storage with automatic spatial indexing and optional time filters
+- **Advanced Spatial Queries**: Distance calculations (4 metrics), K-nearest-neighbors, polygon queries, bounding box operations
 - **Trajectory Tracking**: Store and query movement data over time
 - **TTL Support**: Automatic data expiration with time-to-live
 - **Thread-Safe**: Concurrent access (atomic operations coming soon for Python)
@@ -86,6 +87,11 @@ db.insert_point(prefix, point, value, options=None)
 nearby = db.query_within_radius(prefix, center, radius_meters, limit)
 count = db.count_within_radius(prefix, center, radius_meters)
 
+# Advanced spatial operations
+distance = db.distance_between(point1, point2, metric)
+nearest = db.knn(prefix, center, k, max_radius, metric)
+in_polygon = db.query_within_polygon(prefix, polygon_coords, limit)
+
 # Trajectory operations
 db.insert_trajectory(object_id, trajectory, options=None)
 path = db.query_trajectory(object_id, start_time, end_time)
@@ -95,13 +101,27 @@ path = db.query_trajectory(object_id, start_time, end_time)
 
 Represents a geographic coordinate.
 
+**Note**: Python uses `(latitude, longitude)` order for user convenience, but internally converts to geo crate's `(longitude, latitude)` format.
+
 ```python
-# Create points
+# Create points (latitude, longitude order in Python)
 point = spatio.Point(latitude, longitude)
 print(f"Location: {point.lat}, {point.lon}")
 
-# Calculate distance
+# Calculate distance (uses Haversine by default)
 distance = point1.distance_to(point2)  # Returns meters
+```
+
+### DistanceMetric
+
+Distance calculation methods for spatial operations.
+
+```python
+# Available metrics
+metric = spatio.DistanceMetric("haversine")  # Fast spherical (default)
+metric = spatio.DistanceMetric("geodesic")   # Accurate ellipsoidal (Karney 2013)
+metric = spatio.DistanceMetric("rhumb")      # Constant bearing (navigation)
+metric = spatio.DistanceMetric("euclidean")  # Planar coordinates only
 ```
 
 ### SetOptions
@@ -161,6 +181,43 @@ nearby = db.query_within_radius("cities", nyc, 6000000.0, 10)
 print(f"Cities within 6000km of NYC:")
 for point, name, distance in nearby:
     print(f"  {name.decode()}: {distance/1000:.0f}km")
+```
+
+### Advanced Spatial Operations
+
+```python
+import spatio
+
+db = spatio.Spatio.memory()
+
+# Insert cities
+db.insert_point("cities", spatio.Point(40.7128, -74.0060), b"NYC")
+db.insert_point("cities", spatio.Point(34.0522, -118.2437), b"LA")
+db.insert_point("cities", spatio.Point(41.8781, -87.6298), b"Chicago")
+
+# Distance calculation with multiple metrics
+nyc = spatio.Point(40.7128, -74.0060)
+la = spatio.Point(34.0522, -118.2437)
+metric = spatio.DistanceMetric("haversine")
+distance = db.distance_between(nyc, la, metric)
+print(f"NYC to LA: {distance / 1000:.2f} km")
+
+# K-nearest-neighbors
+query = spatio.Point(40.0, -75.0)
+nearest = db.knn("cities", query, 2, 500_000.0, metric)
+for point, data, dist in nearest:
+    print(f"{data.decode()}: {dist / 1000:.2f} km away")
+
+# Polygon queries (coordinates as list of (lon, lat) tuples)
+polygon = [
+    (-90.0, 35.0),
+    (-70.0, 35.0),
+    (-70.0, 45.0),
+    (-90.0, 45.0),
+    (-90.0, 35.0),  # Close the polygon
+]
+in_region = db.query_within_polygon("cities", polygon, 100)
+print(f"Cities in region: {len(in_region)}")
 ```
 
 ### Trajectory Tracking
@@ -399,6 +456,9 @@ just check
 | `count_within_radius(prefix, center, radius_meters)` | Count points within radius |
 | `intersects_bounds(prefix, min_lat, min_lon, max_lat, max_lon)` | Check if any points in bounding box |
 | `find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)` | Find points in bounding box |
+| `distance_between(point1, point2, metric)` | Calculate distance with specified metric |
+| `knn(prefix, center, k, max_radius, metric)` | Find K nearest neighbors |
+| `query_within_polygon(prefix, polygon_coords, limit)` | Find points within polygon boundary |
 
 ### Trajectory Operations
 
@@ -430,12 +490,29 @@ except RuntimeError as e:
 
 Spatio-Python is in **alpha development**:
 - Core spatial operations implemented
+- Advanced spatial features (distance, KNN, polygon queries) powered by georust/geo
 - Complete Python API via PyO3 bindings
 - TTL and persistence support
 - Multi-platform wheels (Linux, macOS, Windows)
 - Python 3.8-3.13 support
 
 Current version: **0.1.0-alpha.10**
+
+## Coordinate Convention
+
+**Important**: Coordinate ordering differs between Python and Rust for user convenience:
+
+- **Python API**: `Point(latitude, longitude)` - familiar order for most users
+- **Rust/geo**: `Point::new(longitude, latitude)` - standard (x, y) cartesian convention
+
+The Python bindings automatically convert between these formats, so you don't need to worry about it!
+
+```python
+# Python: latitude first (user-friendly)
+nyc = spatio.Point(40.7128, -74.0060)
+print(nyc.lat)  # 40.7128
+print(nyc.lon)  # -74.0060
+```
 
 ### Platform Support
 
@@ -452,9 +529,16 @@ This project is licensed under the MIT License - see the [LICENSE](../LICENSE) f
 
 Contributions are welcome! Please see [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines.
 
+## Spatial Features Documentation
+
+For comprehensive documentation on all spatial operations:
+- **[SPATIAL_FEATURES.md](../SPATIAL_FEATURES.md)** - Complete API reference with examples
+- **[examples/advanced_spatial.rs](../examples/advanced_spatial.rs)** - Comprehensive Rust demo
+
 ## Links
 
 - **GitHub Repository**: https://github.com/pkvartsianyi/spatio
 - **Documentation**: https://github.com/pkvartsianyi/spatio#readme
 - **PyPI Package**: https://pypi.org/project/spatio/
 - **Issue Tracker**: https://github.com/pkvartsianyi/spatio/issues
+- **georust/geo**: https://github.com/georust/geo

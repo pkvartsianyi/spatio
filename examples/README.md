@@ -59,6 +59,24 @@ Working with time-series location data.
 cargo run --example trajectory_tracking
 ```
 
+### `advanced_spatial`
+Comprehensive demonstration of advanced spatial operations using the geo crate.
+
+**Demonstrates:**
+- Distance calculations with 4 metrics (Haversine, Geodesic, Rhumb, Euclidean)
+- K-nearest-neighbors (KNN) queries
+- Polygon boundary queries
+- Bounding box operations and expansion
+- Convex hull computation
+- Bounding rectangle calculation
+- Spatial analytics and distance matrices
+- Integration with georust/geo crate
+
+**Run:**
+```bash
+cargo run --example advanced_spatial
+```
+
 ### `comprehensive_demo`
 End-to-end showcase of all major features.
 
@@ -111,7 +129,10 @@ Store and query landmarks, restaurants, stores, or any geographic features.
 Monitor movement of equipment, vehicles, or valuable items over time.
 
 ### Geofencing
-Check if points fall within defined geographic boundaries.
+Check if points fall within defined geographic boundaries using polygon queries.
+
+### Spatial Analytics
+Calculate distances between points, find nearest neighbors, compute convex hulls, and analyze geographic distributions.
 
 ## Coordinate Format
 
@@ -125,9 +146,43 @@ let nyc = Point::new(-74.0060, 40.7128);
 let london = Point::new(-0.1278, 51.5074);
 ```
 
+**Note**: In Python bindings, the order is reversed for user convenience: `Point(latitude, longitude)`.
+
+## Advanced Spatial Features
+
+Spatio leverages the [georust/geo](https://github.com/georust/geo) crate for comprehensive geospatial operations:
+
+### Distance Calculations
+```rust
+use spatio::spatial::{distance_between, DistanceMetric};
+
+let dist = distance_between(&nyc, &london, DistanceMetric::Haversine);
+// Also available: Geodesic, Rhumb, Euclidean
+```
+
+### K-Nearest-Neighbors
+```rust
+let nearest = db.knn("cities", &query_point, 5, 500_000.0, DistanceMetric::Haversine)?;
+```
+
+### Polygon Queries
+```rust
+use geo::polygon;
+
+let area = polygon![
+    (x: -74.0, y: 40.7),
+    (x: -73.9, y: 40.8),
+    (x: -74.0, y: 40.8),
+];
+let in_area = db.query_within_polygon("namespace", &area, 100)?;
+```
+
+For complete documentation, see [SPATIAL_FEATURES.md](../SPATIAL_FEATURES.md).
+
 ## Next Steps
 
 After running the examples:
 1. Check the [main documentation](../README.md) for API details
-2. Review the [tests](../tests/) for more usage patterns
-3. Explore the [benchmarks](../benches/) for performance characteristics
+2. Review [SPATIAL_FEATURES.md](../SPATIAL_FEATURES.md) for complete spatial operations guide
+3. Review the [tests](../tests/) for more usage patterns
+4. Explore the [benchmarks](../benches/) for performance characteristics
