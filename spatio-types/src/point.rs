@@ -1,6 +1,6 @@
-use std::time::SystemTime;
 use geo::Point;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point3d {
@@ -39,7 +39,11 @@ pub struct TemporalPoint3D {
 
 impl TemporalPoint3D {
     pub fn new(point: Point<f64>, altitude: f64, timestamp: SystemTime) -> Self {
-        Self { point, altitude, timestamp }
+        Self {
+            point,
+            altitude,
+            timestamp,
+        }
     }
 
     pub fn point(&self) -> &Point<f64> {

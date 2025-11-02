@@ -7,6 +7,9 @@ use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
+pub use spatio_types::bbox::{
+    BoundingBox2D, BoundingBox3D, TemporalBoundingBox2D, TemporalBoundingBox3D,
+};
 pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
 pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
 pub use spatio_types::trajectory::{Trajectory, Trajectory3D};

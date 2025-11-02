@@ -154,8 +154,9 @@ pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, k
 
 // Configuration and options
 pub use types::{
-    Config, DbStats, Point3d, Polygon3D, PolygonDynamic, PolygonDynamic3D, SetOptions, SyncMode,
-    SyncPolicy, TemporalPoint, TemporalPoint3D, Trajectory, Trajectory3D,
+    BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
+    PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,
+    TemporalBoundingBox3D, TemporalPoint, TemporalPoint3D, Trajectory, Trajectory3D,
 };
 #[cfg(feature = "time-index")]
 pub use types::{HistoryEntry, HistoryEventKind};

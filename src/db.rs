@@ -7,7 +7,7 @@ use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
 use crate::index::{IndexManager, SpatialKey};
 use crate::persistence::{AOFCommand, AOFFile};
-use crate::types::{Config, DbItem, DbStats, SetOptions, TemporalPoint};
+use crate::types::{BoundingBox2D, Config, DbItem, DbStats, SetOptions, TemporalPoint};
 #[cfg(feature = "time-index")]
 use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
@@ -1004,6 +1004,202 @@ impl DB {
                 results.push((point, data));
                 if results.len() >= limit {
                     break;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Query all points within a bounding box.
+    ///
+    /// Returns all spatial points that fall within the specified 2D bounding box,
+    /// ordered by their distance from the box's center.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Optional key prefix to filter results
+    /// * `bbox` - The bounding box to search within
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// // Store some points
+    /// db.insert_point("poi", &Point::new(-73.9855, 40.7580), b"times_square", None)?;
+    /// db.insert_point("poi", &Point::new(-73.9665, 40.7829), b"central_park", None)?;
+    /// db.insert_point("poi", &Point::new(-73.9442, 40.6782), b"brooklyn", None)?;
+    ///
+    /// // Query points in Manhattan
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// let results = db.query_within_bbox("poi", &manhattan, 100)?;
+    ///
+    /// println!("Found {} points in Manhattan", results.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_bbox(
+        &self,
+        prefix: &str,
+        bbox: &BoundingBox2D,
+        limit: usize,
+    ) -> Result<Vec<(Point, Bytes)>> {
+        let center = bbox.center();
+
+        // Get candidates using radius search from center
+        // Calculate approximate radius from center to corner
+        let dx = bbox.width() / 2.0;
+        let dy = bbox.height() / 2.0;
+        let radius_deg = (dx * dx + dy * dy).sqrt();
+
+        // Convert to meters (rough approximation: 1 degree ≈ 111km)
+        let radius_meters = radius_deg * 111_000.0;
+
+        let candidates = self.query_within_radius(prefix, &center, radius_meters, limit * 2)?;
+
+        // Filter to only points actually within the bounding box
+        let mut results = Vec::new();
+        for (point, data) in candidates {
+            if bbox.contains_point(&point) {
+                results.push((point, data));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Store a bounding box with a key.
+    ///
+    /// Serializes and stores a bounding box, making it retrievable later.
+    /// Useful for storing geographic regions, service areas, or zones.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to store the bounding box under
+    /// * `bbox` - The bounding box to store
+    /// * `opts` - Optional settings like TTL
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn insert_bbox(
+        &self,
+        key: impl AsRef<[u8]>,
+        bbox: &BoundingBox2D,
+        opts: Option<SetOptions>,
+    ) -> Result<()> {
+        let serialized = bincode::serialize(bbox)
+            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+        self.insert(key, serialized, opts)?;
+        Ok(())
+    }
+
+    /// Retrieve a bounding box by key.
+    ///
+    /// Deserializes and returns a previously stored bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to retrieve
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
+    ///
+    /// if let Some(bbox) = db.get_bbox("zones:manhattan")? {
+    ///     println!("Manhattan area: {}°×{}°", bbox.width(), bbox.height());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_bbox(&self, key: impl AsRef<[u8]>) -> Result<Option<BoundingBox2D>> {
+        match self.get(key)? {
+            Some(data) => {
+                let bbox = bincode::deserialize(&data)
+                    .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+                Ok(Some(bbox))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Find all bounding boxes that intersect with a given bounding box.
+    ///
+    /// Returns all stored bounding boxes (with the specified prefix) that
+    /// intersect with the query bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Key prefix to filter results (e.g., "zones:")
+    /// * `bbox` - The bounding box to check for intersections
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// db.insert_bbox("zones:manhattan", &BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820), None)?;
+    /// db.insert_bbox("zones:brooklyn", &BoundingBox2D::new(-74.0421, 40.5707, -73.8333, 40.7395), None)?;
+    ///
+    /// let query = BoundingBox2D::new(-74.01, 40.70, -73.95, 40.75);
+    /// let intersecting = db.find_intersecting_bboxes("zones:", &query)?;
+    ///
+    /// println!("Found {} intersecting zones", intersecting.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn find_intersecting_bboxes(
+        &self,
+        prefix: &str,
+        bbox: &BoundingBox2D,
+    ) -> Result<Vec<(String, BoundingBox2D)>> {
+        let inner = self.read()?;
+        let prefix_bytes = Bytes::from(prefix.to_owned());
+        let mut results = Vec::new();
+
+        for (key, item) in inner.keys.range(prefix_bytes.clone()..) {
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+
+            if item.is_expired() {
+                continue;
+            }
+
+            // Try to deserialize as bounding box
+            if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value) {
+                if stored_bbox.intersects(bbox) {
+                    let key_str = String::from_utf8_lossy(key).to_string();
+                    results.push((key_str, stored_bbox));
                 }
             }
         }
