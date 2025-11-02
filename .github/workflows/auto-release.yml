@@ -99,7 +99,9 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test --verbose
       - run: cargo test --doc
-      - run: cargo package --allow-dirty
+      - run: |
+          cd spatio-types && cargo package --allow-dirty
+          cd .. && cargo package --allow-dirty
         if: matrix.os == 'ubuntu-latest'
 
   test-python:
@@ -245,7 +247,17 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish crate to crates.io
+      - name: Publish spatio-types to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd spatio-types
+          cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Wait for spatio-types to be available on crates.io
+        run: sleep 30
+
+      - name: Publish spatio to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
