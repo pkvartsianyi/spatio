@@ -110,6 +110,44 @@ impl Point3d {
         (dx * dx + dy * dy + dz * dz).sqrt()
     }
 
+    /// Calculate all distance components at once (horizontal, altitude, 3D).
+    ///
+    /// This is more efficient than calling haversine_2d and haversine_3d separately
+    /// as it calculates the haversine formula only once.
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (horizontal_distance, altitude_difference, distance_3d) in meters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use spatio_types::point::Point3d;
+    ///
+    /// let p1 = Point3d::new(-74.0060, 40.7128, 0.0);
+    /// let p2 = Point3d::new(-74.0070, 40.7138, 100.0);
+    /// let (h_dist, alt_diff, dist_3d) = p1.haversine_distances(&p2);
+    /// ```
+    pub fn haversine_distances(&self, other: &Point3d) -> (f64, f64, f64) {
+        const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
+
+        let lat1 = self.y().to_radians();
+        let lat2 = other.y().to_radians();
+        let delta_lat = (other.y() - self.y()).to_radians();
+        let delta_lon = (other.x() - self.x()).to_radians();
+
+        let a = (delta_lat / 2.0).sin().powi(2)
+            + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+        let horizontal_distance = EARTH_RADIUS_METERS * c;
+        let altitude_diff = (self.z - other.z).abs();
+        let distance_3d =
+            (horizontal_distance * horizontal_distance + altitude_diff * altitude_diff).sqrt();
+
+        (horizontal_distance, altitude_diff, distance_3d)
+    }
+
     /// Calculate the haversine distance combined with altitude difference.
     ///
     /// This uses the haversine formula for the horizontal distance (considering Earth's curvature)
@@ -128,10 +166,10 @@ impl Point3d {
     /// let p2 = Point3d::new(-74.0070, 40.7138, 100.0);  // Nearby, 100m up
     /// let distance = p1.haversine_3d(&p2);
     /// ```
+    #[inline]
     pub fn haversine_3d(&self, other: &Point3d) -> f64 {
-        let horizontal_distance = self.haversine_2d(other);
-        let altitude_diff = self.z - other.z;
-        (horizontal_distance * horizontal_distance + altitude_diff * altitude_diff).sqrt()
+        let (_, _, dist_3d) = self.haversine_distances(other);
+        dist_3d
     }
 
     /// Calculate the haversine distance on the 2D plane (ignoring altitude).
@@ -139,6 +177,7 @@ impl Point3d {
     /// # Returns
     ///
     /// Distance in meters.
+    #[inline]
     pub fn haversine_2d(&self, other: &Point3d) -> f64 {
         const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 
@@ -155,6 +194,7 @@ impl Point3d {
     }
 
     /// Get the altitude difference to another point.
+    #[inline]
     pub fn altitude_difference(&self, other: &Point3d) -> f64 {
         (self.z - other.z).abs()
     }
@@ -265,6 +305,23 @@ mod tests {
         let distance = p1.haversine_3d(&p2);
         // Should be approximately 100 meters (just the altitude difference)
         assert!((distance - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_haversine_distances() {
+        let p1 = Point3d::new(-74.0060, 40.7128, 0.0);
+        let p2 = Point3d::new(-74.0070, 40.7138, 100.0);
+        let (h_dist, alt_diff, dist_3d) = p1.haversine_distances(&p2);
+
+        // Verify altitude difference is correct
+        assert_eq!(alt_diff, 100.0);
+
+        // Verify 3D distance is correct
+        assert!((dist_3d - (h_dist * h_dist + alt_diff * alt_diff).sqrt()).abs() < 0.1);
+
+        // Verify it matches individual calls
+        assert!((h_dist - p1.haversine_2d(&p2)).abs() < 0.1);
+        assert!((dist_3d - p1.haversine_3d(&p2)).abs() < 0.1);
     }
 
     #[test]

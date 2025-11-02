@@ -19,9 +19,7 @@ use std::collections::BTreeMap;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-#[cfg(feature = "time-index")]
-use std::time::Duration;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Main Spatio database structure providing spatio-temporal data storage.
 ///
@@ -498,15 +496,23 @@ impl DB {
 
         // Generate key with coordinates encoded for AOF replay
         // Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
+        let timestamp_nanos = created_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| SpatioError::InvalidTimestamp)?
+            .as_nanos();
+
+        // Validate timestamp is reasonable (not too far in future)
+        let now = SystemTime::now();
+        if created_at > now + Duration::from_secs(86400) {
+            return Err(SpatioError::InvalidTimestamp);
+        }
+
         let key = format!(
             "{}:{:x}:{:x}:0:{:x}:{}",
             prefix,
             point.y().to_bits(),
             point.x().to_bits(),
-            created_at
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos(),
+            timestamp_nanos,
             uuid::Uuid::new_v4()
         );
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
@@ -569,20 +575,11 @@ impl DB {
             limit,
         );
 
-        // Convert results back to Point (we don't have the original points stored,
-        // so we need to retrieve them from the index)
-        let mut points = Vec::new();
-        for (key, data, _distance) in results {
-            if let Some(tree) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in tree.iter() {
-                    if indexed_point.key == key {
-                        let point = Point::new(indexed_point.x, indexed_point.y);
-                        points.push((point, data.clone()));
-                        break;
-                    }
-                }
-            }
-        }
+        // Convert results - spatial index now returns coordinates directly
+        let points: Vec<(Point, Bytes)> = results
+            .into_iter()
+            .map(|(x, y, _key, data, _distance)| (Point::new(x, y), data))
+            .collect();
 
         Ok(points)
     }
@@ -679,31 +676,47 @@ impl DB {
         end_time: u64,
     ) -> Result<Vec<TemporalPoint>> {
         let mut results = Vec::new();
-        let prefix = format!("traj:{}:", object_id);
+
+        // Construct range boundaries using timestamp in key format
+        // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
+        let start_key = format!("traj:{}:{:010}:000000", object_id, start_time);
+        let end_key = format!("traj:{}:{:010}:999999", object_id, end_time);
 
         let inner = self.read()?;
-        for (key, item) in inner.keys.range(Bytes::from(prefix.clone())..) {
-            if !key.starts_with(prefix.as_bytes()) {
-                break;
+
+        // Use range to only iterate over relevant keys
+        for (key, item) in inner
+            .keys
+            .range(Bytes::from(start_key)..=Bytes::from(end_key))
+        {
+            // Double-check prefix (though range should handle this)
+            if let Ok(key_str) = std::str::from_utf8(key) {
+                if !key_str.starts_with(&format!("traj:{}:", object_id)) {
+                    break;
+                }
+
+                // Parse timestamp from key to avoid deserializing out-of-range items
+                // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
+                // After split: [0]="traj", [1..n-2]=object_id parts, [n-1]=timestamp, [n]=sequence
+                let parts: Vec<&str> = key_str.split(':').collect();
+                if parts.len() >= 4 {
+                    // The timestamp is the second-to-last part before the sequence number
+                    if let Ok(ts) = parts[parts.len() - 2].parse::<u64>() {
+                        if ts < start_time || ts > end_time {
+                            continue;
+                        }
+                    }
+                }
             }
 
             if item.is_expired() {
                 continue;
             }
 
+            // Now deserialize only items we know are in range
             match bincode::deserialize::<TemporalPoint>(&item.value) {
-                Ok(temporal_point) => {
-                    let timestamp_secs = temporal_point
-                        .timestamp
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map_err(|_| SpatioError::InvalidTimestamp)?
-                        .as_secs();
-                    if timestamp_secs >= start_time && timestamp_secs <= end_time {
-                        results.push(temporal_point);
-                    }
-                }
+                Ok(temporal_point) => results.push(temporal_point),
                 Err(e) => {
-                    // Log deserialization error but continue processing other points
                     eprintln!(
                         "Warning: Failed to deserialize trajectory point for object '{}': {}",
                         object_id, e
@@ -712,6 +725,7 @@ impl DB {
             }
         }
 
+        // Results should already be sorted by key, but double-check
         results.sort_by_key(|tp| tp.timestamp);
         Ok(results)
     }
@@ -873,15 +887,14 @@ impl DB {
             .spatial_index
             .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
 
+        // Extract coordinates from keys or use a helper method
+        // For now, we need to iterate to get coordinates since bbox doesn't return them
         let mut points = Vec::new();
         for (key, data) in results.into_iter().take(limit) {
             if let Some(tree) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in tree.iter() {
-                    if indexed_point.key == key {
-                        let point = Point::new(indexed_point.x, indexed_point.y);
-                        points.push((point, data.clone()));
-                        break;
-                    }
+                if let Some(indexed_point) = tree.iter().find(|p| p.key == key) {
+                    let point = Point::new(indexed_point.x, indexed_point.y);
+                    points.push((point, data));
                 }
             }
         }
@@ -973,20 +986,33 @@ impl DB {
         max_radius: f64,
         metric: crate::spatial::DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
-        // Query all points within max_radius
-        let candidates = self.query_within_radius(prefix, center, max_radius, usize::MAX)?;
+        let inner = self.read()?;
 
-        // Convert to format expected by knn function
-        let points: Vec<(Point, Bytes)> = candidates;
+        // Use the spatial index's efficient KNN directly
+        let results = inner.spatial_index.knn_2d_with_max_distance(
+            prefix,
+            center.x(),
+            center.y(),
+            k,
+            Some(max_radius),
+        );
 
-        // Use the spatial module's knn function
-        let results = crate::spatial::knn(center, &points, k, metric);
-
-        // Convert back to include data
-        Ok(results
+        // Convert and recalculate distances with requested metric if not Haversine
+        let mut filtered: Vec<(Point, Bytes, f64)> = results
             .into_iter()
-            .map(|(pt, dist, data)| (pt, data, dist))
-            .collect())
+            .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
+            .collect();
+
+        if metric != crate::spatial::DistanceMetric::Haversine {
+            for (point, _, dist) in &mut filtered {
+                *dist = crate::spatial::distance_between(center, point, metric);
+            }
+            // Re-sort since distances changed
+            filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+            filtered.truncate(k);
+        }
+
+        Ok(filtered)
     }
 
     /// Query points within a polygon boundary.
@@ -1314,16 +1340,24 @@ impl DB {
 
         // Generate key with coordinates encoded for AOF replay
         // Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
+        let timestamp_nanos = created_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| SpatioError::InvalidTimestamp)?
+            .as_nanos();
+
+        // Validate timestamp is reasonable (not too far in future)
+        let now = SystemTime::now();
+        if created_at > now + Duration::from_secs(86400) {
+            return Err(SpatioError::InvalidTimestamp);
+        }
+
         let key = format!(
             "{}:{:x}:{:x}:{:x}:{:x}:{}",
             prefix,
             point.point_2d().y().to_bits(),
             point.point_2d().x().to_bits(),
             point.z().to_bits(),
-            created_at
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos(),
+            timestamp_nanos,
             uuid::Uuid::new_v4()
         );
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
@@ -1402,16 +1436,13 @@ impl DB {
             limit,
         );
 
-        // Parse keys to extract coordinates and reconstruct Point3d
+        // Extract coordinates from results - still need to get from index
         let mut points = Vec::new();
         for (key, data, distance) in results {
             if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in stored_point.iter() {
-                    if indexed_point.key == key {
-                        let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                        points.push((point, data.clone(), distance));
-                        break;
-                    }
+                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
+                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
+                    points.push((point, data, distance));
                 }
             }
         }
@@ -1459,12 +1490,9 @@ impl DB {
         let mut points = Vec::new();
         for (key, data) in results.into_iter().take(limit) {
             if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in stored_point.iter() {
-                    if indexed_point.key == key {
-                        let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                        points.push((point, data.clone()));
-                        break;
-                    }
+                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
+                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
+                    points.push((point, data));
                 }
             }
         }
@@ -1537,12 +1565,9 @@ impl DB {
         let mut points = Vec::new();
         for (key, data, h_dist) in results {
             if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in stored_point.iter() {
-                    if indexed_point.key == key {
-                        let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                        points.push((point, data.clone(), h_dist));
-                        break;
-                    }
+                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
+                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
+                    points.push((point, data, h_dist));
                 }
             }
         }
@@ -1591,12 +1616,9 @@ impl DB {
         let mut points = Vec::new();
         for (key, data, distance) in results {
             if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                for indexed_point in stored_point.iter() {
-                    if indexed_point.key == key {
-                        let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                        points.push((point, data.clone(), distance));
-                        break;
-                    }
+                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
+                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
+                    points.push((point, data, distance));
                 }
             }
         }
@@ -1711,11 +1733,23 @@ impl DB {
 
     // Internal helper methods
     fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        self.inner.read().map_err(|_| SpatioError::LockError)
+        match self.inner.read() {
+            Ok(guard) => Ok(guard),
+            Err(_poison_error) => {
+                eprintln!("CRITICAL: Database lock was poisoned - shared state may be corrupted!");
+                Err(SpatioError::LockError)
+            }
+        }
     }
 
     pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        self.inner.write().map_err(|_| SpatioError::LockError)
+        match self.inner.write() {
+            Ok(guard) => Ok(guard),
+            Err(_poison_error) => {
+                eprintln!("CRITICAL: Database lock was poisoned - shared state may be corrupted!");
+                Err(SpatioError::LockError)
+            }
+        }
     }
 }
 
@@ -1830,7 +1864,18 @@ impl DBInner {
 
     fn add_expiration(&mut self, key: &Bytes, expires_at: Option<SystemTime>) {
         if let Some(exp) = expires_at {
-            self.expirations.entry(exp).or_default().push(key.clone());
+            let keys_at_time = self.expirations.entry(exp).or_default();
+            keys_at_time.push(key.clone());
+
+            // Warn if too many keys expire at the same time
+            const EXPIRATION_VEC_WARN_THRESHOLD: usize = 10_000;
+            if keys_at_time.len() == EXPIRATION_VEC_WARN_THRESHOLD {
+                eprintln!(
+                    "Warning: {} keys expire at {:?}. Consider spreading expiration times.",
+                    keys_at_time.len(),
+                    exp
+                );
+            }
         }
     }
 
@@ -1927,28 +1972,31 @@ impl DBInner {
 
         let now = SystemTime::now();
         let mut removed = 0;
+        let timestamps_to_check: Vec<SystemTime> =
+            self.expirations.range(..=now).map(|(ts, _)| *ts).collect();
 
-        while removed < max_items {
-            let Some(ts) = self.expirations.range(..=now).next().map(|(ts, _)| *ts) else {
+        for ts in timestamps_to_check {
+            if removed >= max_items {
                 break;
+            }
+
+            let Some(mut keys) = self.expirations.remove(&ts) else {
+                continue;
             };
 
-            let mut keys = match self.expirations.remove(&ts) {
-                Some(keys) => keys,
-                None => continue,
-            };
+            // Process keys from this timestamp until we hit the limit
+            let to_process = (max_items - removed).min(keys.len());
 
-            while removed < max_items {
-                let Some(key) = keys.pop() else {
-                    break;
-                };
-
-                if let Some(_item) = self.remove_item(&key) {
-                    self.write_delete_to_aof_if_needed(&key)?;
-                    removed += 1;
+            for _ in 0..to_process {
+                if let Some(key) = keys.pop() {
+                    if self.remove_item(&key).is_some() {
+                        self.write_delete_to_aof_if_needed(&key)?;
+                        removed += 1;
+                    }
                 }
             }
 
+            // Put back unprocessed keys
             if !keys.is_empty() {
                 self.expirations.insert(ts, keys);
             }
@@ -2075,47 +2123,75 @@ impl DBInner {
         if let Ok(key_str) = std::str::from_utf8(key) {
             let parts: Vec<&str> = key_str.split(':').collect();
 
-            // Check if this is a spatial key (has at least 6 parts with coordinates)
-            if parts.len() >= 6 {
-                if let (Ok(lat_bits), Ok(lon_bits), Ok(z_bits)) = (
-                    u64::from_str_radix(parts[1], 16),
-                    u64::from_str_radix(parts[2], 16),
-                    u64::from_str_radix(parts[3], 16),
-                ) {
-                    let prefix = parts[0];
-                    let lat = f64::from_bits(lat_bits);
-                    let lon = f64::from_bits(lon_bits);
-                    let z = f64::from_bits(z_bits);
+            // Validate parts length first
+            if parts.len() < 6 {
+                return;
+            }
 
-                    // Insert into spatial index
-                    if z == 0.0 {
-                        // 2D point
-                        self.spatial_index.insert_point_2d(
-                            prefix,
-                            lon,
-                            lat,
-                            key_str.to_string(),
-                            value.clone(),
-                        );
-                    } else {
-                        // 3D point
-                        self.spatial_index.insert_point(
-                            prefix,
-                            lon,
-                            lat,
-                            z,
-                            key_str.to_string(),
-                            value.clone(),
-                        );
-                    }
+            // Check if this is a spatial key (has at least 6 parts with coordinates)
+            if let (Ok(lat_bits), Ok(lon_bits), Ok(z_bits)) = (
+                u64::from_str_radix(parts[1], 16),
+                u64::from_str_radix(parts[2], 16),
+                u64::from_str_radix(parts[3], 16),
+            ) {
+                let prefix = parts[0];
+                let lat = f64::from_bits(lat_bits);
+                let lon = f64::from_bits(lon_bits);
+                let z = f64::from_bits(z_bits);
+
+                // Validate coordinates are finite and within valid ranges
+                if !lat.is_finite() || !lon.is_finite() || !z.is_finite() {
+                    eprintln!(
+                        "Warning: Invalid coordinates in AOF key '{}': lat={}, lon={}, z={}",
+                        key_str, lat, lon, z
+                    );
+                    return;
+                }
+
+                // Validate geographic bounds
+                if lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 {
+                    eprintln!(
+                        "Warning: Coordinates out of valid geographic range in key '{}'",
+                        key_str
+                    );
+                    return;
+                }
+
+                // Insert into spatial index
+                if z == 0.0 {
+                    // 2D point
+                    self.spatial_index.insert_point_2d(
+                        prefix,
+                        lon,
+                        lat,
+                        key_str.to_string(),
+                        value.clone(),
+                    );
+                } else {
+                    // 3D point
+                    self.spatial_index.insert_point(
+                        prefix,
+                        lon,
+                        lat,
+                        z,
+                        key_str.to_string(),
+                        value.clone(),
+                    );
                 }
             }
         }
     }
 
     fn remove_from_spatial_index(&mut self, key: &Bytes) {
+        // Quick check: spatial keys always have ':' character
+        if !key.contains(&b':') {
+            return;
+        }
+
         if let Ok(key_str) = std::str::from_utf8(key) {
-            if let Some(prefix) = key_str.split(':').next() {
+            // Find first ':' without creating a split iterator
+            if let Some(colon_pos) = key_str.find(':') {
+                let prefix = &key_str[..colon_pos];
                 let _ = self.spatial_index.remove_entry(prefix, key_str);
             }
         }

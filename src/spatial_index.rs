@@ -19,7 +19,7 @@ pub struct IndexedPoint3D {
     pub z: f64,
     /// Associated data key
     pub key: String,
-    /// Associated data
+    /// Associated data (stored for backward compatibility, consider removing)
     pub data: Bytes,
 }
 
@@ -128,7 +128,7 @@ impl SpatialIndexManager {
     ///
     /// # Returns
     ///
-    /// Vector of (key, data) tuples within the spherical radius, sorted by distance.
+    /// Vector of (key, data, distance) tuples within the spherical radius, sorted by distance.
     pub fn query_within_sphere(
         &self,
         prefix: &str,
@@ -142,10 +142,32 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
+        // Pre-compute bounding box for quick rejection
+        // Approximate: radius in meters to degrees (1 degree ≈ 111km)
+        let radius_deg = radius / 111_000.0;
+        let min_x = center_x - radius_deg;
+        let max_x = center_x + radius_deg;
+        let min_y = center_y - radius_deg;
+        let max_y = center_y + radius_deg;
+        let min_z = center_z - radius;
+        let max_z = center_z + radius;
+
         // Iterate over all points and filter by distance
         let mut results: Vec<_> = tree
             .iter()
             .filter_map(|point| {
+                // Quick bounding box rejection (cheap)
+                if point.x < min_x
+                    || point.x > max_x
+                    || point.y < min_y
+                    || point.y > max_y
+                    || point.z < min_z
+                    || point.z > max_z
+                {
+                    return None;
+                }
+
+                // Precise distance check (expensive)
                 let distance =
                     haversine_3d_distance(center_x, center_y, center_z, point.x, point.y, point.z);
                 if distance <= radius {
@@ -176,7 +198,7 @@ impl SpatialIndexManager {
     ///
     /// # Returns
     ///
-    /// Vector of (key, data, distance) tuples within the radius, sorted by distance.
+    /// Vector of (x, y, key, data, distance) tuples within the radius, sorted by distance.
     pub fn query_within_radius_2d(
         &self,
         prefix: &str,
@@ -184,7 +206,7 @@ impl SpatialIndexManager {
         center_y: f64,
         radius: f64,
         limit: usize,
-    ) -> Vec<(String, Bytes, f64)> {
+    ) -> Vec<(f64, f64, String, Bytes, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -195,7 +217,13 @@ impl SpatialIndexManager {
             .filter_map(|point| {
                 let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
                 if distance <= radius {
-                    Some((point.key.clone(), point.data.clone(), distance))
+                    Some((
+                        point.x,
+                        point.y,
+                        point.key.clone(),
+                        point.data.clone(),
+                        distance,
+                    ))
                 } else {
                     None
                 }
@@ -203,7 +231,7 @@ impl SpatialIndexManager {
             .collect();
 
         // Sort by distance
-        results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
 
         // Apply limit
         results.truncate(limit);
@@ -224,13 +252,33 @@ impl SpatialIndexManager {
     pub fn query_within_bbox(
         &self,
         prefix: &str,
-        min_x: f64,
-        min_y: f64,
-        min_z: f64,
-        max_x: f64,
-        max_y: f64,
-        max_z: f64,
+        mut min_x: f64,
+        mut min_y: f64,
+        mut min_z: f64,
+        mut max_x: f64,
+        mut max_y: f64,
+        mut max_z: f64,
     ) -> Vec<(String, Bytes)> {
+        // Validate all coordinates are finite
+        if ![min_x, min_y, min_z, max_x, max_y, max_z]
+            .iter()
+            .all(|v| v.is_finite())
+        {
+            eprintln!("Warning: Bounding box coordinates must be finite");
+            return Vec::new();
+        }
+
+        // Auto-correct if needed (swap min/max)
+        if min_x > max_x {
+            std::mem::swap(&mut min_x, &mut max_x);
+        }
+        if min_y > max_y {
+            std::mem::swap(&mut min_y, &mut max_y);
+        }
+        if min_z > max_z {
+            std::mem::swap(&mut min_z, &mut max_z);
+        }
+
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -337,26 +385,90 @@ impl SpatialIndexManager {
     ///
     /// # Returns
     ///
-    /// Vector of (key, data, distance) tuples for the k nearest points.
-    pub fn knn_2d(&self, prefix: &str, x: f64, y: f64, k: usize) -> Vec<(String, Bytes, f64)> {
+    /// Vector of (x, y, key, data, distance) tuples for the k nearest points.
+    pub fn knn_2d(
+        &self,
+        prefix: &str,
+        x: f64,
+        y: f64,
+        k: usize,
+    ) -> Vec<(f64, f64, String, Bytes, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
 
-        let mut distances: Vec<_> = tree
-            .iter()
+        let query_point = IndexedPoint3D::generate(|i| match i {
+            0 => x,
+            1 => y,
+            2 => 0.0,
+            _ => 0.0,
+        });
+
+        tree.nearest_neighbor_iter(&query_point)
+            .take(k)
             .map(|point| {
                 let distance = haversine_2d_distance(x, y, point.x, point.y);
-                (point.key.clone(), point.data.clone(), distance)
+                (
+                    point.x,
+                    point.y,
+                    point.key.clone(),
+                    point.data.clone(),
+                    distance,
+                )
             })
-            .collect();
+            .collect()
+    }
 
-        // Sort by distance
-        distances.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+    /// Find the k nearest neighbors in 2D space with optional max distance filter.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace to search
+    /// * `x` - Query point X coordinate
+    /// * `y` - Query point Y coordinate
+    /// * `k` - Number of nearest neighbors to find
+    /// * `max_distance` - Optional maximum distance in meters
+    ///
+    /// # Returns
+    ///
+    /// Vector of (x, y, key, data, distance) tuples for the k nearest points within max_distance.
+    pub fn knn_2d_with_max_distance(
+        &self,
+        prefix: &str,
+        x: f64,
+        y: f64,
+        k: usize,
+        max_distance: Option<f64>,
+    ) -> Vec<(f64, f64, String, Bytes, f64)> {
+        let Some(tree) = self.indexes.get(prefix) else {
+            return Vec::new();
+        };
 
-        // Take k nearest
-        distances.truncate(k);
-        distances
+        let query_point = IndexedPoint3D::generate(|i| match i {
+            0 => x,
+            1 => y,
+            2 => 0.0,
+            _ => 0.0,
+        });
+
+        tree.nearest_neighbor_iter(&query_point)
+            .filter_map(|point| {
+                let distance = haversine_2d_distance(x, y, point.x, point.y);
+                if let Some(max_dist) = max_distance {
+                    if distance > max_dist {
+                        return None;
+                    }
+                }
+                Some((
+                    point.x,
+                    point.y,
+                    point.key.clone(),
+                    point.data.clone(),
+                    distance,
+                ))
+            })
+            .take(k)
+            .collect()
     }
 
     /// Query points within a cylindrical volume.
@@ -376,7 +488,7 @@ impl SpatialIndexManager {
     ///
     /// # Returns
     ///
-    /// Vector of (key, data, horizontal_distance) tuples within the cylinder.
+    /// Vector of (key, data, horizontal_distance) tuples within the cylinder, sorted by distance.
     pub fn query_within_cylinder(
         &self,
         prefix: &str,
@@ -386,6 +498,30 @@ impl SpatialIndexManager {
         max_z: f64,
         horizontal_radius: f64,
         limit: usize,
+    ) -> Vec<(String, Bytes, f64)> {
+        self.query_within_cylinder_internal(
+            prefix,
+            center_x,
+            center_y,
+            min_z,
+            max_z,
+            horizontal_radius,
+            limit,
+            true,
+        )
+    }
+
+    /// Internal cylinder query with optional sorting.
+    fn query_within_cylinder_internal(
+        &self,
+        prefix: &str,
+        center_x: f64,
+        center_y: f64,
+        min_z: f64,
+        max_z: f64,
+        horizontal_radius: f64,
+        limit: usize,
+        sort_by_distance: bool,
     ) -> Vec<(String, Bytes, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
@@ -409,8 +545,10 @@ impl SpatialIndexManager {
             })
             .collect();
 
-        // Sort by horizontal distance
-        results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        if sort_by_distance {
+            // Sort by horizontal distance
+            results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        }
 
         // Apply limit
         results.truncate(limit);
@@ -558,6 +696,7 @@ pub struct SpatialIndexStats {
 /// # Returns
 ///
 /// Distance in meters.
+#[inline]
 fn haversine_3d_distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) -> f64 {
     let h_dist = haversine_2d_distance(x1, y1, x2, y2);
     let z_diff = z2 - z1;
@@ -569,6 +708,7 @@ fn haversine_3d_distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) -
 /// # Returns
 ///
 /// Distance in meters.
+#[inline]
 fn haversine_2d_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
     const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 
@@ -858,7 +998,7 @@ mod tests {
         // Test 2D knn
         let nearest = index.knn_2d("cities", -74.0, 40.71, 1);
         assert_eq!(nearest.len(), 1);
-        assert_eq!(nearest[0].0, "nyc");
+        assert_eq!(nearest[0].2, "nyc"); // Index 2 is the key
 
         // Test count
         let count = index.count_within_radius_2d("cities", -74.0060, 40.7128, 10000.0);
