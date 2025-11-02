@@ -163,35 +163,26 @@ impl DB {
     ) -> Result<Vec<TemporalPoint>> {
         let mut results = Vec::new();
 
-        // Construct range boundaries using timestamp in key format
-        // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
         let start_key = format!("traj:{}:{:010}:000000", object_id, start_time);
         let end_key = format!("traj:{}:{:010}:999999", object_id, end_time);
 
         let inner = self.read()?;
 
-        // Use range to only iterate over relevant keys
         for (key, item) in inner
             .keys
             .range(Bytes::from(start_key)..=Bytes::from(end_key))
         {
-            // Double-check prefix (though range should handle this)
             if let Ok(key_str) = std::str::from_utf8(key) {
                 if !key_str.starts_with(&format!("traj:{}:", object_id)) {
                     break;
                 }
 
-                // Parse timestamp from key to avoid deserializing out-of-range items
-                // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
-                // After split: [0]="traj", [1..n-2]=object_id parts, [n-1]=timestamp, [n]=sequence
                 let parts: Vec<&str> = key_str.split(':').collect();
-                if parts.len() >= 4 {
-                    // The timestamp is the second-to-last part before the sequence number
-                    if let Ok(ts) = parts[parts.len() - 2].parse::<u64>()
-                        && (ts < start_time || ts > end_time)
-                    {
-                        continue;
-                    }
+                if parts.len() >= 4
+                    && let Ok(ts) = parts[parts.len() - 2].parse::<u64>()
+                    && (ts < start_time || ts > end_time)
+                {
+                    continue;
                 }
             }
 

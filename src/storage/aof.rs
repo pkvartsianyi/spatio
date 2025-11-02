@@ -55,7 +55,6 @@ impl AOFBackend {
 
 impl StorageBackend for AOFBackend {
     fn put(&mut self, key: &[u8], item: &DbItem) -> Result<()> {
-        // Write to AOF first for durability
         let opts = item.expires_at.map(SetOptions::with_expiration);
         self.aof_writer.write_set(
             &Bytes::copy_from_slice(key),
@@ -64,7 +63,6 @@ impl StorageBackend for AOFBackend {
             item.created_at,
         )?;
 
-        // Then update in-memory state
         self.memory.put(key, item)
     }
 
@@ -73,10 +71,8 @@ impl StorageBackend for AOFBackend {
     }
 
     fn delete(&mut self, key: &[u8]) -> Result<Option<DbItem>> {
-        // Write deletion to AOF
         self.aof_writer.write_delete(&Bytes::copy_from_slice(key))?;
 
-        // Update in-memory state
         self.memory.delete(key)
     }
 
@@ -114,7 +110,6 @@ impl StorageBackend for AOFBackend {
     }
 
     fn batch(&mut self, ops: &[StorageOp]) -> Result<()> {
-        // Write all operations to AOF first
         for op in ops {
             match op {
                 StorageOp::Put { key, item } => {
@@ -128,7 +123,6 @@ impl StorageBackend for AOFBackend {
             }
         }
 
-        // Then apply to memory
         self.memory.batch(ops)
     }
 
@@ -137,7 +131,6 @@ impl StorageBackend for AOFBackend {
     }
 
     fn cleanup_expired(&mut self, now: SystemTime) -> Result<usize> {
-        // For AOF backend, we might want to write deletions to AOF
         let expired_keys = {
             let mut keys = Vec::new();
             for (key, item) in self.memory.iter()? {
@@ -150,7 +143,6 @@ impl StorageBackend for AOFBackend {
             keys
         };
 
-        // Write deletions to AOF
         for key in &expired_keys {
             self.aof_writer.write_delete(key)?;
         }

@@ -69,7 +69,6 @@ impl DBInner {
             let keys_at_time = self.expirations.entry(exp).or_default();
             keys_at_time.push(key.clone());
 
-            // Warn if too many keys expire at the same time
             const EXPIRATION_VEC_WARN_THRESHOLD: usize = 10_000;
             if keys_at_time.len() == EXPIRATION_VEC_WARN_THRESHOLD {
                 log::warn!(
@@ -187,7 +186,6 @@ impl DBInner {
                 continue;
             };
 
-            // Process keys from this timestamp until we hit the limit
             let to_process = (max_items - removed).min(keys.len());
 
             for _ in 0..to_process {
@@ -199,7 +197,6 @@ impl DBInner {
                 }
             }
 
-            // Put back unprocessed keys
             if !keys.is_empty() {
                 self.expirations.insert(ts, keys);
             }
@@ -303,18 +300,13 @@ impl DBInner {
     }
 
     fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
-        // During AOF replay, rebuild spatial index from encoded keys
-        // Key format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
-
         if let Ok(key_str) = std::str::from_utf8(key) {
             let parts: Vec<&str> = key_str.split(':').collect();
 
-            // Validate parts length first
             if parts.len() < 6 {
                 return;
             }
 
-            // Check if this is a spatial key (has at least 6 parts with coordinates)
             if let (Ok(lat_bits), Ok(lon_bits), Ok(z_bits)) = (
                 u64::from_str_radix(parts[1], 16),
                 u64::from_str_radix(parts[2], 16),
@@ -325,7 +317,6 @@ impl DBInner {
                 let lon = f64::from_bits(lon_bits);
                 let z = f64::from_bits(z_bits);
 
-                // Validate coordinates are finite and within valid ranges
                 if !lat.is_finite() || !lon.is_finite() || !z.is_finite() {
                     log::warn!(
                         "Skipping AOF entry with invalid coordinates: key='{}', lat={}, lon={}, z={}",
@@ -337,7 +328,6 @@ impl DBInner {
                     return;
                 }
 
-                // Validate geographic bounds
                 if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
                     log::warn!(
                         "Skipping AOF entry with coordinates out of valid geographic range: key='{}', lat={}, lon={}",
@@ -348,9 +338,7 @@ impl DBInner {
                     return;
                 }
 
-                // Insert into spatial index
                 if z == 0.0 {
-                    // 2D point
                     self.spatial_index.insert_point_2d(
                         prefix,
                         lon,
@@ -359,7 +347,6 @@ impl DBInner {
                         value.clone(),
                     );
                 } else {
-                    // 3D point
                     self.spatial_index.insert_point(
                         prefix,
                         lon,
@@ -374,17 +361,15 @@ impl DBInner {
     }
 
     fn remove_from_spatial_index(&mut self, key: &Bytes) {
-        // Quick check: spatial keys always have ':' character
         if !key.contains(&b':') {
             return;
         }
 
-        if let Ok(key_str) = std::str::from_utf8(key) {
-            // Find first ':' without creating a split iterator
-            if let Some(colon_pos) = key_str.find(':') {
-                let prefix = &key_str[..colon_pos];
-                let _ = self.spatial_index.remove_entry(prefix, key_str);
-            }
+        if let Ok(key_str) = std::str::from_utf8(key)
+            && let Some(colon_pos) = key_str.find(':')
+        {
+            let prefix = &key_str[..colon_pos];
+            let _ = self.spatial_index.remove_entry(prefix, key_str);
         }
     }
 
