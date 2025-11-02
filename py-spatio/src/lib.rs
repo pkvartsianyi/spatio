@@ -33,15 +33,19 @@ pub struct PyPoint {
 impl PyPoint {
     /// Create a new Point with latitude and longitude.
     ///
-    /// Args:
+    /// # Note
+    /// Altitude is currently not supported. The `alt` parameter is accepted for
+    /// API compatibility but will be ignored, as the underlying geo::Point is 2D.
+    ///
+    /// # Args
     ///     lat: Latitude in degrees (-90 to 90)
     ///     lon: Longitude in degrees (-180 to 180)
-    ///     alt: Optional altitude (accepted but ignored as geo::Point is 2D)
+    ///     alt: Optional altitude (currently ignored - see note above)
     ///
-    /// Returns:
+    /// # Returns
     ///     A new Point instance
     ///
-    /// Raises:
+    /// # Raises
     ///     ValueError: If latitude or longitude are out of valid range
     #[new]
     #[pyo3(signature = (lat, lon, alt=None))]
@@ -73,6 +77,10 @@ impl PyPoint {
         self.inner.x()
     }
 
+    /// Get the altitude of the point.
+    ///
+    /// # Note
+    /// Always returns None as altitude is not currently supported.
     #[getter]
     fn alt(&self) -> Option<f64> {
         None // geo::Point doesn't support altitude in current version

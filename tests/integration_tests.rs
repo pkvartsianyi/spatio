@@ -325,7 +325,16 @@ fn test_spatial_query_methods() {
 
     // Verify the points are actually in the expected area
     for (point, _) in &points_in_nyc_area {
-        assert!(point.x() >= -74.1 && point.x() <= -73.9 && point.y() >= 40.6 && point.y() <= 40.8);
+        assert!(
+            point.x() >= -74.1 && point.x() <= -73.9,
+            "Longitude out of bounds: {}",
+            point.x()
+        );
+        assert!(
+            point.y() >= 40.6 && point.y() <= 40.8,
+            "Latitude out of bounds: {}",
+            point.y()
+        );
     }
 
     // Test find_within_bounds - London area
@@ -443,4 +452,78 @@ fn test_geohash_precision_configuration() {
     // Test contains_point queries work with both configurations
     assert!(custom_db.contains_point("cities", &point, 100.0).unwrap());
     assert!(default_db.contains_point("cities", &point, 100.0).unwrap());
+}
+
+#[test]
+fn test_coordinate_order_roundtrip() {
+    // This test verifies that lat/lon coordinates are preserved correctly
+    // through storage, AOF persistence, and replay.
+    //
+    // Regression test for coordinate swap bugs in AOF replay.
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let db_path = temp_file.path();
+
+    // Test data: specific coordinates that would be obviously wrong if swapped
+    let original_lat = 40.7128; // NYC latitude (positive, moderate value)
+    let original_lon = -74.0060; // NYC longitude (negative, larger absolute value)
+
+    // Create point using geo crate convention: Point::new(lon, lat)
+    let original_point = Point::new(original_lon, original_lat);
+
+    // Verify point stores lat/lon correctly internally
+    assert_eq!(
+        original_point.x(),
+        original_lon,
+        "Point x() should return longitude"
+    );
+    assert_eq!(
+        original_point.y(),
+        original_lat,
+        "Point y() should return latitude"
+    );
+
+    // Insert point into database and sync to AOF
+    {
+        let db = Spatio::open(db_path).unwrap();
+        db.insert_point("test", &original_point, b"NYC", None)
+            .unwrap();
+        db.sync().unwrap();
+    }
+
+    // Reopen database to trigger AOF replay
+    {
+        let db = Spatio::open(db_path).unwrap();
+
+        // Query the point back
+        let results = db
+            .query_within_radius("test", &original_point, 100.0, 10)
+            .unwrap();
+        assert_eq!(results.len(), 1, "Should find exactly one point");
+
+        let (retrieved_point, data) = &results[0];
+        assert_eq!(data.as_ref(), b"NYC");
+
+        // Verify coordinates match exactly after roundtrip
+        assert_eq!(
+            retrieved_point.x(),
+            original_lon,
+            "Longitude should be preserved after AOF replay"
+        );
+        assert_eq!(
+            retrieved_point.y(),
+            original_lat,
+            "Latitude should be preserved after AOF replay"
+        );
+
+        // Also verify the point is in the correct hemisphere
+        assert!(
+            retrieved_point.x() < 0.0,
+            "NYC longitude should be negative (Western hemisphere)"
+        );
+        assert!(
+            retrieved_point.y() > 0.0,
+            "NYC latitude should be positive (Northern hemisphere)"
+        );
+    }
 }
