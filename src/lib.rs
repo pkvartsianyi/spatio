@@ -129,9 +129,9 @@ pub mod builder;
 pub mod db;
 pub mod error;
 pub mod ffi;
-pub mod index;
 pub mod namespace;
 pub mod spatial;
+pub mod spatial_index;
 pub mod storage;
 pub mod types;
 
@@ -176,9 +176,6 @@ pub use batch::AtomicBatch;
 // AOF persistence (when feature enabled)
 #[cfg(feature = "aof")]
 pub use persistence::{AOFConfig, AOFFile};
-
-// Geohash configuration constants
-pub use index::{DEFAULT_GEOHASH_PRECISION, DEFAULT_SEARCH_PRECISIONS};
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
