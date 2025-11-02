@@ -3,8 +3,8 @@
 //! Provides simplified AOF file management, rewrite logic, and command
 //! serialization used when durability is enabled.
 
+use crate::config::{SetOptions, SyncMode};
 use crate::error::{Result, SpatioError};
-use crate::types::{SetOptions, SyncMode};
 use bytes::{BufMut, Bytes, BytesMut};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -274,7 +274,6 @@ impl AOFFile {
             rewrite_file.sync()?;
             drop(rewrite_file);
 
-            // Ensure rewrite file is fully synced before rename
             {
                 let rewrite_file_for_sync = File::open(&rewrite_path)?;
                 rewrite_file_for_sync.sync_all()?;

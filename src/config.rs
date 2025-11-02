@@ -1,7 +1,7 @@
-//! Simplified types and configuration for Spatio
+//! Configuration and database settings for Spatio
 //!
-//! This module provides streamlined, serializable types for configuration
-//! and data management with minimal complexity.
+//! This module provides configuration types and re-exports spatial types
+//! from the `spatio-types` crate for convenience.
 use bytes::Bytes;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};

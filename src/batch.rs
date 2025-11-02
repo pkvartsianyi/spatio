@@ -1,8 +1,8 @@
 //! Atomic batch operations.
 
 use crate::DB;
+use crate::config::SetOptions;
 use crate::error::Result;
-use crate::types::SetOptions;
 use bytes::Bytes;
 
 /// Atomic batch. All operations succeed or all fail.
@@ -63,7 +63,7 @@ impl AtomicBatch {
         for operation in self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
-                    let item = crate::types::DbItem::from_options(value.clone(), opts.as_ref());
+                    let item = crate::config::DbItem::from_options(value.clone(), opts.as_ref());
                     let created_at = item.created_at;
                     inner.insert_item(key.clone(), item);
                     inner.write_to_aof_if_needed(

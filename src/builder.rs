@@ -3,10 +3,10 @@
 //! This module provides a builder pattern for creating databases with
 //! advanced configuration options including custom AOF paths.
 
+use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
 use crate::persistence::AOFFile;
-use crate::types::Config;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -260,8 +260,8 @@ impl Default for DBBuilder {
 mod tests {
     use super::*;
     #[cfg(feature = "time-index")]
-    use crate::types::HistoryEventKind;
-    use crate::types::SyncPolicy;
+    use crate::config::HistoryEventKind;
+    use crate::config::SyncPolicy;
     use std::time::Duration;
 
     #[test]

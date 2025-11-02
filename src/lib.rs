@@ -14,6 +14,7 @@
 
 pub mod batch;
 pub mod builder;
+pub mod config;
 pub mod db;
 pub mod error;
 pub mod ffi;
@@ -21,7 +22,6 @@ pub mod namespace;
 pub mod spatial;
 pub mod spatial_index;
 pub mod storage;
-pub mod types;
 
 #[cfg(feature = "aof")]
 pub mod persistence;
@@ -38,13 +38,13 @@ pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, k
 
 pub use spatial_index::{BBoxQuery, CylinderQuery};
 
-pub use types::{
+pub use config::{
     BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
     PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,
     TemporalBoundingBox3D, TemporalPoint, TemporalPoint3D, Trajectory, Trajectory3D,
 };
 #[cfg(feature = "time-index")]
-pub use types::{HistoryEntry, HistoryEventKind};
+pub use config::{HistoryEntry, HistoryEventKind};
 
 pub use namespace::{Namespace, NamespaceManager};
 

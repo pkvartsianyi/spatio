@@ -11,9 +11,9 @@ use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::Point as RustPoint;
 use spatio::spatial::DistanceMetric as RustDistanceMetric;
 use spatio::{
+    config::{Config as RustConfig, SetOptions as RustSetOptions},
     db::DB as RustDB,
     error::Result as RustResult,
-    types::{Config as RustConfig, SetOptions as RustSetOptions},
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -391,7 +391,7 @@ impl PySpatio {
             let timestamp_f64: f64 = tuple.get_item(1)?.extract()?;
             let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp_f64 as u64);
 
-            rust_trajectory.push(spatio::types::TemporalPoint {
+            rust_trajectory.push(spatio::config::TemporalPoint {
                 point: point.inner,
                 timestamp,
             });
