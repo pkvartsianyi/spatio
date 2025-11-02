@@ -23,6 +23,8 @@ pub enum SpatioError {
     UnexpectedEof,
     /// Invalid data format
     InvalidFormat,
+    /// Invalid input parameter
+    InvalidInput(String),
     /// I/O error from persistence layer
     Io(std::io::Error),
     /// Generic error with message
@@ -45,6 +47,7 @@ impl fmt::Display for SpatioError {
             SpatioError::InvalidTimestamp => write!(f, "Invalid timestamp value"),
             SpatioError::UnexpectedEof => write!(f, "Unexpected end of file"),
             SpatioError::InvalidFormat => write!(f, "Invalid data format"),
+            SpatioError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),
             SpatioError::GeohashError(err) => write!(f, "Geohash error: {}", err),

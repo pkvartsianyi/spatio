@@ -120,7 +120,7 @@ fn main() -> Result<()> {
     let ns = db.namespace("vehicles");
 
     // Insert a point (automatically indexed)
-    let truck = Point::new(40.7128, -74.0060);
+    let truck = Point::new(-74.0060, 40.7128);
     ns.insert_point("truck:001", &truck, b"Truck A", None)?;
 
     // Query for nearby points
@@ -212,7 +212,7 @@ db.delete("key")?;
 
 ### Spatial Operations
 ```rust
-let point = Point::new(40.7128, -74.0060);
+let point = Point::new(-74.0060, 40.7128);
 
 // Insert point with automatic spatial indexing
 db.insert_point("namespace", &point, b"data", None)?;
@@ -235,9 +235,9 @@ let intersects = db.intersects_bounds("namespace", 40.0, -75.0, 41.0, -73.0)?;
 ```rust
 // Store movement over time
 let trajectory = vec![
-    (Point::new(40.7128, -74.0060), 1640995200),
-    (Point::new(40.7150, -74.0040), 1640995260),
-    (Point::new(40.7172, -74.0020), 1640995320),
+    TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) },
+    TemporalPoint { point: Point::new(-74.0040, 40.7150), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) },
+    TemporalPoint { point: Point::new(-74.0020, 40.7172), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) },
 ];
 db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
 

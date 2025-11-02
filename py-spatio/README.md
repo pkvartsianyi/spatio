@@ -51,6 +51,7 @@ user = db.get(b"user:123")
 print(f"User: {user.decode()}")  # User: John Doe
 
 # Store geographic points with automatic spatial indexing
+# Note: Point uses (latitude, longitude) order in Python
 nyc = spatio.Point(40.7128, -74.0060)
 london = spatio.Point(51.5074, -0.1278)
 
@@ -142,6 +143,7 @@ import spatio
 db = spatio.Spatio.memory()
 
 # Insert city data
+# Note: Python Point uses (latitude, longitude) order
 cities = [
     (spatio.Point(40.7128, -74.0060), b"New York"),
     (spatio.Point(51.5074, -0.1278), b"London"),
@@ -234,6 +236,7 @@ import spatio
 db = spatio.Spatio.memory()
 
 # Insert points across different regions
+# Note: Python Point uses (latitude, longitude) order
 points = [
     (spatio.Point(40.7128, -74.0060), b"NYC"),      # North America
     (spatio.Point(51.5074, -0.1278), b"London"),    # Europe

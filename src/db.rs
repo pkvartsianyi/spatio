@@ -836,6 +836,183 @@ impl DB {
             .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)
     }
 
+    // ===== Advanced Spatial Operations =====
+
+    /// Calculate the distance between two points using a specified metric.
+    ///
+    /// This is a convenience method that wraps geo crate distance calculations.
+    /// For most lon/lat use cases, Haversine is recommended.
+    ///
+    /// # Arguments
+    ///
+    /// * `point1` - First point
+    /// * `point2` - Second point
+    /// * `metric` - Distance metric (Haversine, Geodesic, Rhumb, or Euclidean)
+    ///
+    /// # Returns
+    ///
+    /// Distance in meters
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let nyc = Point::new(-74.0060, 40.7128);
+    /// let la = Point::new(-118.2437, 34.0522);
+    ///
+    /// let distance = db.distance_between(&nyc, &la, DistanceMetric::Haversine)?;
+    /// println!("Distance: {} meters", distance);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn distance_between(
+        &self,
+        point1: &Point,
+        point2: &Point,
+        metric: crate::spatial::DistanceMetric,
+    ) -> Result<f64> {
+        Ok(crate::spatial::distance_between(point1, point2, metric))
+    }
+
+    /// Find the K nearest points to a query point within a namespace.
+    ///
+    /// This performs a K-nearest-neighbor search using the spatial index.
+    /// It first queries a radius, then refines to the K nearest points.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace to search in
+    /// * `center` - Query point
+    /// * `k` - Number of nearest neighbors to return
+    /// * `max_radius` - Maximum search radius in meters
+    /// * `metric` - Distance metric to use
+    ///
+    /// # Returns
+    ///
+    /// Vector of (Point, Bytes, distance) tuples sorted by distance (nearest first)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let nyc = Point::new(-74.0060, 40.7128);
+    /// db.insert_point("cities", &nyc, b"New York", None)?;
+    ///
+    /// let query = Point::new(-74.0, 40.7);
+    /// let nearest = db.knn("cities", &query, 5, 100_000.0, DistanceMetric::Haversine)?;
+    ///
+    /// for (point, data, distance) in nearest {
+    ///     println!("Found city at {}m", distance);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn knn(
+        &self,
+        prefix: &str,
+        center: &Point,
+        k: usize,
+        max_radius: f64,
+        metric: crate::spatial::DistanceMetric,
+    ) -> Result<Vec<(Point, Bytes, f64)>> {
+        // Query all points within max_radius
+        let candidates = self.query_within_radius(prefix, center, max_radius, usize::MAX)?;
+
+        // Convert to format expected by knn function
+        let points: Vec<(Point, Bytes)> = candidates;
+
+        // Use the spatial module's knn function
+        let results = crate::spatial::knn(center, &points, k, metric);
+
+        // Convert back to include data
+        Ok(results
+            .into_iter()
+            .map(|(pt, dist, data)| (pt, data, dist))
+            .collect())
+    }
+
+    /// Query points within a polygon boundary.
+    ///
+    /// This finds all points that are contained within the given polygon.
+    /// It uses the polygon's bounding box for initial filtering via the
+    /// spatial index, then performs precise point-in-polygon tests.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace to search in
+    /// * `polygon` - The polygon boundary
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Vector of (Point, Bytes) tuples for points within the polygon
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point};
+    /// use geo::{polygon, Polygon};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let poly: Polygon = polygon![
+    ///     (x: -74.0, y: 40.7),
+    ///     (x: -73.9, y: 40.7),
+    ///     (x: -73.9, y: 40.8),
+    ///     (x: -74.0, y: 40.8),
+    /// ];
+    ///
+    /// let results = db.query_within_polygon("cities", &poly, 100)?;
+    /// println!("Found {} cities in polygon", results.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_polygon(
+        &self,
+        prefix: &str,
+        polygon: &geo::Polygon,
+        limit: usize,
+    ) -> Result<Vec<(Point, Bytes)>> {
+        use geo::BoundingRect;
+
+        // Get bounding box of polygon for initial filtering
+        let bbox = polygon
+            .bounding_rect()
+            .ok_or_else(|| SpatioError::InvalidInput("Polygon has no bounding box".to_string()))?;
+
+        // Query all points within the bounding box
+        let candidates = self.find_within_bounds(
+            prefix,
+            bbox.min().y,
+            bbox.min().x,
+            bbox.max().y,
+            bbox.max().x,
+            usize::MAX,
+        )?;
+
+        // Filter to only points actually within the polygon
+        let mut results = Vec::new();
+        for (point, data) in candidates {
+            if crate::spatial::point_in_polygon(polygon, &point) {
+                results.push((point, data));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Force sync to disk
     /// Force sync all pending writes to disk.
     ///

@@ -131,6 +131,7 @@ pub mod error;
 pub mod ffi;
 pub mod index;
 pub mod namespace;
+pub mod spatial;
 pub mod storage;
 pub mod types;
 
@@ -145,8 +146,11 @@ pub use error::{Result, SpatioError};
 // Main database type alias for cleaner API
 pub type Spatio = DB;
 
-// Geo types
-pub use geo::Point;
+// Geo types - re-export from geo crate for convenience
+pub use geo::{Point, Polygon, Rect};
+
+// Spatial utilities
+pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, knn};
 
 // Configuration and options
 pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy, TemporalPoint};
@@ -190,8 +194,11 @@ pub mod prelude {
     // Core database types
     pub use crate::{DBBuilder, Result, Spatio, SpatioError};
 
-    // Geo types
-    pub use geo::Point;
+    // Geo types - re-export commonly used types from geo crate
+    pub use geo::{Point, Polygon, Rect};
+
+    // Spatial utilities
+    pub use crate::spatial::{DistanceMetric, bounding_box, distance_between, knn};
 
     // Configuration
     pub use crate::{Config, SetOptions, SyncPolicy};
