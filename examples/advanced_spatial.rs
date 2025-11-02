@@ -7,7 +7,7 @@
 use spatio::{
     Point, Polygon, Spatio,
     spatial::{
-        DistanceMetric, bounding_box, bounding_rect_for_points, convex_hull, distance_between, knn,
+        DistanceMetric, bounding_box, bounding_rect_for_points, convex_hull, distance_between,
     },
 };
 
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("3 nearest cities to query point:");
-    for (i, (point, data, distance)) in nearest.iter().enumerate() {
+    for (i, (_point, data, distance)) in nearest.iter().enumerate() {
         let city_info = String::from_utf8_lossy(data);
         println!(
             "  {}. {} ({:.2} km away)",
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Find cities in bounding box
     let cities_in_bbox = db.find_within_bounds("world_cities", 40.5, -74.5, 41.0, -73.5, 100)?;
     println!("\nCities in NY area bounding box:");
-    for (point, data) in &cities_in_bbox {
+    for (_point, data) in &cities_in_bbox {
         let city_info = String::from_utf8_lossy(data);
         println!("  - {}", city_info);
     }

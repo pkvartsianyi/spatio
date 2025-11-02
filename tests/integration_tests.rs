@@ -1,11 +1,6 @@
 use bytes::Bytes;
-use geo::Distance;
-use geo::Haversine;
-use geo::Intersects;
-use geo::Point;
-use geo::Rect;
-use geohash;
-use spatio::{Config, SetOptions, Spatio, TemporalPoint};
+use spatio::spatial::DistanceMetric;
+use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 
@@ -122,10 +117,13 @@ fn test_trajectory_operations() {
 
 #[test]
 fn test_distance_calculations() {
+    let db = Spatio::memory().unwrap();
     let nyc = Point::new(-74.0060, 40.7128);
     let london = Point::new(-0.1278, 51.5074);
 
-    let distance = Haversine.distance(nyc, london);
+    let distance = db
+        .distance_between(&nyc, &london, DistanceMetric::Haversine)
+        .unwrap();
 
     // Distance should be approximately 5585 km (allowing some variance)
     assert!((distance - 5_585_000.0f64).abs() < 100_000.0f64);
@@ -340,32 +338,68 @@ fn test_spatial_query_methods() {
 
 #[test]
 fn test_point_spatial_methods() {
+    let db = Spatio::memory().unwrap();
+
     let nyc = Point::new(-74.0060, 40.7128);
     let brooklyn = Point::new(-73.9442, 40.6782);
     let london = Point::new(-0.1278, 51.5074);
 
-    // Test within_distance
-    assert!(Haversine.distance(brooklyn, nyc) <= 20_000.0); // Brooklyn is close to NYC
-    assert!(!(Haversine.distance(london, nyc) <= 1_000_000.0)); // London is far from NYC
+    // Insert test cities
+    db.insert_point("cities", &nyc, b"NYC", None).unwrap();
+    db.insert_point("cities", &brooklyn, b"Brooklyn", None)
+        .unwrap();
+    db.insert_point("cities", &london, b"London", None).unwrap();
 
-    // Test contains_point (reverse of within_distance)
-    assert!(Haversine.distance(nyc, brooklyn) <= 20_000.0); // NYC contains Brooklyn within 20km
-    assert!(!(Haversine.distance(nyc, london) <= 1_000_000.0)); // NYC doesn't contain London within 1000km
+    // Test distance_between using our API
+    let dist_brooklyn_nyc = db
+        .distance_between(&brooklyn, &nyc, DistanceMetric::Haversine)
+        .unwrap();
+    let dist_london_nyc = db
+        .distance_between(&london, &nyc, DistanceMetric::Haversine)
+        .unwrap();
 
-    // Test intersects_bounds
-    let rect1 = Rect::new(Point::new(-75.0, 40.0), Point::new(-73.0, 41.0)); // NYC area
-    let rect2 = Rect::new(Point::new(-74.5, 40.5), Point::new(-74.0, 40.8)); // Manhattan area
-    assert!(rect1.intersects(&rect2)); // Should intersect
+    assert!(dist_brooklyn_nyc <= 20_000.0); // Brooklyn is close to NYC
+    assert!(dist_london_nyc > 1_000_000.0); // London is far from NYC
 
-    let rect1 = Rect::new(Point::new(-75.0, 40.0), Point::new(-73.0, 41.0)); // NYC area
-    let rect2 = Rect::new(Point::new(-1.0, 51.0), Point::new(1.0, 52.0)); // London area
-    assert!(!rect1.intersects(&rect2)); // Should not intersect
+    // Test contains_point using our API
+    assert!(db.contains_point("cities", &nyc, 20_000.0).unwrap()); // Brooklyn is within 20km
+    assert!(db.contains_point("cities", &nyc, 100.0).unwrap()); // NYC itself is within 100m
 
-    // Test within_bounds
-    assert!(nyc.x() >= -75.0 && nyc.x() <= -73.0 && nyc.y() >= 40.0 && nyc.y() <= 41.0); // NYC within NYC area bounds
+    // Test empty location
+    let empty_location = Point::new(0.0, 0.0);
     assert!(
-        !(london.x() >= -75.0 && london.x() <= -73.0 && london.y() >= 40.0 && london.y() <= 41.0)
-    ); // London not within NYC area bounds
+        !db.contains_point("cities", &empty_location, 1000.0)
+            .unwrap()
+    ); // No cities at 0,0
+
+    // Test count_within_radius using our API
+    let count_near_nyc = db.count_within_radius("cities", &nyc, 50_000.0).unwrap();
+    assert_eq!(count_near_nyc, 2); // NYC and Brooklyn
+
+    let count_near_london = db.count_within_radius("cities", &london, 50_000.0).unwrap();
+    assert_eq!(count_near_london, 1); // Only London
+
+    // Test intersects_bounds using our API
+    assert!(
+        db.intersects_bounds("cities", 40.0, -75.0, 41.0, -73.0)
+            .unwrap()
+    ); // NYC area has points
+    assert!(
+        db.intersects_bounds("cities", 51.0, -1.0, 52.0, 1.0)
+            .unwrap()
+    ); // London area has points
+    assert!(!db.intersects_bounds("cities", 0.0, 0.0, 1.0, 1.0).unwrap()); // Empty area
+
+    // Test find_within_bounds using our API
+    let nyc_area = db
+        .find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)
+        .unwrap();
+    assert_eq!(nyc_area.len(), 2); // NYC and Brooklyn
+
+    let london_area = db
+        .find_within_bounds("cities", 51.0, -1.0, 52.0, 1.0, 10)
+        .unwrap();
+    assert_eq!(london_area.len(), 1); // Only London
 }
 
 #[test]

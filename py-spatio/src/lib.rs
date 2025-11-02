@@ -31,8 +31,20 @@ pub struct PyPoint {
 
 #[pymethods]
 impl PyPoint {
-    /// Create a new Point with latitude and longitude
+    /// Create a new Point with latitude and longitude.
+    ///
+    /// Args:
+    ///     lat: Latitude in degrees (-90 to 90)
+    ///     lon: Longitude in degrees (-180 to 180)
+    ///     alt: Optional altitude (accepted but ignored as geo::Point is 2D)
+    ///
+    /// Returns:
+    ///     A new Point instance
+    ///
+    /// Raises:
+    ///     ValueError: If latitude or longitude are out of valid range
     #[new]
+    #[pyo3(signature = (lat, lon, alt=None))]
     fn new(lat: f64, lon: f64, alt: Option<f64>) -> PyResult<Self> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));

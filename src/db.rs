@@ -836,8 +836,6 @@ impl DB {
             .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)
     }
 
-    // ===== Advanced Spatial Operations =====
-
     /// Calculate the distance between two points using a specified metric.
     ///
     /// This is a convenience method that wraps geo crate distance calculations.
