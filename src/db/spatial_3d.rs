@@ -46,10 +46,8 @@ impl DB {
     ) -> Result<()> {
         let data_ref = Bytes::copy_from_slice(value);
 
-        // Single lock acquisition for both operations
         let mut inner = self.write()?;
 
-        // Insert into main storage
         let item = match opts {
             Some(SetOptions { ttl: Some(ttl), .. }) => {
                 crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
@@ -62,7 +60,6 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        // Generate key with coordinates encoded for AOF replay
         DBInner::validate_timestamp(created_at)?;
         let key =
             DBInner::generate_spatial_key(prefix, point.x(), point.y(), point.z(), created_at)?;
@@ -70,7 +67,6 @@ impl DB {
 
         inner.insert_item(key_bytes.clone(), item);
 
-        // Add to 3D spatial index
         inner.spatial_index.insert_point(
             prefix,
             point.x(),

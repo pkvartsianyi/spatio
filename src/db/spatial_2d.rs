@@ -41,10 +41,8 @@ impl DB {
     ) -> Result<()> {
         let data_ref = Bytes::copy_from_slice(value);
 
-        // Single lock acquisition for both operations
         let mut inner = self.write()?;
 
-        // Insert into main storage
         let item = match opts {
             Some(SetOptions { ttl: Some(ttl), .. }) => {
                 crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
@@ -57,14 +55,12 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        // Generate key with coordinates encoded for AOF replay
         DBInner::validate_timestamp(created_at)?;
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         inner.insert_item(key_bytes.clone(), item);
 
-        // Add to spatial index (2D with z=0)
         inner.spatial_index.insert_point_2d(
             prefix,
             point.x(),
@@ -120,7 +116,6 @@ impl DB {
             limit,
         );
 
-        // Convert results - spatial index now returns coordinates directly
         let points: Vec<(Point, Bytes)> = results
             .into_iter()
             .map(|(x, y, _key, data, _distance)| (Point::new(x, y), data))
@@ -286,8 +281,6 @@ impl DB {
             .spatial_index
             .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
 
-        // Extract coordinates from keys or use a helper method
-        // For now, we need to iterate to get coordinates since bbox doesn't return them
         let mut points = Vec::new();
         for (key, data) in results.into_iter().take(limit) {
             if let Some(tree) = inner.spatial_index.indexes.get(prefix)
@@ -387,7 +380,6 @@ impl DB {
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let inner = self.read()?;
 
-        // Use the spatial index's efficient KNN directly
         let results = inner.spatial_index.knn_2d_with_max_distance(
             prefix,
             center.x(),
@@ -396,7 +388,6 @@ impl DB {
             Some(max_radius),
         );
 
-        // Convert and recalculate distances with requested metric if not Haversine
         let mut filtered: Vec<(Point, Bytes, f64)> = results
             .into_iter()
             .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
@@ -406,7 +397,6 @@ impl DB {
             for (point, _, dist) in &mut filtered {
                 *dist = crate::spatial::distance_between(center, point, metric);
             }
-            // Re-sort since distances changed
             filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
             filtered.truncate(k);
         }
@@ -459,12 +449,10 @@ impl DB {
     ) -> Result<Vec<(Point, Bytes)>> {
         use geo::BoundingRect;
 
-        // Get bounding box of polygon for initial filtering
         let bbox = polygon
             .bounding_rect()
             .ok_or_else(|| SpatioError::InvalidInput("Polygon has no bounding box".to_string()))?;
 
-        // Query all points within the bounding box
         let candidates = self.find_within_bounds(
             prefix,
             bbox.min().y,
@@ -474,7 +462,6 @@ impl DB {
             usize::MAX,
         )?;
 
-        // Filter to only points actually within the polygon
         let mut results = Vec::new();
         for (point, data) in candidates {
             if crate::spatial::point_in_polygon(polygon, &point) {
@@ -528,18 +515,13 @@ impl DB {
     ) -> Result<Vec<(Point, Bytes)>> {
         let center = bbox.center();
 
-        // Get candidates using radius search from center
-        // Calculate approximate radius from center to corner
         let dx = bbox.width() / 2.0;
         let dy = bbox.height() / 2.0;
         let radius_deg = (dx * dx + dy * dy).sqrt();
-
-        // Convert to meters (rough approximation: 1 degree ≈ 111km)
         let radius_meters = radius_deg * 111_000.0;
 
         let candidates = self.query_within_radius(prefix, &center, radius_meters, limit * 2)?;
 
-        // Filter to only points actually within the bounding box
         let mut results = Vec::new();
         for (point, data) in candidates {
             if bbox.contains_point(&point) {
@@ -672,7 +654,6 @@ impl DB {
                 continue;
             }
 
-            // Try to deserialize as bounding box
             if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value)
                 && stored_bbox.intersects(bbox)
             {

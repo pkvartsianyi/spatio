@@ -91,9 +91,6 @@ pub struct StorageStats {
 pub(crate) fn calculate_prefix_end(prefix: &[u8]) -> Vec<u8> {
     let mut prefix_end = prefix.to_vec();
 
-    // Find the last non-0xFF byte and increment it.
-    // This creates the smallest key that is lexicographically greater than
-    // any key that could start with the given prefix.
     while let Some(last_byte) = prefix_end.pop() {
         if last_byte < 255 {
             prefix_end.push(last_byte + 1);

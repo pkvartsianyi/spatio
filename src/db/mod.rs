@@ -180,8 +180,6 @@ impl DB {
 
         let mut inner = DBInner::new_with_config(&config);
 
-        // Initialize persistence if not in-memory
-        // This automatically replays the AOF to restore previous state
         if !is_memory {
             let mut aof_file = AOFFile::open(path)?;
             inner.load_from_aof(&mut aof_file)?;
@@ -289,9 +287,6 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        // NOTE: We hold the write lock throughout the insertion, including any
-        // amortised cleanup. This guarantees that AOF appends (inserts + deletes)
-        // remain strictly ordered for deterministic replay.
         let old = inner.insert_item(key_bytes.clone(), item);
         inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
         Ok(old.map(|item| item.value))
@@ -301,7 +296,6 @@ impl DB {
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        // Fast path: read-only lock
         {
             let inner = self.read_checked()?;
 
@@ -314,11 +308,6 @@ impl DB {
             }
         }
 
-        // NOTE: expired-key removal (and any amortised cleanup it triggers)
-        // runs while holding the same exclusive lock, so AOF delete entries are
-        // ordered consistently with preceding writes.
-
-        // Slow path: expired item needs removal
         let mut inner = self.write_checked()?;
 
         if let Some(item) = inner.get_item(&key_bytes) {
@@ -436,7 +425,6 @@ impl DB {
         Ok(())
     }
 
-    // Internal helper methods
     pub(crate) fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
         match self.inner.read() {
             Ok(guard) => Ok(guard),
@@ -551,29 +539,25 @@ impl HistoryTracker {
 /// Use `close()` explicitly if you need to prevent further operations.
 impl Drop for DB {
     fn drop(&mut self) {
-        // Only sync if this is the last reference to the database
         if Arc::strong_count(&self.inner) != 1 {
             return;
         }
 
-        // Best-effort sync on final drop
         if let Ok(mut inner) = self.inner.write() {
             if inner.closed {
                 return;
             }
 
             let sync_mode = inner.config.sync_mode;
-            if let Some(ref mut aof_file) = inner.aof_file {
-                // Attempt to sync on drop, but don't panic if it fails
-                if aof_file.sync_with_mode(sync_mode).is_ok() {
-                    inner.sync_ops_since_flush = 0;
-                }
+            if let Some(ref mut aof_file) = inner.aof_file
+                && aof_file.sync_with_mode(sync_mode).is_ok()
+            {
+                inner.sync_ops_since_flush = 0;
             }
         }
     }
 }
 
-// Re-export for convenience
 pub use DB as Spatio;
 
 #[cfg(test)]
@@ -591,7 +575,6 @@ mod tests {
         let temp_path = std::env::temp_dir().join("test_drop_sync.aof");
         let _ = fs::remove_file(&temp_path);
 
-        // Create database
         let db = DB::open(&temp_path).unwrap();
         db.insert("key1", b"value1", None).unwrap();
 
@@ -599,25 +582,19 @@ mod tests {
         let db2 = db.clone();
         let db3 = db.clone();
 
-        // Check strong count
         assert_eq!(Arc::strong_count(&db.inner), 3);
 
-        // Drop one clone - should NOT sync (still 2 references)
         drop(db2);
         assert_eq!(Arc::strong_count(&db.inner), 2);
 
-        // Drop another clone - should NOT sync (still 1 reference)
         drop(db3);
         assert_eq!(Arc::strong_count(&db.inner), 1);
 
-        // Drop last reference - SHOULD sync
         drop(db);
 
-        // Reopen and verify data persisted
         let db = DB::open(&temp_path).unwrap();
         assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
 
-        // Cleanup
         let _ = fs::remove_file(temp_path);
     }
 
@@ -626,10 +603,8 @@ mod tests {
         let mut db = DB::memory().unwrap();
         db.insert("key", b"value", None).unwrap();
 
-        // Close the database
         db.close().unwrap();
 
-        // Operations should fail
         assert!(db.insert("key2", b"value2", None).is_err());
         assert!(db.get("key").is_err());
         assert!(db.delete("key").is_err());
@@ -643,7 +618,6 @@ mod tests {
         db.insert("key1", b"value1", None).unwrap();
         db2.insert("key2", b"value2", None).unwrap();
 
-        // Both clones see both keys
         assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
         assert_eq!(db.get("key2").unwrap().unwrap().as_ref(), b"value2");
         assert_eq!(db2.get("key1").unwrap().unwrap().as_ref(), b"value1");
