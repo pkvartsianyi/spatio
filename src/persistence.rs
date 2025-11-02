@@ -39,12 +39,15 @@ pub struct AOFFile {
     last_rewrite_size: u64,
     rewrite_in_progress: bool,
     scratch: BytesMut,
+    scratch_small_write_count: usize,
     #[cfg(feature = "bench-prof")]
     profile: AOFProfile,
 }
 
 const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
-const SCRATCH_SHRINK_THRESHOLD: usize = 1 << 20;
+const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024; // 128KB (more aggressive)
+const SCRATCH_IDLE_SHRINK_COUNT: usize = 100; // Shrink after N small writes
+const AOF_BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer for BufWriter
 
 #[cfg(feature = "bench-prof")]
 #[derive(Default)]
@@ -111,7 +114,7 @@ impl AOFFile {
 
         let size = file.metadata()?.len();
         let writer_file = file.try_clone()?;
-        let writer = BufWriter::new(writer_file);
+        let writer = BufWriter::with_capacity(AOF_BUFFER_SIZE, writer_file);
 
         Ok(AOFFile {
             file,
@@ -122,6 +125,7 @@ impl AOFFile {
             last_rewrite_size: size,
             rewrite_in_progress: false,
             scratch: BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY),
+            scratch_small_write_count: 0,
             #[cfg(feature = "bench-prof")]
             profile: AOFProfile::default(),
         })
@@ -184,10 +188,17 @@ impl AOFFile {
         }
         self.size += written_len as u64;
 
-        if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD
-            && written_len <= SCRATCH_INITIAL_CAPACITY
-        {
-            self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
+        // Track consecutive small writes and shrink buffer more aggressively
+        if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD {
+            if written_len <= SCRATCH_INITIAL_CAPACITY {
+                self.scratch_small_write_count += 1;
+                if self.scratch_small_write_count >= SCRATCH_IDLE_SHRINK_COUNT {
+                    self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
+                    self.scratch_small_write_count = 0;
+                }
+            } else {
+                self.scratch_small_write_count = 0;
+            }
         }
 
         if self.should_rewrite() {
@@ -263,37 +274,51 @@ impl AOFFile {
             rewrite_file.sync()?;
             drop(rewrite_file);
 
-            // Close all existing handles before rename
-            self.writer.flush().ok();
-
+            // Ensure rewrite file is fully synced before rename
             {
-                let writer =
-                    std::mem::replace(&mut self.writer, BufWriter::new(File::open(&self.path)?));
-                drop(writer);
-                let file = std::mem::replace(&mut self.file, File::open(&self.path)?);
-                drop(file);
+                let rewrite_file_for_sync = File::open(&rewrite_path)?;
+                rewrite_file_for_sync.sync_all()?;
             }
 
-            // Now safely rename the rewritten file
+            // Flush and sync before any handle manipulation
+            self.writer.flush()?;
+            self.file.sync_all()?;
+
+            // Close all existing handles ATOMICALLY using dummy file
+            // This prevents window where we have invalid file handles
+            let dummy_path = if cfg!(target_os = "windows") {
+                "NUL"
+            } else {
+                "/dev/null"
+            };
+
+            drop(std::mem::replace(
+                &mut self.writer,
+                BufWriter::with_capacity(AOF_BUFFER_SIZE, File::open(dummy_path)?),
+            ));
+            drop(std::mem::replace(&mut self.file, File::open(dummy_path)?));
+
+            // Atomic rename (on POSIX systems)
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 
-            // Reopen new file for continued appending
+            // Reopen immediately with proper error handling
             let new_file = OpenOptions::new()
-                .create(true)
+                .create(false) // Don't create - it should exist
                 .append(true)
                 .read(true)
                 .open(&target_path)?;
 
             let new_size = new_file.metadata()?.len();
             let writer_file = new_file.try_clone()?;
-            let new_writer = BufWriter::new(writer_file);
+            let new_writer = BufWriter::with_capacity(AOF_BUFFER_SIZE, writer_file);
 
             self.file = new_file;
             self.writer = new_writer;
             self.size = new_size;
             self.last_rewrite_size = new_size;
             self.path = target_path;
+            self.scratch_small_write_count = 0;
 
             Ok(())
         })();

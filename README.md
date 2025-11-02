@@ -25,7 +25,7 @@
 </p>
 
 **Spatio** is a compact and efficient **embedded spatio-temporal database** written in Rust.
-It’s designed for **real-time location data**, with **low memory usage**, **optional persistence**, and **native Python bindings**.
+It's designed for **real-time 2D and 3D location data**, with **low memory usage**, **optional persistence**, and **native Python bindings**.
 
 No SQL parser, no external dependencies, and requires no setup.
 
@@ -49,7 +49,8 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
 - **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
-- **Trajectory Support** — Store and query movement over time
+- **3D Spatial Support** — Full 3D point indexing with altitude-aware queries (spherical, cylindrical, bounding box)
+- **Trajectory Support** — Store and query movement over time (2D and 3D)
 - **GeoJSON I/O** — Supports import and export of geometries in GeoJSON format
 
 ### Data Management
@@ -107,6 +108,7 @@ for up-to-date installation notes and examples.
 ### Rust
 ```rust
 use spatio::prelude::*;
+use spatio::Point3d;
 use std::time::Duration;
 
 fn main() -> Result<()> {
@@ -132,6 +134,14 @@ fn main() -> Result<()> {
     if let Some(data) = ns.get("truck:001")? {
         println!("Data: {:?}", data);
     }
+
+    // 3D spatial tracking (altitude-aware)
+    let drone = Point3d::new(-74.0060, 40.7128, 100.0); // lon, lat, altitude
+    db.insert_point_3d("drones", &drone, b"Drone Alpha", None)?;
+
+    // Query within 3D sphere
+    let nearby_3d = db.query_within_sphere_3d("drones", &drone, 200.0, 10)?;
+    println!("Found {} drones within 200m (3D)", nearby_3d.len());
 
     Ok(())
 }
@@ -257,6 +267,85 @@ let intersects = db.intersects_bounds("namespace", 40.0, -75.0, 41.0, -73.0)?;
 ```
 
 **Note**: See [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md) for complete documentation on all spatial operations, including convex hull, polygon area calculations, and more.
+
+### 3D Spatial Operations
+
+Spatio provides comprehensive 3D spatial indexing for altitude-aware applications like drone tracking, aviation, and multi-floor building navigation:
+
+```rust
+use spatio::{Point3d, BoundingBox3D, Spatio};
+
+let db = Spatio::memory()?;
+
+// Insert 3D points (lon, lat, altitude)
+let drone = Point3d::new(-74.0060, 40.7128, 100.0); // 100m altitude
+db.insert_point_3d("drones", &drone, b"Drone Alpha", None)?;
+
+// Spherical 3D query (true 3D distance)
+let control = Point3d::new(-74.0065, 40.7133, 100.0);
+let nearby = db.query_within_sphere_3d("drones", &control, 200.0, 10)?;
+
+// Cylindrical query (altitude range + horizontal radius)
+let results = db.query_within_cylinder_3d(
+    "drones",
+    &control,
+    50.0,   // min altitude
+    150.0,  // max altitude
+    1000.0, // horizontal radius
+    10
+)?;
+
+// 3D bounding box query
+let bbox = BoundingBox3D::new(
+    -74.0080, 40.7120, 40.0,  // min x, y, z
+    -74.0050, 40.7150, 110.0, // max x, y, z
+);
+let in_box = db.query_within_bbox_3d("drones", &bbox, 100)?;
+
+// K-nearest neighbors in 3D
+let nearest = db.knn_3d("drones", &control, 5)?;
+
+// 3D distance calculations
+let dist_3d = db.distance_between_3d(&point_a, &point_b)?;
+```
+
+See [examples/3d_spatial_tracking.rs](examples/3d_spatial_tracking.rs) for a complete demonstration.
+
+### Logging
+
+Spatio uses the `log` crate for diagnostics and warnings. To see log output in your application:
+
+```rust
+// Add to your Cargo.toml:
+[dependencies]
+spatio = "0.1"
+env_logger = "0.11"  // or any other log implementation
+
+// Initialize logging in your main():
+fn main() {
+    env_logger::init();
+    // ... your code
+}
+```
+
+Control log verbosity with the `RUST_LOG` environment variable:
+
+```bash
+# See all debug logs
+RUST_LOG=debug cargo run
+
+# Only warnings and errors
+RUST_LOG=warn cargo run
+
+# Only Spatio logs
+RUST_LOG=spatio=debug cargo run
+```
+
+Spatio logs important events such as:
+- Database lock errors (poisoned locks)
+- AOF replay warnings (invalid coordinates, corrupted entries)
+- Performance warnings (large expiration clusters)
+- Spatial index warnings (invalid query parameters)
 
 ### Trajectory Tracking
 ```rust

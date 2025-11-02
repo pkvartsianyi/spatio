@@ -2,7 +2,7 @@
 /target/
 py-spatio/target/
 py-spatio/publish_env
-
+spatio-types/target/
 # Cargo.lock is excluded for the main library crate
 # but included for the Python bindings (application-like)
 /Cargo.lock
@@ -44,6 +44,8 @@ Thumbs.db
 # Documentation build
 /docs/book/
 /docs/rustdoc/
+/docs/analysis/
+/docs/audits/
 /target/doc/
 
 # Benchmark results

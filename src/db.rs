@@ -5,22 +5,21 @@
 
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
-use crate::index::{IndexManager, SpatialKey};
 use crate::persistence::{AOFCommand, AOFFile};
-use crate::types::{Config, DbItem, DbStats, SetOptions, TemporalPoint};
+use crate::spatial_index::{BBoxQuery, CylinderQuery, SpatialIndexManager};
+use crate::types::{
+    BoundingBox2D, BoundingBox3D, Config, DbItem, DbStats, Point3d, SetOptions, TemporalPoint,
+};
 #[cfg(feature = "time-index")]
 use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
 use geo::Point;
-use geohash;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-#[cfg(feature = "time-index")]
-use std::time::Duration;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 /// Main Spatio database structure providing spatio-temporal data storage.
 ///
@@ -86,8 +85,8 @@ pub(crate) struct DBInner {
     #[cfg(feature = "time-index")]
     /// Items indexed by creation time for time-range queries
     pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
-    /// Index manager for spatial operations
-    pub index_manager: IndexManager,
+    /// Spatial index manager for 2D and 3D spatial operations (R-tree based)
+    pub spatial_index: SpatialIndexManager,
     /// Append-only file for persistence
     pub aof_file: Option<AOFFile>,
     #[cfg(feature = "time-index")]
@@ -268,10 +267,7 @@ impl DB {
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let cleanup_batch = inner.config.amortized_cleanup_batch;
         if cleanup_batch > 0 {
@@ -305,10 +301,7 @@ impl DB {
 
         // Fast path: read-only lock
         {
-            let inner = self.read()?;
-            if inner.closed {
-                return Err(SpatioError::DatabaseClosed);
-            }
+            let inner = self.read_checked()?;
 
             if let Some(item) = inner.get_item(&key_bytes) {
                 if !item.is_expired() {
@@ -324,10 +317,7 @@ impl DB {
         // ordered consistently with preceding writes.
 
         // Slow path: expired item needs removal
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         if let Some(item) = inner.get_item(&key_bytes) {
             if item.is_expired() {
@@ -349,10 +339,7 @@ impl DB {
 
     /// Delete a key atomically
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
@@ -366,10 +353,7 @@ impl DB {
 
     /// Remove all expired keys and compact indexes.
     pub fn cleanup_expired(&self) -> Result<usize> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let now = SystemTime::now();
         let expired_times: Vec<SystemTime> =
@@ -393,10 +377,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Return keys whose last update occurred within the given duration.
     pub fn keys_created_since(&self, duration: Duration) -> Result<Vec<Bytes>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         let end = SystemTime::now();
         let start = end.checked_sub(duration).unwrap_or(SystemTime::UNIX_EPOCH);
@@ -407,10 +388,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Return keys whose last update timestamp falls within the specified interval.
     pub fn keys_created_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<Bytes>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         let (start, end) = if start <= end {
             (start, end)
@@ -423,10 +401,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Retrieve the recent history of mutations for a specific key.
     pub fn history(&self, key: impl AsRef<[u8]>) -> Result<Vec<HistoryEntry>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         if let Some(ref tracker) = inner.history {
             let key_bytes = Bytes::copy_from_slice(key.as_ref());
@@ -479,15 +454,10 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let data_bytes = value;
-        let data_ref = Bytes::copy_from_slice(data_bytes);
+        let data_ref = Bytes::copy_from_slice(value);
 
         // Single lock acquisition for both operations
         let mut inner = self.write()?;
-
-        // Generate geohash key using configured precision
-        let geohash = geohash::encode((*point).into(), inner.config.geohash_precision)
-            .map_err(|_| SpatioError::InvalidGeohash)?;
 
         // Insert into main storage
         let item = match opts {
@@ -500,15 +470,21 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        let key = SpatialKey::geohash_unique(prefix, &geohash, point, created_at);
+        // Generate key with coordinates encoded for AOF replay
+        DBInner::validate_timestamp(created_at)?;
+        let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         inner.insert_item(key_bytes.clone(), item);
 
-        // Add to spatial index
-        inner
-            .index_manager
-            .insert_point(prefix, &geohash, &key_bytes, point, &data_ref)?;
+        // Add to spatial index (2D with z=0)
+        inner.spatial_index.insert_point_2d(
+            prefix,
+            point.x(),
+            point.y(),
+            key.clone(),
+            data_ref.clone(),
+        );
 
         inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
         Ok(())
@@ -548,9 +524,22 @@ impl DB {
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         let inner = self.read()?;
-        inner
-            .index_manager
-            .query_within_radius(prefix, center, radius_meters, limit)
+
+        let results = inner.spatial_index.query_within_radius_2d(
+            prefix,
+            center.x(),
+            center.y(),
+            radius_meters,
+            limit,
+        );
+
+        // Convert results - spatial index now returns coordinates directly
+        let points: Vec<(Point, Bytes)> = results
+            .into_iter()
+            .map(|(x, y, _key, data, _distance)| (Point::new(x, y), data))
+            .collect();
+
+        Ok(points)
     }
 
     /// Insert a trajectory (sequence of points over time).
@@ -645,39 +634,57 @@ impl DB {
         end_time: u64,
     ) -> Result<Vec<TemporalPoint>> {
         let mut results = Vec::new();
-        let prefix = format!("traj:{}:", object_id);
+
+        // Construct range boundaries using timestamp in key format
+        // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
+        let start_key = format!("traj:{}:{:010}:000000", object_id, start_time);
+        let end_key = format!("traj:{}:{:010}:999999", object_id, end_time);
 
         let inner = self.read()?;
-        for (key, item) in inner.keys.range(Bytes::from(prefix.clone())..) {
-            if !key.starts_with(prefix.as_bytes()) {
-                break;
+
+        // Use range to only iterate over relevant keys
+        for (key, item) in inner
+            .keys
+            .range(Bytes::from(start_key)..=Bytes::from(end_key))
+        {
+            // Double-check prefix (though range should handle this)
+            if let Ok(key_str) = std::str::from_utf8(key) {
+                if !key_str.starts_with(&format!("traj:{}:", object_id)) {
+                    break;
+                }
+
+                // Parse timestamp from key to avoid deserializing out-of-range items
+                // Key format: "traj:{object_id}:{timestamp:010}:{sequence:06}"
+                // After split: [0]="traj", [1..n-2]=object_id parts, [n-1]=timestamp, [n]=sequence
+                let parts: Vec<&str> = key_str.split(':').collect();
+                if parts.len() >= 4 {
+                    // The timestamp is the second-to-last part before the sequence number
+                    if let Ok(ts) = parts[parts.len() - 2].parse::<u64>()
+                        && (ts < start_time || ts > end_time)
+                    {
+                        continue;
+                    }
+                }
             }
 
             if item.is_expired() {
                 continue;
             }
 
+            // Now deserialize only items we know are in range
             match bincode::deserialize::<TemporalPoint>(&item.value) {
-                Ok(temporal_point) => {
-                    let timestamp_secs = temporal_point
-                        .timestamp
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map_err(|_| SpatioError::InvalidTimestamp)?
-                        .as_secs();
-                    if timestamp_secs >= start_time && timestamp_secs <= end_time {
-                        results.push(temporal_point);
-                    }
-                }
+                Ok(temporal_point) => results.push(temporal_point),
                 Err(e) => {
-                    // Log deserialization error but continue processing other points
-                    eprintln!(
-                        "Warning: Failed to deserialize trajectory point for object '{}': {}",
-                        object_id, e
+                    log::warn!(
+                        "Failed to deserialize trajectory point for object '{}': {}. Skipping corrupted point.",
+                        object_id,
+                        e
                     );
                 }
             }
         }
 
+        // Results should already be sorted by key, but double-check
         results.sort_by_key(|tp| tp.timestamp);
         Ok(results)
     }
@@ -709,9 +716,9 @@ impl DB {
     /// ```
     pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
         let inner = self.read()?;
-        inner
-            .index_manager
-            .contains_point(prefix, center, radius_meters)
+        Ok(inner
+            .spatial_index
+            .contains_point_2d(prefix, center.x(), center.y(), radius_meters))
     }
 
     /// Check if there are any points within a bounding box.
@@ -749,9 +756,10 @@ impl DB {
         max_lon: f64,
     ) -> Result<bool> {
         let inner = self.read()?;
-        inner
-            .index_manager
-            .intersects_bounds(prefix, min_lat, min_lon, max_lat, max_lon)
+        let results = inner
+            .spatial_index
+            .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
+        Ok(!results.is_empty())
     }
 
     /// Count points within a distance from a center point.
@@ -788,9 +796,12 @@ impl DB {
         radius_meters: f64,
     ) -> Result<usize> {
         let inner = self.read()?;
-        inner
-            .index_manager
-            .count_within_radius(prefix, center, radius_meters)
+        Ok(inner.spatial_index.count_within_radius_2d(
+            prefix,
+            center.x(),
+            center.y(),
+            radius_meters,
+        ))
     }
 
     /// Find all points within a bounding box.
@@ -831,9 +842,22 @@ impl DB {
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         let inner = self.read()?;
-        inner
-            .index_manager
-            .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)
+        let results = inner
+            .spatial_index
+            .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
+
+        // Extract coordinates from keys or use a helper method
+        // For now, we need to iterate to get coordinates since bbox doesn't return them
+        let mut points = Vec::new();
+        for (key, data) in results.into_iter().take(limit) {
+            if let Some(tree) = inner.spatial_index.indexes.get(prefix)
+                && let Some(indexed_point) = tree.iter().find(|p| p.key == key)
+            {
+                let point = Point::new(indexed_point.x, indexed_point.y);
+                points.push((point, data));
+            }
+        }
+        Ok(points)
     }
 
     /// Calculate the distance between two points using a specified metric.
@@ -921,20 +945,33 @@ impl DB {
         max_radius: f64,
         metric: crate::spatial::DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
-        // Query all points within max_radius
-        let candidates = self.query_within_radius(prefix, center, max_radius, usize::MAX)?;
+        let inner = self.read()?;
 
-        // Convert to format expected by knn function
-        let points: Vec<(Point, Bytes)> = candidates;
+        // Use the spatial index's efficient KNN directly
+        let results = inner.spatial_index.knn_2d_with_max_distance(
+            prefix,
+            center.x(),
+            center.y(),
+            k,
+            Some(max_radius),
+        );
 
-        // Use the spatial module's knn function
-        let results = crate::spatial::knn(center, &points, k, metric);
-
-        // Convert back to include data
-        Ok(results
+        // Convert and recalculate distances with requested metric if not Haversine
+        let mut filtered: Vec<(Point, Bytes, f64)> = results
             .into_iter()
-            .map(|(pt, dist, data)| (pt, data, dist))
-            .collect())
+            .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
+            .collect();
+
+        if metric != crate::spatial::DistanceMetric::Haversine {
+            for (point, _, dist) in &mut filtered {
+                *dist = crate::spatial::distance_between(center, point, metric);
+            }
+            // Re-sort since distances changed
+            filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+            filtered.truncate(k);
+        }
+
+        Ok(filtered)
     }
 
     /// Query points within a polygon boundary.
@@ -1011,6 +1048,530 @@ impl DB {
         Ok(results)
     }
 
+    /// Query all points within a bounding box.
+    ///
+    /// Returns all spatial points that fall within the specified 2D bounding box,
+    /// ordered by their distance from the box's center.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Optional key prefix to filter results
+    /// * `bbox` - The bounding box to search within
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// // Store some points
+    /// db.insert_point("poi", &Point::new(-73.9855, 40.7580), b"times_square", None)?;
+    /// db.insert_point("poi", &Point::new(-73.9665, 40.7829), b"central_park", None)?;
+    /// db.insert_point("poi", &Point::new(-73.9442, 40.6782), b"brooklyn", None)?;
+    ///
+    /// // Query points in Manhattan
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// let results = db.query_within_bbox("poi", &manhattan, 100)?;
+    ///
+    /// println!("Found {} points in Manhattan", results.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_bbox(
+        &self,
+        prefix: &str,
+        bbox: &BoundingBox2D,
+        limit: usize,
+    ) -> Result<Vec<(Point, Bytes)>> {
+        let center = bbox.center();
+
+        // Get candidates using radius search from center
+        // Calculate approximate radius from center to corner
+        let dx = bbox.width() / 2.0;
+        let dy = bbox.height() / 2.0;
+        let radius_deg = (dx * dx + dy * dy).sqrt();
+
+        // Convert to meters (rough approximation: 1 degree ≈ 111km)
+        let radius_meters = radius_deg * 111_000.0;
+
+        let candidates = self.query_within_radius(prefix, &center, radius_meters, limit * 2)?;
+
+        // Filter to only points actually within the bounding box
+        let mut results = Vec::new();
+        for (point, data) in candidates {
+            if bbox.contains_point(&point) {
+                results.push((point, data));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Store a bounding box with a key.
+    ///
+    /// Serializes and stores a bounding box, making it retrievable later.
+    /// Useful for storing geographic regions, service areas, or zones.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to store the bounding box under
+    /// * `bbox` - The bounding box to store
+    /// * `opts` - Optional settings like TTL
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
+    ///
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn insert_bbox(
+        &self,
+        key: impl AsRef<[u8]>,
+        bbox: &BoundingBox2D,
+        opts: Option<SetOptions>,
+    ) -> Result<()> {
+        let serialized = bincode::serialize(bbox)
+            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+        self.insert(key, serialized, opts)?;
+        Ok(())
+    }
+
+    /// Retrieve a bounding box by key.
+    ///
+    /// Deserializes and returns a previously stored bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to retrieve
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
+    /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
+    ///
+    /// if let Some(bbox) = db.get_bbox("zones:manhattan")? {
+    ///     println!("Manhattan area: {}°×{}°", bbox.width(), bbox.height());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_bbox(&self, key: impl AsRef<[u8]>) -> Result<Option<BoundingBox2D>> {
+        match self.get(key)? {
+            Some(data) => {
+                let bbox = bincode::deserialize(&data)
+                    .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+                Ok(Some(bbox))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Find all bounding boxes that intersect with a given bounding box.
+    ///
+    /// Returns all stored bounding boxes (with the specified prefix) that
+    /// intersect with the query bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Key prefix to filter results (e.g., "zones:")
+    /// * `bbox` - The bounding box to check for intersections
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, BoundingBox2D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// db.insert_bbox("zones:manhattan", &BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820), None)?;
+    /// db.insert_bbox("zones:brooklyn", &BoundingBox2D::new(-74.0421, 40.5707, -73.8333, 40.7395), None)?;
+    ///
+    /// let query = BoundingBox2D::new(-74.01, 40.70, -73.95, 40.75);
+    /// let intersecting = db.find_intersecting_bboxes("zones:", &query)?;
+    ///
+    /// println!("Found {} intersecting zones", intersecting.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn find_intersecting_bboxes(
+        &self,
+        prefix: &str,
+        bbox: &BoundingBox2D,
+    ) -> Result<Vec<(String, BoundingBox2D)>> {
+        let inner = self.read()?;
+        let prefix_bytes = Bytes::from(prefix.to_owned());
+        let mut results = Vec::new();
+
+        for (key, item) in inner.keys.range(prefix_bytes.clone()..) {
+            if !key.starts_with(prefix.as_bytes()) {
+                break;
+            }
+
+            if item.is_expired() {
+                continue;
+            }
+
+            // Try to deserialize as bounding box
+            if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value)
+                && stored_bbox.intersects(bbox)
+            {
+                let key_str = String::from_utf8_lossy(key).to_string();
+                results.push((key_str, stored_bbox));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Insert a 3D point (with altitude) into the database.
+    ///
+    /// This method stores a 3D geographic point with altitude/elevation information
+    /// and automatically adds it to the 3D spatial index for altitude-aware queries.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace for organizing related points
+    /// * `point` - The 3D point with x, y, z coordinates
+    /// * `value` - The data to associate with this point
+    /// * `options` - Optional TTL and other storage options
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// // Track a drone at 100 meters altitude
+    /// let drone_pos = Point3d::new(-74.0060, 40.7128, 100.0);
+    /// db.insert_point_3d("drones", &drone_pos, b"Drone-001", None)?;
+    ///
+    /// // Track an aircraft at 10,000 meters
+    /// let aircraft_pos = Point3d::new(-74.0070, 40.7138, 10000.0);
+    /// db.insert_point_3d("aircraft", &aircraft_pos, b"Flight-AA123", None)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn insert_point_3d(
+        &self,
+        prefix: &str,
+        point: &Point3d,
+        value: &[u8],
+        opts: Option<SetOptions>,
+    ) -> Result<()> {
+        let data_ref = Bytes::copy_from_slice(value);
+
+        // Single lock acquisition for both operations
+        let mut inner = self.write()?;
+
+        // Insert into main storage
+        let item = match opts {
+            Some(SetOptions { ttl: Some(ttl), .. }) => DbItem::with_ttl(data_ref.clone(), ttl),
+            Some(SetOptions {
+                expires_at: Some(expires_at),
+                ..
+            }) => DbItem::with_expiration(data_ref.clone(), expires_at),
+            _ => DbItem::new(data_ref.clone()),
+        };
+        let created_at = item.created_at;
+
+        // Generate key with coordinates encoded for AOF replay
+        DBInner::validate_timestamp(created_at)?;
+        let key =
+            DBInner::generate_spatial_key(prefix, point.x(), point.y(), point.z(), created_at)?;
+        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
+        inner.insert_item(key_bytes.clone(), item);
+
+        // Add to 3D spatial index
+        inner.spatial_index.insert_point(
+            prefix,
+            point.x(),
+            point.y(),
+            point.z(),
+            key.clone(),
+            data_ref.clone(),
+        );
+
+        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
+        Ok(())
+    }
+
+    /// Query points within a 3D spherical radius.
+    ///
+    /// Finds all points within a spherical distance from the center point,
+    /// taking altitude differences into account using 3D distance calculation.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace to search
+    /// * `center` - The center point for the search
+    /// * `radius` - Radius in meters (3D distance)
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Vector of (point, data, distance) tuples sorted by distance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let drone1 = Point3d::new(-74.0060, 40.7128, 100.0);
+    /// let drone2 = Point3d::new(-74.0070, 40.7138, 150.0);
+    ///
+    /// db.insert_point_3d("drones", &drone1, b"Drone-1", None)?;
+    /// db.insert_point_3d("drones", &drone2, b"Drone-2", None)?;
+    ///
+    /// // Find drones within 500m radius (3D)
+    /// let center = Point3d::new(-74.0065, 40.7133, 125.0);
+    /// let nearby = db.query_within_sphere_3d("drones", &center, 500.0, 10)?;
+    ///
+    /// for (point, data, distance) in nearby {
+    ///     println!("Found drone at {}m distance", distance);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_sphere_3d(
+        &self,
+        prefix: &str,
+        center: &Point3d,
+        radius: f64,
+        limit: usize,
+    ) -> Result<Vec<(Point3d, Bytes, f64)>> {
+        let inner = self.read()?;
+
+        let results = inner.spatial_index.query_within_sphere(
+            prefix,
+            center.x(),
+            center.y(),
+            center.z(),
+            radius,
+            limit,
+        );
+
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
+    }
+
+    /// Query points within a 3D bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace to search
+    /// * `bbox` - The 3D bounding box to search within
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d, BoundingBox3D};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let drone = Point3d::new(-74.0060, 40.7128, 100.0);
+    /// db.insert_point_3d("drones", &drone, b"Drone-1", None)?;
+    ///
+    /// // Search in a 3D box
+    /// let bbox = BoundingBox3D::new(-74.01, 40.71, 50.0, -74.00, 40.72, 150.0);
+    /// let results = db.query_within_bbox_3d("drones", &bbox, 100)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_bbox_3d(
+        &self,
+        prefix: &str,
+        bbox: &BoundingBox3D,
+        limit: usize,
+    ) -> Result<Vec<(Point3d, Bytes)>> {
+        let inner = self.read()?;
+
+        let results = inner.spatial_index.query_within_bbox(
+            prefix,
+            BBoxQuery {
+                min_x: bbox.min_x,
+                min_y: bbox.min_y,
+                min_z: bbox.min_z,
+                max_x: bbox.max_x,
+                max_y: bbox.max_y,
+                max_z: bbox.max_z,
+            },
+        );
+
+        let limited_results: Vec<(String, Bytes)> = results.into_iter().take(limit).collect();
+        Ok(Self::results_to_point3d(&inner, prefix, limited_results))
+    }
+
+    /// Query points within a cylindrical volume.
+    ///
+    /// This is useful for altitude-constrained radius queries, such as finding
+    /// all aircraft within a certain horizontal distance and altitude range.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace to search
+    /// * `center` - The center point (only x, y used for horizontal center)
+    /// * `min_altitude` - Minimum altitude/z coordinate
+    /// * `max_altitude` - Maximum altitude/z coordinate
+    /// * `horizontal_radius` - Horizontal radius in meters
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let aircraft1 = Point3d::new(-74.0060, 40.7128, 5000.0);
+    /// let aircraft2 = Point3d::new(-74.0070, 40.7138, 10000.0);
+    ///
+    /// db.insert_point_3d("aircraft", &aircraft1, b"Flight-1", None)?;
+    /// db.insert_point_3d("aircraft", &aircraft2, b"Flight-2", None)?;
+    ///
+    /// // Find aircraft between 3000m and 7000m altitude within 10km horizontal
+    /// let center = Point3d::new(-74.0065, 40.7133, 0.0);
+    /// let results = db.query_within_cylinder_3d(
+    ///     "aircraft",
+    ///     &center,
+    ///     3000.0,
+    ///     7000.0,
+    ///     10000.0,
+    ///     100
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_cylinder_3d(
+        &self,
+        prefix: &str,
+        center: &Point3d,
+        min_altitude: f64,
+        max_altitude: f64,
+        horizontal_radius: f64,
+        limit: usize,
+    ) -> Result<Vec<(Point3d, Bytes, f64)>> {
+        let inner = self.read()?;
+
+        let results = inner.spatial_index.query_within_cylinder(
+            prefix,
+            CylinderQuery {
+                center_x: center.x(),
+                center_y: center.y(),
+                min_z: min_altitude,
+                max_z: max_altitude,
+                radius: horizontal_radius,
+            },
+            limit,
+        );
+
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
+    }
+
+    /// Find the k nearest neighbors in 3D space.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix/namespace to search
+    /// * `point` - The query point
+    /// * `k` - Number of nearest neighbors to find
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// db.insert_point_3d("drones", &Point3d::new(-74.00, 40.71, 100.0), b"D1", None)?;
+    /// db.insert_point_3d("drones", &Point3d::new(-74.01, 40.72, 200.0), b"D2", None)?;
+    /// db.insert_point_3d("drones", &Point3d::new(-74.02, 40.73, 300.0), b"D3", None)?;
+    ///
+    /// // Find 2 nearest drones in 3D space
+    /// let query = Point3d::new(-74.005, 40.715, 150.0);
+    /// let nearest = db.knn_3d("drones", &query, 2)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn knn_3d(
+        &self,
+        prefix: &str,
+        point: &Point3d,
+        k: usize,
+    ) -> Result<Vec<(Point3d, Bytes, f64)>> {
+        let inner = self.read()?;
+
+        let results = inner
+            .spatial_index
+            .knn_3d(prefix, point.x(), point.y(), point.z(), k);
+
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
+    }
+
+    /// Calculate the 3D distance between two points.
+    ///
+    /// Uses haversine formula for horizontal distance and incorporates
+    /// altitude difference using the Pythagorean theorem.
+    ///
+    /// # Returns
+    ///
+    /// Distance in meters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point3d};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let p1 = Point3d::new(-74.0060, 40.7128, 0.0);
+    /// let p2 = Point3d::new(-74.0070, 40.7138, 100.0);
+    ///
+    /// let distance = db.distance_between_3d(&p1, &p2)?;
+    /// println!("3D distance: {} meters", distance);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn distance_between_3d(&self, p1: &Point3d, p2: &Point3d) -> Result<f64> {
+        Ok(p1.haversine_3d(p2))
+    }
+
     /// Force sync to disk
     /// Force sync all pending writes to disk.
     ///
@@ -1073,10 +1634,7 @@ impl DB {
     /// # }
     /// ```
     pub fn close(&mut self) -> Result<()> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         inner.closed = true;
         let sync_mode = inner.config.sync_mode;
@@ -1089,11 +1647,98 @@ impl DB {
 
     // Internal helper methods
     fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        self.inner.read().map_err(|_| SpatioError::LockError)
+        match self.inner.read() {
+            Ok(guard) => Ok(guard),
+            Err(_poison_error) => {
+                log::error!(
+                    "Database lock was poisoned - shared state may be corrupted. \
+                     This indicates a panic occurred while holding a write lock."
+                );
+                Err(SpatioError::LockError)
+            }
+        }
     }
 
     pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        self.inner.write().map_err(|_| SpatioError::LockError)
+        match self.inner.write() {
+            Ok(guard) => Ok(guard),
+            Err(_poison_error) => {
+                log::error!(
+                    "Database lock was poisoned - shared state may be corrupted. \
+                     This indicates a panic occurred while holding a write lock."
+                );
+                Err(SpatioError::LockError)
+            }
+        }
+    }
+
+    /// Acquire a read lock and verify the database is not closed
+    fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
+        let guard = self.read()?;
+        if guard.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(guard)
+    }
+
+    /// Acquire a write lock and verify the database is not closed
+    fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
+        let guard = self.write()?;
+        if guard.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(guard)
+    }
+
+    /// Helper to convert spatial index results to Point3d with data and distance
+    fn results_to_point3d_with_distance(
+        inner: &DBInner,
+        prefix: &str,
+        results: Vec<(String, Bytes, f64)>,
+    ) -> Vec<(Point3d, Bytes, f64)> {
+        results
+            .into_iter()
+            .filter_map(|(key, data, distance)| {
+                inner
+                    .spatial_index
+                    .indexes
+                    .get(prefix)?
+                    .iter()
+                    .find(|p| p.key == key)
+                    .map(|indexed_point| {
+                        (
+                            Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z),
+                            data,
+                            distance,
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Helper to convert spatial index results to Point3d with data (no distance)
+    fn results_to_point3d(
+        inner: &DBInner,
+        prefix: &str,
+        results: Vec<(String, Bytes)>,
+    ) -> Vec<(Point3d, Bytes)> {
+        results
+            .into_iter()
+            .filter_map(|(key, data)| {
+                inner
+                    .spatial_index
+                    .indexes
+                    .get(prefix)?
+                    .iter()
+                    .find(|p| p.key == key)
+                    .map(|indexed_point| {
+                        (
+                            Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z),
+                            data,
+                        )
+                    })
+            })
+            .collect()
     }
 }
 
@@ -1189,11 +1834,48 @@ impl Drop for DB {
 }
 
 impl DBInner {
+    /// Maximum allowed timestamp drift into the future (1 day)
+    const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);
+
+    /// Validate that a timestamp is reasonable (not too far in the future)
+    fn validate_timestamp(created_at: SystemTime) -> Result<()> {
+        let now = SystemTime::now();
+        if created_at > now + Self::MAX_FUTURE_TIMESTAMP {
+            return Err(SpatioError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+
+    /// Generate a spatial key with encoded coordinates for AOF replay
+    /// Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
+    fn generate_spatial_key(
+        prefix: &str,
+        x: f64,
+        y: f64,
+        z: f64,
+        created_at: SystemTime,
+    ) -> Result<String> {
+        let timestamp_nanos = created_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| SpatioError::InvalidTimestamp)?
+            .as_nanos();
+
+        Ok(format!(
+            "{}:{:x}:{:x}:{:x}:{:x}:{}",
+            prefix,
+            y.to_bits(),
+            x.to_bits(),
+            z.to_bits(),
+            timestamp_nanos,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
     pub(crate) fn new_with_config(config: &Config) -> Self {
         Self {
             keys: BTreeMap::new(),
             expirations: BTreeMap::new(),
-            index_manager: IndexManager::with_config(config),
+            spatial_index: SpatialIndexManager::new(),
             aof_file: None,
             closed: false,
             stats: DbStats::default(),
@@ -1208,7 +1890,19 @@ impl DBInner {
 
     fn add_expiration(&mut self, key: &Bytes, expires_at: Option<SystemTime>) {
         if let Some(exp) = expires_at {
-            self.expirations.entry(exp).or_default().push(key.clone());
+            let keys_at_time = self.expirations.entry(exp).or_default();
+            keys_at_time.push(key.clone());
+
+            // Warn if too many keys expire at the same time
+            const EXPIRATION_VEC_WARN_THRESHOLD: usize = 10_000;
+            if keys_at_time.len() == EXPIRATION_VEC_WARN_THRESHOLD {
+                log::warn!(
+                    "Large expiration cluster detected: {} keys expire at {:?}. \
+                     Consider spreading TTL values to avoid cleanup spikes.",
+                    keys_at_time.len(),
+                    exp
+                );
+            }
         }
     }
 
@@ -1281,9 +1975,9 @@ impl DBInner {
             self.remove_created_index(key, &item);
 
             if let Ok(key_str) = std::str::from_utf8(key)
-                && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
+                && let Some(prefix) = key_str.split(':').next()
             {
-                let _ = self.index_manager.remove_entry(prefix, geohash, key);
+                let _ = self.spatial_index.remove_entry(prefix, key_str);
             }
 
             #[cfg(feature = "time-index")]
@@ -1305,28 +1999,31 @@ impl DBInner {
 
         let now = SystemTime::now();
         let mut removed = 0;
+        let timestamps_to_check: Vec<SystemTime> =
+            self.expirations.range(..=now).map(|(ts, _)| *ts).collect();
 
-        while removed < max_items {
-            let Some(ts) = self.expirations.range(..=now).next().map(|(ts, _)| *ts) else {
+        for ts in timestamps_to_check {
+            if removed >= max_items {
                 break;
+            }
+
+            let Some(mut keys) = self.expirations.remove(&ts) else {
+                continue;
             };
 
-            let mut keys = match self.expirations.remove(&ts) {
-                Some(keys) => keys,
-                None => continue,
-            };
+            // Process keys from this timestamp until we hit the limit
+            let to_process = (max_items - removed).min(keys.len());
 
-            while removed < max_items {
-                let Some(key) = keys.pop() else {
-                    break;
-                };
-
-                if let Some(_item) = self.remove_item(&key) {
+            for _ in 0..to_process {
+                if let Some(key) = keys.pop()
+                    && self.remove_item(&key).is_some()
+                {
                     self.write_delete_to_aof_if_needed(&key)?;
                     removed += 1;
                 }
             }
 
+            // Put back unprocessed keys
             if !keys.is_empty() {
                 self.expirations.insert(ts, keys);
             }
@@ -1447,66 +2144,91 @@ impl DBInner {
     }
 
     fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
-        if let Ok(key_str) = std::str::from_utf8(key)
-            && let Some((prefix, _geohash_from_key, point_hint)) =
-                self.parse_spatial_key_extended(key_str)
-        {
-            let point =
-                point_hint.expect("Spatial key should always contain point hint during replay");
-            let _ = self
-                .index_manager
-                .insert_point(prefix, _geohash_from_key, key, &point, value);
+        // During AOF replay, rebuild spatial index from encoded keys
+        // Key format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
+
+        if let Ok(key_str) = std::str::from_utf8(key) {
+            let parts: Vec<&str> = key_str.split(':').collect();
+
+            // Validate parts length first
+            if parts.len() < 6 {
+                return;
+            }
+
+            // Check if this is a spatial key (has at least 6 parts with coordinates)
+            if let (Ok(lat_bits), Ok(lon_bits), Ok(z_bits)) = (
+                u64::from_str_radix(parts[1], 16),
+                u64::from_str_radix(parts[2], 16),
+                u64::from_str_radix(parts[3], 16),
+            ) {
+                let prefix = parts[0];
+                let lat = f64::from_bits(lat_bits);
+                let lon = f64::from_bits(lon_bits);
+                let z = f64::from_bits(z_bits);
+
+                // Validate coordinates are finite and within valid ranges
+                if !lat.is_finite() || !lon.is_finite() || !z.is_finite() {
+                    log::warn!(
+                        "Skipping AOF entry with invalid coordinates: key='{}', lat={}, lon={}, z={}",
+                        key_str,
+                        lat,
+                        lon,
+                        z
+                    );
+                    return;
+                }
+
+                // Validate geographic bounds
+                if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                    log::warn!(
+                        "Skipping AOF entry with coordinates out of valid geographic range: key='{}', lat={}, lon={}",
+                        key_str,
+                        lat,
+                        lon
+                    );
+                    return;
+                }
+
+                // Insert into spatial index
+                if z == 0.0 {
+                    // 2D point
+                    self.spatial_index.insert_point_2d(
+                        prefix,
+                        lon,
+                        lat,
+                        key_str.to_string(),
+                        value.clone(),
+                    );
+                } else {
+                    // 3D point
+                    self.spatial_index.insert_point(
+                        prefix,
+                        lon,
+                        lat,
+                        z,
+                        key_str.to_string(),
+                        value.clone(),
+                    );
+                }
+            }
         }
     }
 
     fn remove_from_spatial_index(&mut self, key: &Bytes) {
-        if let Ok(key_str) = std::str::from_utf8(key)
-            && let Some((prefix, geohash)) = self.parse_spatial_key(key_str)
-        {
-            let _ = self.index_manager.remove_entry(prefix, geohash, key);
+        // Quick check: spatial keys always have ':' character
+        if !key.contains(&b':') {
+            return;
+        }
+
+        if let Ok(key_str) = std::str::from_utf8(key) {
+            // Find first ':' without creating a split iterator
+            if let Some(colon_pos) = key_str.find(':') {
+                let prefix = &key_str[..colon_pos];
+                let _ = self.spatial_index.remove_entry(prefix, key_str);
+            }
         }
     }
 
-    /// Parse a spatial key to extract prefix and geohash
-    fn parse_spatial_key<'a>(&self, key: &'a str) -> Option<(&'a str, &'a str)> {
-        self.parse_spatial_key_extended(key)
-            .map(|(prefix, geohash, _)| (prefix, geohash))
-    }
-
-    fn parse_spatial_key_extended<'a>(
-        &self,
-        key: &'a str,
-    ) -> Option<(&'a str, &'a str, Option<Point>)> {
-        // Spatial keys have format: "prefix:gh:geohash[:lat_hex:lon_hex:timestamp_hex]"
-        let parts: Vec<&str> = key.split(':').collect();
-        if parts.len() >= 3 && parts[1] == "gh" {
-            let prefix = parts[0];
-            let geohash = parts[2];
-
-            let point = if parts.len() >= 5 {
-                let lat_bits = u64::from_str_radix(parts[3], 16).ok()?;
-                let lon_bits = u64::from_str_radix(parts[4], 16).ok()?;
-                Some(Point::new(
-                    f64::from_bits(lon_bits),
-                    f64::from_bits(lat_bits),
-                ))
-            } else {
-                None
-            };
-
-            Some((prefix, geohash, point))
-        } else {
-            None
-        }
-    }
-
-    /// Decode a geohash back to a Point
-    ///
-    // fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
-    //     let (coord, _lat_err, _lon_err) =
-    //         geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
-    //     Ok(Point::new(coord.y, coord.x))
-    // }
     /// Write to AOF file if needed
     pub fn write_to_aof_if_needed(
         &mut self,

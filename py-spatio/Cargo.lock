@@ -185,6 +185,7 @@ dependencies = [
  "num-traits",
  "robust",
  "rstar 0.12.2",
+ "serde",
  "spade",
 ]
 
@@ -742,6 +743,7 @@ dependencies = [
  "geohash",
  "geojson",
  "geozero",
+ "log",
  "once_cell",
  "rstar 0.11.0",
  "rustc-hash",
@@ -749,6 +751,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "spatio-types",
  "thiserror 1.0.69",
  "uuid",
 ]
@@ -760,6 +763,14 @@ dependencies = [
  "geo",
  "pyo3",
  "spatio",
+]
+
+[[package]]
+name = "spatio-types"
+version = "0.1.0"
+dependencies = [
+ "geo",
+ "serde",
 ]
 
 [[package]]
