@@ -267,10 +267,7 @@ impl DB {
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let cleanup_batch = inner.config.amortized_cleanup_batch;
         if cleanup_batch > 0 {
@@ -304,10 +301,7 @@ impl DB {
 
         // Fast path: read-only lock
         {
-            let inner = self.read()?;
-            if inner.closed {
-                return Err(SpatioError::DatabaseClosed);
-            }
+            let inner = self.read_checked()?;
 
             if let Some(item) = inner.get_item(&key_bytes) {
                 if !item.is_expired() {
@@ -323,10 +317,7 @@ impl DB {
         // ordered consistently with preceding writes.
 
         // Slow path: expired item needs removal
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         if let Some(item) = inner.get_item(&key_bytes) {
             if item.is_expired() {
@@ -348,10 +339,7 @@ impl DB {
 
     /// Delete a key atomically
     pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
@@ -365,10 +353,7 @@ impl DB {
 
     /// Remove all expired keys and compact indexes.
     pub fn cleanup_expired(&self) -> Result<usize> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         let now = SystemTime::now();
         let expired_times: Vec<SystemTime> =
@@ -392,10 +377,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Return keys whose last update occurred within the given duration.
     pub fn keys_created_since(&self, duration: Duration) -> Result<Vec<Bytes>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         let end = SystemTime::now();
         let start = end.checked_sub(duration).unwrap_or(SystemTime::UNIX_EPOCH);
@@ -406,10 +388,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Return keys whose last update timestamp falls within the specified interval.
     pub fn keys_created_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<Bytes>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         let (start, end) = if start <= end {
             (start, end)
@@ -422,10 +401,7 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Retrieve the recent history of mutations for a specific key.
     pub fn history(&self, key: impl AsRef<[u8]>) -> Result<Vec<HistoryEntry>> {
-        let inner = self.read()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let inner = self.read_checked()?;
 
         if let Some(ref tracker) = inner.history {
             let key_bytes = Bytes::copy_from_slice(key.as_ref());
@@ -495,26 +471,8 @@ impl DB {
         let created_at = item.created_at;
 
         // Generate key with coordinates encoded for AOF replay
-        // Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
-        let timestamp_nanos = created_at
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|_| SpatioError::InvalidTimestamp)?
-            .as_nanos();
-
-        // Validate timestamp is reasonable (not too far in future)
-        let now = SystemTime::now();
-        if created_at > now + Duration::from_secs(86400) {
-            return Err(SpatioError::InvalidTimestamp);
-        }
-
-        let key = format!(
-            "{}:{:x}:{:x}:0:{:x}:{}",
-            prefix,
-            point.y().to_bits(),
-            point.x().to_bits(),
-            timestamp_nanos,
-            uuid::Uuid::new_v4()
-        );
+        DBInner::validate_timestamp(created_at)?;
+        let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         inner.insert_item(key_bytes.clone(), item);
@@ -1339,27 +1297,9 @@ impl DB {
         let created_at = item.created_at;
 
         // Generate key with coordinates encoded for AOF replay
-        // Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
-        let timestamp_nanos = created_at
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|_| SpatioError::InvalidTimestamp)?
-            .as_nanos();
-
-        // Validate timestamp is reasonable (not too far in future)
-        let now = SystemTime::now();
-        if created_at > now + Duration::from_secs(86400) {
-            return Err(SpatioError::InvalidTimestamp);
-        }
-
-        let key = format!(
-            "{}:{:x}:{:x}:{:x}:{:x}:{}",
-            prefix,
-            point.point_2d().y().to_bits(),
-            point.point_2d().x().to_bits(),
-            point.z().to_bits(),
-            timestamp_nanos,
-            uuid::Uuid::new_v4()
-        );
+        DBInner::validate_timestamp(created_at)?;
+        let key =
+            DBInner::generate_spatial_key(prefix, point.x(), point.y(), point.z(), created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         inner.insert_item(key_bytes.clone(), item);
@@ -1436,18 +1376,9 @@ impl DB {
             limit,
         );
 
-        // Extract coordinates from results - still need to get from index
-        let mut points = Vec::new();
-        for (key, data, distance) in results {
-            if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
-                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                    points.push((point, data, distance));
-                }
-            }
-        }
-
-        Ok(points)
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
     }
 
     /// Query points within a 3D bounding box.
@@ -1487,17 +1418,8 @@ impl DB {
             prefix, bbox.min_x, bbox.min_y, bbox.min_z, bbox.max_x, bbox.max_y, bbox.max_z,
         );
 
-        let mut points = Vec::new();
-        for (key, data) in results.into_iter().take(limit) {
-            if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
-                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                    points.push((point, data));
-                }
-            }
-        }
-
-        Ok(points)
+        let limited_results: Vec<(String, Bytes)> = results.into_iter().take(limit).collect();
+        Ok(Self::results_to_point3d(&inner, prefix, limited_results))
     }
 
     /// Query points within a cylindrical volume.
@@ -1562,17 +1484,9 @@ impl DB {
             limit,
         );
 
-        let mut points = Vec::new();
-        for (key, data, h_dist) in results {
-            if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
-                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                    points.push((point, data, h_dist));
-                }
-            }
-        }
-
-        Ok(points)
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
     }
 
     /// Find the k nearest neighbors in 3D space.
@@ -1613,17 +1527,9 @@ impl DB {
             .spatial_index
             .knn_3d(prefix, point.x(), point.y(), point.z(), k);
 
-        let mut points = Vec::new();
-        for (key, data, distance) in results {
-            if let Some(stored_point) = inner.spatial_index.indexes.get(prefix) {
-                if let Some(indexed_point) = stored_point.iter().find(|p| p.key == key) {
-                    let point = Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z);
-                    points.push((point, data, distance));
-                }
-            }
-        }
-
-        Ok(points)
+        Ok(Self::results_to_point3d_with_distance(
+            &inner, prefix, results,
+        ))
     }
 
     /// Calculate the 3D distance between two points.
@@ -1717,10 +1623,7 @@ impl DB {
     /// # }
     /// ```
     pub fn close(&mut self) -> Result<()> {
-        let mut inner = self.write()?;
-        if inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
+        let mut inner = self.write_checked()?;
 
         inner.closed = true;
         let sync_mode = inner.config.sync_mode;
@@ -1750,6 +1653,75 @@ impl DB {
                 Err(SpatioError::LockError)
             }
         }
+    }
+
+    /// Acquire a read lock and verify the database is not closed
+    fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
+        let guard = self.read()?;
+        if guard.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(guard)
+    }
+
+    /// Acquire a write lock and verify the database is not closed
+    fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
+        let guard = self.write()?;
+        if guard.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(guard)
+    }
+
+    /// Helper to convert spatial index results to Point3d with data and distance
+    fn results_to_point3d_with_distance(
+        inner: &DBInner,
+        prefix: &str,
+        results: Vec<(String, Bytes, f64)>,
+    ) -> Vec<(Point3d, Bytes, f64)> {
+        results
+            .into_iter()
+            .filter_map(|(key, data, distance)| {
+                inner
+                    .spatial_index
+                    .indexes
+                    .get(prefix)?
+                    .iter()
+                    .find(|p| p.key == key)
+                    .map(|indexed_point| {
+                        (
+                            Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z),
+                            data,
+                            distance,
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Helper to convert spatial index results to Point3d with data (no distance)
+    fn results_to_point3d(
+        inner: &DBInner,
+        prefix: &str,
+        results: Vec<(String, Bytes)>,
+    ) -> Vec<(Point3d, Bytes)> {
+        results
+            .into_iter()
+            .filter_map(|(key, data)| {
+                inner
+                    .spatial_index
+                    .indexes
+                    .get(prefix)?
+                    .iter()
+                    .find(|p| p.key == key)
+                    .map(|indexed_point| {
+                        (
+                            Point3d::new(indexed_point.x, indexed_point.y, indexed_point.z),
+                            data,
+                        )
+                    })
+            })
+            .collect()
     }
 }
 
@@ -1845,6 +1817,43 @@ impl Drop for DB {
 }
 
 impl DBInner {
+    /// Maximum allowed timestamp drift into the future (1 day)
+    const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);
+
+    /// Validate that a timestamp is reasonable (not too far in the future)
+    fn validate_timestamp(created_at: SystemTime) -> Result<()> {
+        let now = SystemTime::now();
+        if created_at > now + Self::MAX_FUTURE_TIMESTAMP {
+            return Err(SpatioError::InvalidTimestamp);
+        }
+        Ok(())
+    }
+
+    /// Generate a spatial key with encoded coordinates for AOF replay
+    /// Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
+    fn generate_spatial_key(
+        prefix: &str,
+        x: f64,
+        y: f64,
+        z: f64,
+        created_at: SystemTime,
+    ) -> Result<String> {
+        let timestamp_nanos = created_at
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|_| SpatioError::InvalidTimestamp)?
+            .as_nanos();
+
+        Ok(format!(
+            "{}:{:x}:{:x}:{:x}:{:x}:{}",
+            prefix,
+            y.to_bits(),
+            x.to_bits(),
+            z.to_bits(),
+            timestamp_nanos,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
     pub(crate) fn new_with_config(config: &Config) -> Self {
         Self {
             keys: BTreeMap::new(),

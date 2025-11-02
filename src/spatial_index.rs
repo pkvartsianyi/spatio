@@ -8,6 +8,9 @@ use bytes::Bytes;
 use rstar::{Point as RstarPoint, RTree};
 use rustc_hash::FxHashMap;
 
+/// Earth radius in meters for haversine distance calculations
+const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
+
 /// A 3D point wrapper for use with the R-tree spatial index.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexedPoint3D {
@@ -710,8 +713,6 @@ fn haversine_3d_distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) -
 /// Distance in meters.
 #[inline]
 fn haversine_2d_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
-    const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
-
     let lat1_rad = lat1.to_radians();
     let lat2_rad = lat2.to_radians();
     let delta_lat = (lat2 - lat1).to_radians();
