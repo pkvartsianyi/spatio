@@ -1,37 +1,11 @@
-//! Atomic batch operations for Spatio database transactions.
-//!
-//! This module exposes the `AtomicBatch` type used internally by `DB::atomic`
-//! to guarantee that grouped write operations either all succeed or none do.
+//! Atomic batch operations.
 
 use crate::DB;
 use crate::error::Result;
 use crate::types::SetOptions;
 use bytes::Bytes;
 
-/// Atomic batch for grouping multiple operations together.
-///
-/// All operations in a batch are applied atomically - either all succeed
-/// or all fail. This ensures data consistency when performing multiple
-/// related operations.
-///
-/// # Examples
-///
-/// ```rust
-/// use spatio::Spatio;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let db = Spatio::memory()?;
-///
-/// // All operations succeed or all fail
-/// db.atomic(|batch| {
-///     batch.insert("user:123", b"John Doe", None)?;
-///     batch.insert("email:john@example.com", b"user:123", None)?;
-///     batch.insert("session:abc", b"user:123", None)?;
-///     Ok(())
-/// })?;
-/// # Ok(())
-/// # }
-/// ```
+/// Atomic batch. All operations succeed or all fail.
 pub struct AtomicBatch {
     db: DB,
     operations: Vec<BatchOperation>,
@@ -56,36 +30,6 @@ impl AtomicBatch {
             operations: Vec::new(),
         }
     }
-
-    /// Insert a key-value pair in this batch.
-    ///
-    /// The operation will be queued and executed when the batch is committed.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to insert
-    /// * `value` - The value to associate with the key
-    /// * `opts` - Optional settings like TTL
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{Spatio, SetOptions};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
-    ///
-    /// db.atomic(|batch| {
-    ///     batch.insert("key1", b"value1", None)?;
-    ///
-    ///     let opts = SetOptions::with_ttl(Duration::from_secs(300));
-    ///     batch.insert("key2", b"value2", Some(opts))?;
-    ///     Ok(())
-    /// })?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn insert(
         &mut self,
         key: impl AsRef<[u8]>,
@@ -101,34 +45,6 @@ impl AtomicBatch {
         Ok(())
     }
 
-    /// Delete a key in this batch.
-    ///
-    /// The operation will be queued and executed when the batch is committed.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to delete
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
-    ///
-    /// // First insert some data
-    /// db.insert("temp_key", b"temp_value", None)?;
-    ///
-    /// // Then delete it in a batch
-    /// db.atomic(|batch| {
-    ///     batch.delete("temp_key")?;
-    ///     batch.insert("new_key", b"new_value", None)?;
-    ///     Ok(())
-    /// })?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<()> {
         let op = BatchOperation::Delete {
             key: Bytes::copy_from_slice(key.as_ref()),
@@ -137,15 +53,9 @@ impl AtomicBatch {
         Ok(())
     }
 
-    /// Commit all operations in this batch atomically.
-    ///
-    /// This is called automatically when the batch closure returns successfully.
-    /// All operations are applied in the order they were added to the batch.
     pub(crate) fn commit(self) -> Result<()> {
-        // Apply all operations atomically
         let mut inner = self.db.write()?;
 
-        // Check if database is closed
         if inner.closed {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }

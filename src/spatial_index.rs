@@ -1,33 +1,22 @@
-//! 3D Spatial Index implementation using R-tree for altitude-aware queries.
-//!
-//! This module provides a 3D spatial index that can efficiently query points
-//! in 3D space, supporting altitude-aware operations for applications like
-//! drone tracking, aviation, or multi-floor building navigation.
+//! 3D spatial index using R-tree.
 
 use bytes::Bytes;
 use rstar::{Point as RstarPoint, RTree};
 use rustc_hash::FxHashMap;
 
-/// Earth radius in meters for haversine distance calculations
 const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 
-/// A 3D point wrapper for use with the R-tree spatial index.
+/// 3D point for R-tree indexing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexedPoint3D {
-    /// X coordinate (longitude)
     pub x: f64,
-    /// Y coordinate (latitude)
     pub y: f64,
-    /// Z coordinate (altitude/elevation)
     pub z: f64,
-    /// Associated data key
     pub key: String,
-    /// Associated data (stored for backward compatibility, consider removing)
     pub data: Bytes,
 }
 
 impl IndexedPoint3D {
-    /// Create a new indexed 3D point.
     pub fn new(x: f64, y: f64, z: f64, key: String, data: Bytes) -> Self {
         Self { x, y, z, key, data }
     }
@@ -66,38 +55,22 @@ impl RstarPoint for IndexedPoint3D {
     }
 }
 
-/// Spatial index manager using R-tree for both 2D and 3D queries.
-///
-/// This unified index handles both 2D points (with z=0) and 3D points
-/// using a single R-tree implementation for optimal performance.
+/// Spatial index manager using R-tree for 2D and 3D queries.
 pub struct SpatialIndexManager {
-    /// Spatial indexes organized by prefix
     pub(crate) indexes: FxHashMap<String, RTree<IndexedPoint3D>>,
 }
 
 impl SpatialIndexManager {
-    /// Create a new spatial index manager.
     pub fn new() -> Self {
         Self {
             indexes: FxHashMap::default(),
         }
     }
 
-    /// Insert a 2D point into the index (with z=0).
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace for this point
-    /// * `x` - X coordinate (longitude)
-    /// * `y` - Y coordinate (latitude)
-    /// * `key` - Unique key for this point
-    /// * `data` - Associated data
     pub fn insert_point_2d(&mut self, prefix: &str, x: f64, y: f64, key: String, data: Bytes) {
         self.insert_point(prefix, x, y, 0.0, key, data);
     }
 
-    /// Insert a 3D point into the index.
-    ///
     /// # Arguments
     ///
     /// * `prefix` - The prefix/namespace for this point
