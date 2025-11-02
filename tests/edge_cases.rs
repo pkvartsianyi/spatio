@@ -14,7 +14,7 @@ fn test_large_dataset_insertion() {
         let lon = -74.0 + (i as f64 * 0.00001);
         let point = Point::new(lon, lat);
         db.insert_point("stress", &point, format!("data{}", i).as_bytes(), None)
-            .expect(&format!("Failed to insert point {}", i));
+            .unwrap_or_else(|_| panic!("Failed to insert point {}", i));
     }
 
     // Query should still be fast
@@ -139,7 +139,7 @@ fn test_binary_keys_with_special_chars() {
     let db = Spatio::memory().expect("Failed to create database");
 
     // Keys with various special bytes
-    let keys = vec![
+    let keys = [
         b"key\x00with\x00nulls".to_vec(),
         b"\xFF\xFE\xFD\xFC".to_vec(),
         b"emoji_\xF0\x9F\x98\x80".to_vec(),
@@ -270,7 +270,7 @@ fn test_concurrent_reads_during_writes() {
     }
 
     // Spawn reader threads
-    for thread_id in 0..5 {
+    for _ in 0..5 {
         let db_clone = Arc::clone(&db);
         let handle = thread::spawn(move || {
             for i in 0..100 {
@@ -315,7 +315,7 @@ fn test_very_large_radius_query() {
     let db = Spatio::memory().expect("Failed to create database");
 
     // Insert points around the world
-    let points = vec![
+    let points = [
         Point::new(-74.0, 40.7),  // NYC
         Point::new(0.0, 51.5),    // London
         Point::new(139.7, 35.7),  // Tokyo
@@ -345,7 +345,7 @@ fn test_large_atomic_batch() {
     // Large atomic batch
     db.atomic(|batch| {
         for i in 0..1000 {
-            batch.insert(&format!("batch_key_{}", i), b"value", None)?;
+            batch.insert(format!("batch_key_{}", i), b"value", None)?;
         }
         Ok(())
     })
@@ -354,7 +354,7 @@ fn test_large_atomic_batch() {
     // Verify all keys exist
     for i in 0..1000 {
         assert!(
-            db.get(&format!("batch_key_{}", i))
+            db.get(format!("batch_key_{}", i))
                 .expect("Get failed")
                 .is_some()
         );

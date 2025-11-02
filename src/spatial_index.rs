@@ -6,6 +6,27 @@ use rustc_hash::FxHashMap;
 
 const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 
+/// Query parameters for bounding box queries.
+#[derive(Debug, Clone, Copy)]
+pub struct BBoxQuery {
+    pub min_x: f64,
+    pub min_y: f64,
+    pub min_z: f64,
+    pub max_x: f64,
+    pub max_y: f64,
+    pub max_z: f64,
+}
+
+/// Query parameters for cylindrical queries.
+#[derive(Debug, Clone, Copy)]
+pub struct CylinderQuery {
+    pub center_x: f64,
+    pub center_y: f64,
+    pub min_z: f64,
+    pub max_z: f64,
+    pub radius: f64,
+}
+
 /// 3D point for R-tree indexing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexedPoint3D {
@@ -225,17 +246,14 @@ impl SpatialIndexManager {
     /// # Returns
     ///
     /// Vector of (key, data) tuples within the bounding box.
-    pub fn query_within_bbox(
-        &self,
-        prefix: &str,
-        mut min_x: f64,
-        mut min_y: f64,
-        mut min_z: f64,
-        mut max_x: f64,
-        mut max_y: f64,
-        mut max_z: f64,
-    ) -> Vec<(String, Bytes)> {
-        // Validate all coordinates are finite
+    pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String, Bytes)> {
+        let mut min_x = query.min_x;
+        let mut min_y = query.min_y;
+        let mut min_z = query.min_z;
+        let mut max_x = query.max_x;
+        let mut max_y = query.max_y;
+        let mut max_z = query.max_z;
+
         if ![min_x, min_y, min_z, max_x, max_y, max_z]
             .iter()
             .all(|v| v.is_finite())
@@ -291,7 +309,17 @@ impl SpatialIndexManager {
         max_x: f64,
         max_y: f64,
     ) -> Vec<(String, Bytes)> {
-        self.query_within_bbox(prefix, min_x, min_y, f64::MIN, max_x, max_y, f64::MAX)
+        self.query_within_bbox(
+            prefix,
+            BBoxQuery {
+                min_x,
+                min_y,
+                min_z: f64::MIN,
+                max_x,
+                max_y,
+                max_z: f64::MAX,
+            },
+        )
     }
 
     /// Count points within a 2D radius.
@@ -468,37 +496,25 @@ impl SpatialIndexManager {
     pub fn query_within_cylinder(
         &self,
         prefix: &str,
-        center_x: f64,
-        center_y: f64,
-        min_z: f64,
-        max_z: f64,
-        horizontal_radius: f64,
+        query: CylinderQuery,
         limit: usize,
     ) -> Vec<(String, Bytes, f64)> {
-        self.query_within_cylinder_internal(
-            prefix,
-            center_x,
-            center_y,
-            min_z,
-            max_z,
-            horizontal_radius,
-            limit,
-            true,
-        )
+        self.query_within_cylinder_internal(prefix, query, limit, true)
     }
 
     /// Internal cylinder query with optional sorting.
     fn query_within_cylinder_internal(
         &self,
         prefix: &str,
-        center_x: f64,
-        center_y: f64,
-        min_z: f64,
-        max_z: f64,
-        horizontal_radius: f64,
+        query: CylinderQuery,
         limit: usize,
         sort_by_distance: bool,
     ) -> Vec<(String, Bytes, f64)> {
+        let center_x = query.center_x;
+        let center_y = query.center_y;
+        let min_z = query.min_z;
+        let max_z = query.max_z;
+        let radius = query.radius;
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -513,7 +529,7 @@ impl SpatialIndexManager {
 
                 // Check horizontal distance
                 let h_dist = haversine_2d_distance(center_x, center_y, point.x, point.y);
-                if h_dist <= horizontal_radius {
+                if h_dist <= radius {
                     Some((point.key.clone(), point.data.clone(), h_dist))
                 } else {
                     None
@@ -764,8 +780,17 @@ mod tests {
             Bytes::from("data3"),
         );
 
-        let results =
-            index.query_within_bbox("aircraft", -74.05, 40.65, 500.0, -73.95, 40.75, 1500.0);
+        let results = index.query_within_bbox(
+            "aircraft",
+            BBoxQuery {
+                min_x: -74.05,
+                min_y: 40.65,
+                min_z: 500.0,
+                max_x: -73.95,
+                max_y: 40.75,
+                max_z: 1500.0,
+            },
+        );
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "plane1");
@@ -802,8 +827,17 @@ mod tests {
         );
 
         // Query for mid-altitude aircraft
-        let results =
-            index.query_within_cylinder("aircraft", -74.0, 40.7, 3000.0, 7000.0, 10000.0, 10);
+        let results = index.query_within_cylinder(
+            "aircraft",
+            CylinderQuery {
+                center_x: -74.0,
+                center_y: 40.7,
+                min_z: 3000.0,
+                max_z: 7000.0,
+                radius: 10000.0,
+            },
+            10,
+        );
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "mid");

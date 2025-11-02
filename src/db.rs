@@ -6,7 +6,7 @@
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
 use crate::persistence::{AOFCommand, AOFFile};
-use crate::spatial_index::SpatialIndexManager;
+use crate::spatial_index::{BBoxQuery, CylinderQuery, SpatialIndexManager};
 use crate::types::{
     BoundingBox2D, BoundingBox3D, Config, DbItem, DbStats, Point3d, SetOptions, TemporalPoint,
 };
@@ -1416,7 +1416,15 @@ impl DB {
         let inner = self.read()?;
 
         let results = inner.spatial_index.query_within_bbox(
-            prefix, bbox.min_x, bbox.min_y, bbox.min_z, bbox.max_x, bbox.max_y, bbox.max_z,
+            prefix,
+            BBoxQuery {
+                min_x: bbox.min_x,
+                min_y: bbox.min_y,
+                min_z: bbox.min_z,
+                max_x: bbox.max_x,
+                max_y: bbox.max_y,
+                max_z: bbox.max_z,
+            },
         );
 
         let limited_results: Vec<(String, Bytes)> = results.into_iter().take(limit).collect();
@@ -1477,11 +1485,13 @@ impl DB {
 
         let results = inner.spatial_index.query_within_cylinder(
             prefix,
-            center.x(),
-            center.y(),
-            min_altitude,
-            max_altitude,
-            horizontal_radius,
+            CylinderQuery {
+                center_x: center.x(),
+                center_y: center.y(),
+                min_z: min_altitude,
+                max_z: max_altitude,
+                radius: horizontal_radius,
+            },
             limit,
         );
 

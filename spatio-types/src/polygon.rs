@@ -1,7 +1,7 @@
-use std::time::SystemTime;
+use crate::point::Point3d;
 use geo::Polygon;
-use serde::{Serialize, Deserialize};
-use crate::point::{Point3d};
+use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Polygon3D {
@@ -16,9 +16,7 @@ impl Polygon3D {
     pub fn points(&self) -> &Vec<Point3d> {
         &self.points
     }
-
 }
-
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolygonDynamic {

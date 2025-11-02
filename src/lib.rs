@@ -36,6 +36,8 @@ pub use geo::{Point, Polygon, Rect};
 
 pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, knn};
 
+pub use spatial_index::{BBoxQuery, CylinderQuery};
+
 pub use types::{
     BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
     PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,

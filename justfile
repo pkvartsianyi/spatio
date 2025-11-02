@@ -16,7 +16,7 @@ test:
 # Run formatter and linter
 lint:
     cargo fmt
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
 
 # Run the same tests as GitHub Actions
 ci:
