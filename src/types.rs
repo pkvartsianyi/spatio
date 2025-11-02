@@ -3,17 +3,13 @@
 //! This module provides streamlined, serializable types for configuration
 //! and data management with minimal complexity.
 use bytes::Bytes;
-use geo::Point;
 use serde::de::Error;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
-/// A geographic point with an associated timestamp.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TemporalPoint {
-    pub point: Point,
-    pub timestamp: SystemTime,
-}
+pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
+pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
+pub use spatio_types::trajectory::{Trajectory, Trajectory3D};
 
 /// Synchronization policy for persistence
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

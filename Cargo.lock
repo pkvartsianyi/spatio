@@ -328,6 +328,7 @@ dependencies = [
  "num-traits",
  "robust",
  "rstar 0.12.2",
+ "serde",
  "spade",
 ]
 
@@ -953,10 +954,19 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "spatio-types",
  "tempfile",
  "thiserror 1.0.69",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "spatio-types"
+version = "0.1.0"
+dependencies = [
+ "geo",
+ "serde",
 ]
 
 [[package]]

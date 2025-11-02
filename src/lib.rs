@@ -153,7 +153,10 @@ pub use geo::{Point, Polygon, Rect};
 pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, knn};
 
 // Configuration and options
-pub use types::{Config, DbStats, SetOptions, SyncMode, SyncPolicy, TemporalPoint};
+pub use types::{
+    Config, DbStats, Point3d, Polygon3D, PolygonDynamic, PolygonDynamic3D, SetOptions, SyncMode,
+    SyncPolicy, TemporalPoint, TemporalPoint3D, Trajectory, Trajectory3D,
+};
 #[cfg(feature = "time-index")]
 pub use types::{HistoryEntry, HistoryEventKind};
 
