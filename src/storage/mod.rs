@@ -9,13 +9,15 @@ use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
+pub mod backends;
 #[cfg(feature = "aof")]
-mod aof;
-mod memory;
+mod persistence;
 
 #[cfg(feature = "aof")]
-pub use aof::AOFBackend;
-pub use memory::MemoryBackend;
+pub use backends::AOFBackend;
+pub use backends::MemoryBackend;
+#[cfg(feature = "aof")]
+pub use persistence::{AOFCommand, AOFConfig, AOFFile};
 
 /// Trait for storage backend implementations
 ///

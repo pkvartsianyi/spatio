@@ -1,7 +1,8 @@
 //! 2D spatial operations for geographic queries.
 
-use super::{DB, DBInner};
+use super::{DistanceMetric, distance_between, point_in_polygon};
 use crate::config::{BoundingBox2D, SetOptions};
+use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use geo::Point;
@@ -311,7 +312,7 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    /// use spatio::{Spatio, Point, DistanceMetric};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
@@ -328,9 +329,9 @@ impl DB {
         &self,
         point1: &Point,
         point2: &Point,
-        metric: crate::spatial::DistanceMetric,
+        metric: DistanceMetric,
     ) -> Result<f64> {
-        Ok(crate::spatial::distance_between(point1, point2, metric))
+        Ok(distance_between(point1, point2, metric))
     }
 
     /// Find the K nearest points to a query point within a namespace.
@@ -353,7 +354,7 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    /// use spatio::{Spatio, Point, DistanceMetric};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
@@ -376,7 +377,7 @@ impl DB {
         center: &Point,
         k: usize,
         max_radius: f64,
-        metric: crate::spatial::DistanceMetric,
+        metric: DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let inner = self.read()?;
 
@@ -393,9 +394,9 @@ impl DB {
             .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
             .collect();
 
-        if metric != crate::spatial::DistanceMetric::Haversine {
+        if metric != DistanceMetric::Haversine {
             for (point, _, dist) in &mut filtered {
-                *dist = crate::spatial::distance_between(center, point, metric);
+                *dist = distance_between(center, point, metric);
             }
             filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
             filtered.truncate(k);
@@ -464,7 +465,7 @@ impl DB {
 
         let mut results = Vec::new();
         for (point, data) in candidates {
-            if crate::spatial::point_in_polygon(polygon, &point) {
+            if point_in_polygon(polygon, &point) {
                 results.push((point, data));
                 if results.len() >= limit {
                     break;

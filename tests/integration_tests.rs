@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use spatio::spatial::DistanceMetric;
+use spatio::compute::DistanceMetric;
 use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::NamedTempFile;

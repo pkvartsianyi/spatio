@@ -1,10 +1,10 @@
 //! Internal database operations and state management.
 
 use super::{DBInner, HistoryTracker};
+use crate::compute::spatial::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::error::{Result, SpatioError};
-use crate::persistence::{AOFCommand, AOFFile};
-use crate::spatial_index::SpatialIndexManager;
+use crate::storage::{AOFCommand, AOFFile};
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
@@ -14,7 +14,7 @@ impl DBInner {
     const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);
 
     /// Validate that a timestamp is reasonable (not too far in the future)
-    pub(super) fn validate_timestamp(created_at: SystemTime) -> Result<()> {
+    pub(crate) fn validate_timestamp(created_at: SystemTime) -> Result<()> {
         let now = SystemTime::now();
         if created_at > now + Self::MAX_FUTURE_TIMESTAMP {
             return Err(SpatioError::InvalidTimestamp);
@@ -24,7 +24,7 @@ impl DBInner {
 
     /// Generate a spatial key with encoded coordinates for AOF replay
     /// Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
-    pub(super) fn generate_spatial_key(
+    pub(crate) fn generate_spatial_key(
         prefix: &str,
         x: f64,
         y: f64,
