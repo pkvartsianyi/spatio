@@ -1,7 +1,7 @@
 //! Temporal operations for time-based queries and TTL management.
 
-use super::{DB, DBInner};
 use crate::config::{SetOptions, TemporalPoint};
+use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use std::time::{Duration, SystemTime};

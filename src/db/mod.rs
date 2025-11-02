@@ -3,13 +3,13 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::batch::AtomicBatch;
+use crate::compute::spatial::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 #[cfg(feature = "time-index")]
 use crate::config::{HistoryEntry, HistoryEventKind};
 use crate::error::{Result, SpatioError};
-use crate::persistence::AOFFile;
-use crate::spatial_index::SpatialIndexManager;
+#[cfg(feature = "aof")]
+use crate::storage::AOFFile;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
@@ -18,10 +18,12 @@ use std::path::Path;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::SystemTime;
 
+mod batch;
 mod internal;
-mod spatial_2d;
-mod spatial_3d;
-mod temporal;
+mod namespace;
+
+pub use batch::AtomicBatch;
+pub use namespace::{Namespace, NamespaceManager};
 
 /// Main Spatio database structure providing spatio-temporal data storage.
 ///
@@ -452,7 +454,7 @@ impl DB {
     }
 
     /// Acquire a read lock and verify the database is not closed
-    fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
+    pub(crate) fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
         let guard = self.read()?;
         if guard.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -461,7 +463,7 @@ impl DB {
     }
 
     /// Acquire a write lock and verify the database is not closed
-    fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
+    pub(crate) fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
         let guard = self.write()?;
         if guard.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -520,7 +522,7 @@ impl HistoryTracker {
         }
     }
 
-    fn history_for(&self, key: &Bytes) -> Option<Vec<HistoryEntry>> {
+    pub(crate) fn history_for(&self, key: &Bytes) -> Option<Vec<HistoryEntry>> {
         self.entries
             .get(key)
             .map(|deque| deque.iter().cloned().collect())

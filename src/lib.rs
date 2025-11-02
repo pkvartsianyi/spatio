@@ -12,19 +12,13 @@
 //! # Ok::<(), spatio::SpatioError>(())
 //! ```
 
-pub mod batch;
 pub mod builder;
+pub mod compute;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod ffi;
-pub mod namespace;
-pub mod spatial;
-pub mod spatial_index;
 pub mod storage;
-
-#[cfg(feature = "aof")]
-pub mod persistence;
 
 pub use builder::DBBuilder;
 pub use db::DB;
@@ -34,9 +28,9 @@ pub type Spatio = DB;
 
 pub use geo::{Point, Polygon, Rect};
 
-pub use spatial::{DistanceMetric, bounding_box, convex_hull, distance_between, knn};
-
-pub use spatial_index::{BBoxQuery, CylinderQuery};
+pub use compute::{
+    BBoxQuery, CylinderQuery, DistanceMetric, bounding_box, convex_hull, distance_between, knn,
+};
 
 pub use config::{
     BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
@@ -46,17 +40,15 @@ pub use config::{
 #[cfg(feature = "time-index")]
 pub use config::{HistoryEntry, HistoryEventKind};
 
-pub use namespace::{Namespace, NamespaceManager};
+pub use db::{AtomicBatch, Namespace, NamespaceManager};
 
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 
 #[cfg(feature = "aof")]
 pub use storage::AOFBackend;
 
-pub use batch::AtomicBatch;
-
 #[cfg(feature = "aof")]
-pub use persistence::{AOFConfig, AOFFile};
+pub use storage::{AOFConfig, AOFFile};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -67,11 +59,11 @@ pub mod prelude {
 
     pub use geo::{Point, Polygon, Rect};
 
-    pub use crate::spatial::{DistanceMetric, bounding_box, distance_between, knn};
+    pub use crate::compute::{DistanceMetric, bounding_box, distance_between, knn};
 
     pub use crate::{Config, SetOptions, SyncPolicy};
 
-    pub use crate::{Namespace, NamespaceManager};
+    pub use crate::{AtomicBatch, Namespace, NamespaceManager};
 
     pub use crate::{MemoryBackend, StorageBackend};
 

@@ -6,7 +6,7 @@
 use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
-use crate::persistence::AOFFile;
+use crate::storage::AOFFile;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 

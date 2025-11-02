@@ -1,6 +1,6 @@
 //! Atomic batch operations.
 
-use crate::DB;
+use super::DB;
 use crate::config::SetOptions;
 use crate::error::Result;
 use bytes::Bytes;

@@ -1,6 +1,6 @@
 //! In-memory storage backend implementation.
 
-use super::{StorageBackend, StorageOp, StorageStats, calculate_prefix_end};
+use super::super::{StorageBackend, StorageOp, StorageStats, calculate_prefix_end};
 use crate::config::DbItem;
 use crate::error::Result;
 use bytes::Bytes;
