@@ -2,6 +2,9 @@ use spatio::{Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging (set RUST_LOG=debug to see detailed logs)
+    env_logger::init();
+
     println!("=== Spatio - Getting Started ===\n");
 
     // Create an in-memory database

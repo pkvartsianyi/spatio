@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let manhattan_pois = db.query_within_bbox("poi", &manhattan, 100)?;
     println!("\n   POIs in Manhattan: {}", manhattan_pois.len());
     for (point, data) in &manhattan_pois {
-        let name = String::from_utf8_lossy(&data);
+        let name = String::from_utf8_lossy(data);
         println!("     - {} at ({:.4}, {:.4})", name, point.x(), point.y());
     }
 

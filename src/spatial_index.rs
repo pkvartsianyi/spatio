@@ -111,7 +111,7 @@ impl SpatialIndexManager {
 
         self.indexes
             .entry(prefix.to_string())
-            .or_insert_with(RTree::new)
+            .or_default()
             .insert(point);
     }
 
@@ -267,7 +267,7 @@ impl SpatialIndexManager {
             .iter()
             .all(|v| v.is_finite())
         {
-            eprintln!("Warning: Bounding box coordinates must be finite");
+            log::warn!("Rejecting bounding box query with non-finite coordinates");
             return Vec::new();
         }
 
@@ -457,10 +457,10 @@ impl SpatialIndexManager {
         tree.nearest_neighbor_iter(&query_point)
             .filter_map(|point| {
                 let distance = haversine_2d_distance(x, y, point.x, point.y);
-                if let Some(max_dist) = max_distance {
-                    if distance > max_dist {
-                        return None;
-                    }
+                if let Some(max_dist) = max_distance
+                    && distance > max_dist
+                {
+                    return None;
                 }
                 Some((
                     point.x,

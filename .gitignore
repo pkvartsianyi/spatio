@@ -45,6 +45,7 @@ Thumbs.db
 /docs/book/
 /docs/rustdoc/
 /docs/analysis/
+/docs/audits/
 /target/doc/
 
 # Benchmark results

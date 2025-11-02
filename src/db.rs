@@ -659,10 +659,10 @@ impl DB {
                 let parts: Vec<&str> = key_str.split(':').collect();
                 if parts.len() >= 4 {
                     // The timestamp is the second-to-last part before the sequence number
-                    if let Ok(ts) = parts[parts.len() - 2].parse::<u64>() {
-                        if ts < start_time || ts > end_time {
-                            continue;
-                        }
+                    if let Ok(ts) = parts[parts.len() - 2].parse::<u64>()
+                        && (ts < start_time || ts > end_time)
+                    {
+                        continue;
                     }
                 }
             }
@@ -675,9 +675,10 @@ impl DB {
             match bincode::deserialize::<TemporalPoint>(&item.value) {
                 Ok(temporal_point) => results.push(temporal_point),
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to deserialize trajectory point for object '{}': {}",
-                        object_id, e
+                    log::warn!(
+                        "Failed to deserialize trajectory point for object '{}': {}. Skipping corrupted point.",
+                        object_id,
+                        e
                     );
                 }
             }
@@ -849,11 +850,11 @@ impl DB {
         // For now, we need to iterate to get coordinates since bbox doesn't return them
         let mut points = Vec::new();
         for (key, data) in results.into_iter().take(limit) {
-            if let Some(tree) = inner.spatial_index.indexes.get(prefix) {
-                if let Some(indexed_point) = tree.iter().find(|p| p.key == key) {
-                    let point = Point::new(indexed_point.x, indexed_point.y);
-                    points.push((point, data));
-                }
+            if let Some(tree) = inner.spatial_index.indexes.get(prefix)
+                && let Some(indexed_point) = tree.iter().find(|p| p.key == key)
+            {
+                let point = Point::new(indexed_point.x, indexed_point.y);
+                points.push((point, data));
             }
         }
         Ok(points)
@@ -1232,11 +1233,11 @@ impl DB {
             }
 
             // Try to deserialize as bounding box
-            if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value) {
-                if stored_bbox.intersects(bbox) {
-                    let key_str = String::from_utf8_lossy(key).to_string();
-                    results.push((key_str, stored_bbox));
-                }
+            if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value)
+                && stored_bbox.intersects(bbox)
+            {
+                let key_str = String::from_utf8_lossy(key).to_string();
+                results.push((key_str, stored_bbox));
             }
         }
 
@@ -1639,7 +1640,10 @@ impl DB {
         match self.inner.read() {
             Ok(guard) => Ok(guard),
             Err(_poison_error) => {
-                eprintln!("CRITICAL: Database lock was poisoned - shared state may be corrupted!");
+                log::error!(
+                    "Database lock was poisoned - shared state may be corrupted. \
+                     This indicates a panic occurred while holding a write lock."
+                );
                 Err(SpatioError::LockError)
             }
         }
@@ -1649,7 +1653,10 @@ impl DB {
         match self.inner.write() {
             Ok(guard) => Ok(guard),
             Err(_poison_error) => {
-                eprintln!("CRITICAL: Database lock was poisoned - shared state may be corrupted!");
+                log::error!(
+                    "Database lock was poisoned - shared state may be corrupted. \
+                     This indicates a panic occurred while holding a write lock."
+                );
                 Err(SpatioError::LockError)
             }
         }
@@ -1879,8 +1886,9 @@ impl DBInner {
             // Warn if too many keys expire at the same time
             const EXPIRATION_VEC_WARN_THRESHOLD: usize = 10_000;
             if keys_at_time.len() == EXPIRATION_VEC_WARN_THRESHOLD {
-                eprintln!(
-                    "Warning: {} keys expire at {:?}. Consider spreading expiration times.",
+                log::warn!(
+                    "Large expiration cluster detected: {} keys expire at {:?}. \
+                     Consider spreading TTL values to avoid cleanup spikes.",
                     keys_at_time.len(),
                     exp
                 );
@@ -1956,10 +1964,10 @@ impl DBInner {
             #[cfg(feature = "time-index")]
             self.remove_created_index(key, &item);
 
-            if let Ok(key_str) = std::str::from_utf8(key) {
-                if let Some(prefix) = key_str.split(':').next() {
-                    let _ = self.spatial_index.remove_entry(prefix, key_str);
-                }
+            if let Ok(key_str) = std::str::from_utf8(key)
+                && let Some(prefix) = key_str.split(':').next()
+            {
+                let _ = self.spatial_index.remove_entry(prefix, key_str);
             }
 
             #[cfg(feature = "time-index")]
@@ -1997,11 +2005,11 @@ impl DBInner {
             let to_process = (max_items - removed).min(keys.len());
 
             for _ in 0..to_process {
-                if let Some(key) = keys.pop() {
-                    if self.remove_item(&key).is_some() {
-                        self.write_delete_to_aof_if_needed(&key)?;
-                        removed += 1;
-                    }
+                if let Some(key) = keys.pop()
+                    && self.remove_item(&key).is_some()
+                {
+                    self.write_delete_to_aof_if_needed(&key)?;
+                    removed += 1;
                 }
             }
 
@@ -2150,18 +2158,23 @@ impl DBInner {
 
                 // Validate coordinates are finite and within valid ranges
                 if !lat.is_finite() || !lon.is_finite() || !z.is_finite() {
-                    eprintln!(
-                        "Warning: Invalid coordinates in AOF key '{}': lat={}, lon={}, z={}",
-                        key_str, lat, lon, z
+                    log::warn!(
+                        "Skipping AOF entry with invalid coordinates: key='{}', lat={}, lon={}, z={}",
+                        key_str,
+                        lat,
+                        lon,
+                        z
                     );
                     return;
                 }
 
                 // Validate geographic bounds
-                if lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0 {
-                    eprintln!(
-                        "Warning: Coordinates out of valid geographic range in key '{}'",
-                        key_str
+                if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                    log::warn!(
+                        "Skipping AOF entry with coordinates out of valid geographic range: key='{}', lat={}, lon={}",
+                        key_str,
+                        lat,
+                        lon
                     );
                     return;
                 }
