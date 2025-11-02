@@ -4,12 +4,15 @@
 //! execute nearby, bounds, and distance-based lookups efficiently.
 
 use crate::error::Result;
-use crate::spatial::Point;
 use crate::types::Config;
 use bytes::Bytes;
+use geo::{Distance, Haversine, Point};
 use geohash;
+
 use rustc_hash::{FxHashMap, FxHashSet};
+use s2::cellid::CellID;
 use std::cmp::Ordering;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Threshold for large search radius in meters
 const LARGE_RADIUS_THRESHOLD: f64 = 100_000.0;
@@ -179,9 +182,10 @@ impl IndexManager {
 
         // Check all points in the index
         for entry in index.entries() {
-            if entry
-                .point
-                .within_bounds(min_lat, min_lon, max_lat, max_lon)
+            if entry.point.y() >= min_lat
+                && entry.point.y() <= max_lat
+                && entry.point.x() >= min_lon
+                && entry.point.x() <= max_lon
             {
                 results.push((entry.point, entry.data.clone()));
                 if results.len() >= limit {
@@ -234,9 +238,10 @@ impl IndexManager {
 
         // Check if any point intersects with the bounding box
         for entry in index.entries() {
-            if entry
-                .point
-                .within_bounds(min_lat, min_lon, max_lat, max_lon)
+            if entry.point.y() >= min_lat
+                && entry.point.y() <= max_lat
+                && entry.point.x() >= min_lon
+                && entry.point.x() <= max_lon
             {
                 return Ok(true);
             }
@@ -319,7 +324,7 @@ impl IndexManager {
                 break;
             }
 
-            if center.distance_to(&entry.point) <= radius_meters {
+            if Haversine.distance(*center, entry.point) <= radius_meters {
                 results.push((entry.point, entry.data.clone()));
             }
         }
@@ -331,7 +336,7 @@ impl IndexManager {
         candidates.reserve(self.search_precisions.len() * 9);
 
         for precision in &self.search_precisions {
-            if let Ok(center_geohash) = center.to_geohash(*precision) {
+            if let Ok(center_geohash) = geohash::encode((*center).into(), *precision) {
                 candidates.insert(center_geohash.clone());
 
                 for direction in &[
@@ -366,7 +371,7 @@ impl IndexManager {
         for candidate in candidates {
             if let Some(bucket) = index.buckets.get(candidate) {
                 for entry in bucket.values() {
-                    let distance = center.distance_to(&entry.point);
+                    let distance = Haversine.distance(*center, entry.point);
                     if distance <= radius_meters {
                         matches.push((distance, entry.point, entry.data.clone()));
                     }
@@ -392,7 +397,7 @@ impl IndexManager {
         let mut results = Vec::with_capacity(matches.len().min(limit));
 
         for (_, point, data) in matches {
-            let point_key = (point.lat.to_bits(), point.lon.to_bits());
+            let point_key = (point.y().to_bits(), point.x().to_bits());
             if seen_points.insert(point_key) {
                 results.push((point, data));
                 if results.len() >= limit {
@@ -413,8 +418,8 @@ impl IndexManager {
         }
 
         results.sort_by(|a, b| {
-            let dist_a = center.distance_to(&a.0);
-            let dist_b = center.distance_to(&b.0);
+            let dist_a = Haversine.distance(*center, a.0);
+            let dist_b = Haversine.distance(*center, b.0);
             dist_a.partial_cmp(&dist_b).unwrap_or(Ordering::Equal)
         });
 
@@ -501,11 +506,85 @@ impl Default for IndexManager {
     }
 }
 
+/// Spatial key generation utilities for database storage.
+///
+/// This struct provides methods to generate keys for spatial indexing
+/// based on different spatial indexing strategies.
+pub struct SpatialKey;
+
+impl SpatialKey {
+    /// Generate a geohash-based key for database storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace prefix for the key
+    /// * `geohash` - The geohash string
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::index::SpatialKey;
+    ///
+    /// let key = SpatialKey::geohash("cities", "dr5regw3");
+    /// assert_eq!(key, "cities:gh:dr5regw3");
+    /// ```
+    pub fn geohash(prefix: &str, geohash: &str) -> String {
+        format!("{}:gh:{}", prefix, geohash)
+    }
+
+    /// Generate a geohash-based key with a uniqueness suffix derived from point metadata.
+    ///
+    /// The generated key has the format:
+    /// `{prefix}:gh:{geohash}:{lat_bits_hex}:{lon_bits_hex}:{timestamp_hex}`
+    ///
+    /// This preserves the original geohash prefix while ensuring that multiple points
+    /// sharing the same geohash bucket can coexist without overwriting one another.
+    pub fn geohash_unique(
+        prefix: &str,
+        geohash: &str,
+        point: &Point,
+        created_at: SystemTime,
+    ) -> String {
+        let lat_bits = point.y().to_bits();
+        let lon_bits = point.x().to_bits();
+        let timestamp = created_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_nanos();
+
+        format!(
+            "{}:gh:{}:{:016x}:{:016x}:{:016x}",
+            prefix, geohash, lat_bits, lon_bits, timestamp
+        )
+    }
+
+    /// Generate an S2 cell-based key for database storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace prefix for the key
+    /// * `cell_id` - The S2 cell ID
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::index::SpatialKey;
+    /// use s2::cellid::CellID;
+    ///
+    /// let cell_id = CellID(1234567890);
+    /// let key = SpatialKey::s2_cell("sensors", cell_id);
+    /// assert_eq!(key, "sensors:s2:1234567890");
+    /// ```
+    pub fn s2_cell(prefix: &str, cell_id: CellID) -> String {
+        format!("{}:s2:{}", prefix, cell_id.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::{Point, SpatialKey};
     use bytes::Bytes;
+    use geo::Point;
     use rustc_hash::FxHashSet;
     use std::time::{Duration, SystemTime};
 
@@ -530,11 +609,11 @@ mod tests {
         let config = Config::with_geohash_precision(6); // Lower precision for testing
 
         let mut manager = IndexManager::with_config(&config);
-        let point = Point::new(40.7128, -74.0060);
+        let point = Point::new(-74.0060, 40.7128);
         let data = Bytes::from("test_data");
 
         // Insert point
-        let geohash = point.to_geohash(manager.primary_precision()).unwrap();
+        let geohash = geohash::encode(point.into(), manager.primary_precision()).unwrap();
         let storage_key = Bytes::from(
             SpatialKey::geohash_unique("test", &geohash, &point, SystemTime::now()).into_bytes(),
         );
@@ -565,12 +644,12 @@ mod tests {
         let config2 = Config::with_geohash_precision(8);
         let mut manager2 = IndexManager::with_config(&config2);
 
-        let point = Point::new(40.7128, -74.0060);
+        let point = Point::new(-74.0060, 40.7128);
         let data = Bytes::from("test_data");
 
         // Insert into both managers
-        let geohash1 = point.to_geohash(manager1.primary_precision()).unwrap();
-        let geohash2 = point.to_geohash(manager2.primary_precision()).unwrap();
+        let geohash1 = geohash::encode(point.into(), manager1.primary_precision()).unwrap();
+        let geohash2 = geohash::encode(point.into(), manager2.primary_precision()).unwrap();
         let storage_key1 = Bytes::from(
             SpatialKey::geohash_unique("test", &geohash1, &point, SystemTime::now()).into_bytes(),
         );
@@ -602,11 +681,11 @@ mod tests {
         let config = Config::with_geohash_precision(6);
         let mut manager = IndexManager::with_config(&config);
 
-        let point_a = Point::new(40.7128, -74.0060);
-        let point_b = Point::new(40.7129, -74.0061);
+        let point_a = Point::new(-74.0060, 40.7128);
+        let point_b = Point::new(-74.0061, 40.7129);
 
-        let geohash_a = point_a.to_geohash(config.geohash_precision).unwrap();
-        let geohash_b = point_b.to_geohash(config.geohash_precision).unwrap();
+        let geohash_a = geohash::encode(point_a.into(), config.geohash_precision).unwrap();
+        let geohash_b = geohash::encode(point_b.into(), config.geohash_precision).unwrap();
         assert_eq!(geohash_a, geohash_b);
 
         let key_a = Bytes::from(

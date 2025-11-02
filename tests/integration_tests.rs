@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use spatio::spatial::DistanceMetric;
 use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::NamedTempFile;
@@ -60,9 +61,9 @@ fn test_spatial_operations() {
     let db = Spatio::memory().unwrap();
 
     // Insert points
-    let nyc = Point::new(40.7128, -74.0060);
-    let london = Point::new(51.5074, -0.1278);
-    let paris = Point::new(48.8566, 2.3522);
+    let nyc = Point::new(-74.0060, 40.7128);
+    let london = Point::new(-0.1278, 51.5074);
+    let paris = Point::new(2.3522, 48.8566);
 
     db.insert_point("cities", &nyc, b"New York", None).unwrap();
     db.insert_point("cities", &london, b"London", None).unwrap();
@@ -86,15 +87,15 @@ fn test_trajectory_operations() {
     // Create trajectory
     let trajectory = vec![
         TemporalPoint {
-            point: Point::new(40.7128, -74.0060),
+            point: Point::new(-74.0060, 40.7128),
             timestamp: UNIX_EPOCH + Duration::from_secs(1000),
         },
         TemporalPoint {
-            point: Point::new(40.7150, -74.0040),
+            point: Point::new(-74.0040, 40.7150),
             timestamp: UNIX_EPOCH + Duration::from_secs(1060),
         },
         TemporalPoint {
-            point: Point::new(40.7172, -74.0020),
+            point: Point::new(-74.0020, 40.7172),
             timestamp: UNIX_EPOCH + Duration::from_secs(1120),
         },
     ];
@@ -107,7 +108,7 @@ fn test_trajectory_operations() {
     assert_eq!(retrieved.len(), 3);
 
     // Verify first point
-    assert_eq!(retrieved[0].point, Point::new(40.7128, -74.0060));
+    assert_eq!(retrieved[0].point, Point::new(-74.0060, 40.7128));
     assert_eq!(
         retrieved[0].timestamp,
         UNIX_EPOCH + Duration::from_secs(1000)
@@ -116,13 +117,16 @@ fn test_trajectory_operations() {
 
 #[test]
 fn test_distance_calculations() {
-    let nyc = Point::new(40.7128, -74.0060);
-    let london = Point::new(51.5074, -0.1278);
+    let db = Spatio::memory().unwrap();
+    let nyc = Point::new(-74.0060, 40.7128);
+    let london = Point::new(-0.1278, 51.5074);
 
-    let distance = nyc.distance_to(&london);
+    let distance = db
+        .distance_between(&nyc, &london, DistanceMetric::Haversine)
+        .unwrap();
 
     // Distance should be approximately 5585 km (allowing some variance)
-    assert!((distance - 5_585_000.0).abs() < 100_000.0);
+    assert!((distance - 5_585_000.0f64).abs() < 100_000.0f64);
 }
 
 #[test]
@@ -134,8 +138,8 @@ fn test_points_sharing_geohash_are_preserved() {
 
     let db = Spatio::memory_with_config(config).unwrap();
 
-    let point_a = Point::new(40.7128, -74.0060);
-    let point_b = Point::new(40.7130, -74.0062); // Nearby point likely in same geohash
+    let point_a = Point::new(-74.0060, 40.7128);
+    let point_b = Point::new(-74.0062, 40.7130); // Nearby point likely in same geohash
 
     db.insert_point("cities", &point_a, b"A", None).unwrap();
     db.insert_point("cities", &point_b, b"B", None).unwrap();
@@ -153,8 +157,8 @@ fn test_points_sharing_geohash_are_preserved() {
 
 #[test]
 fn test_geohash_generation() {
-    let point = Point::new(40.7128, -74.0060);
-    let geohash = point.to_geohash(8).unwrap();
+    let point = Point::new(-74.0060, 40.7128);
+    let geohash = geohash::encode(point.into(), 8).unwrap();
 
     assert_eq!(geohash.len(), 8);
     assert!(!geohash.is_empty());
@@ -171,17 +175,17 @@ fn test_persistence() {
         db.insert("persistent_key", b"persistent_value", None)
             .unwrap();
 
-        let point = Point::new(40.7128, -74.0060);
+        let point = Point::new(-74.0060, 40.7128);
         db.insert_point("cities", &point, b"NYC", None).unwrap();
 
         // Insert trajectory data
         let trajectory = vec![
             TemporalPoint {
-                point: Point::new(40.7128, -74.0060),
+                point: Point::new(-74.0060, 40.7128),
                 timestamp: UNIX_EPOCH + Duration::from_secs(1640995200),
             },
             TemporalPoint {
-                point: Point::new(40.7150, -74.0040),
+                point: Point::new(-74.0040, 40.7150),
                 timestamp: UNIX_EPOCH + Duration::from_secs(1640995260),
             },
         ];
@@ -201,7 +205,7 @@ fn test_persistence() {
         assert_eq!(value.as_ref(), b"persistent_value");
 
         // Verify geographic point data
-        let point = Point::new(40.7128, -74.0060);
+        let point = Point::new(-74.0060, 40.7128);
         let nearby = db
             .query_within_radius("cities", &point, 1000.0, 10)
             .unwrap();
@@ -236,7 +240,7 @@ fn test_database_stats() {
     db.insert("key1", b"value1", None).unwrap();
     db.insert("key2", b"value2", None).unwrap();
 
-    let point = Point::new(40.7128, -74.0060);
+    let point = Point::new(-74.0060, 40.7128);
     db.insert_point("cities", &point, b"NYC", None).unwrap();
 
     let stats = db.stats().unwrap();
@@ -247,8 +251,8 @@ fn test_database_stats() {
 fn test_multiple_namespaces() {
     let db = Spatio::memory().unwrap();
 
-    let nyc = Point::new(40.7128, -74.0060);
-    let london = Point::new(51.5074, -0.1278);
+    let nyc = Point::new(-74.0060, 40.7128);
+    let london = Point::new(-0.1278, 51.5074);
 
     // Insert into different namespaces
     db.insert_point("cities", &nyc, b"New York", None).unwrap();
@@ -273,10 +277,10 @@ fn test_spatial_query_methods() {
     let db = Spatio::memory().unwrap();
 
     // Insert test points
-    let nyc = Point::new(40.7128, -74.0060);
-    let brooklyn = Point::new(40.6782, -73.9442);
-    let manhattan = Point::new(40.7831, -73.9712);
-    let london = Point::new(51.5074, -0.1278);
+    let nyc = Point::new(-74.0060, 40.7128);
+    let brooklyn = Point::new(-73.9442, 40.6782);
+    let manhattan = Point::new(-73.9712, 40.7831);
+    let london = Point::new(-0.1278, 51.5074);
 
     db.insert_point("cities", &nyc, b"New York", None).unwrap();
     db.insert_point("cities", &brooklyn, b"Brooklyn", None)
@@ -321,7 +325,16 @@ fn test_spatial_query_methods() {
 
     // Verify the points are actually in the expected area
     for (point, _) in &points_in_nyc_area {
-        assert!(point.within_bounds(40.6, -74.1, 40.8, -73.9));
+        assert!(
+            point.x() >= -74.1 && point.x() <= -73.9,
+            "Longitude out of bounds: {}",
+            point.x()
+        );
+        assert!(
+            point.y() >= 40.6 && point.y() <= 40.8,
+            "Latitude out of bounds: {}",
+            point.y()
+        );
     }
 
     // Test find_within_bounds - London area
@@ -334,32 +347,68 @@ fn test_spatial_query_methods() {
 
 #[test]
 fn test_point_spatial_methods() {
-    let nyc = Point::new(40.7128, -74.0060);
-    let brooklyn = Point::new(40.6782, -73.9442);
-    let london = Point::new(51.5074, -0.1278);
+    let db = Spatio::memory().unwrap();
 
-    // Test within_distance
-    assert!(brooklyn.within_distance(&nyc, 20_000.0)); // Brooklyn is close to NYC
-    assert!(!london.within_distance(&nyc, 1_000_000.0)); // London is far from NYC
+    let nyc = Point::new(-74.0060, 40.7128);
+    let brooklyn = Point::new(-73.9442, 40.6782);
+    let london = Point::new(-0.1278, 51.5074);
 
-    // Test contains_point (reverse of within_distance)
-    assert!(nyc.contains_point(&brooklyn, 20_000.0)); // NYC contains Brooklyn within 20km
-    assert!(!nyc.contains_point(&london, 1_000_000.0)); // NYC doesn't contain London within 1000km
+    // Insert test cities
+    db.insert_point("cities", &nyc, b"NYC", None).unwrap();
+    db.insert_point("cities", &brooklyn, b"Brooklyn", None)
+        .unwrap();
+    db.insert_point("cities", &london, b"London", None).unwrap();
 
-    // Test intersects_bounds
-    assert!(Point::intersects_bounds(
-        40.0, -75.0, 41.0, -73.0, // NYC area
-        40.5, -74.5, 40.8, -74.0 // Manhattan area
-    )); // Should intersect
+    // Test distance_between using our API
+    let dist_brooklyn_nyc = db
+        .distance_between(&brooklyn, &nyc, DistanceMetric::Haversine)
+        .unwrap();
+    let dist_london_nyc = db
+        .distance_between(&london, &nyc, DistanceMetric::Haversine)
+        .unwrap();
 
-    assert!(!Point::intersects_bounds(
-        40.0, -75.0, 41.0, -73.0, // NYC area
-        51.0, -1.0, 52.0, 1.0 // London area
-    )); // Should not intersect
+    assert!(dist_brooklyn_nyc <= 20_000.0); // Brooklyn is close to NYC
+    assert!(dist_london_nyc > 1_000_000.0); // London is far from NYC
 
-    // Test within_bounds
-    assert!(nyc.within_bounds(40.0, -75.0, 41.0, -73.0)); // NYC within NYC area bounds
-    assert!(!london.within_bounds(40.0, -75.0, 41.0, -73.0)); // London not within NYC area bounds
+    // Test contains_point using our API
+    assert!(db.contains_point("cities", &nyc, 20_000.0).unwrap()); // Brooklyn is within 20km
+    assert!(db.contains_point("cities", &nyc, 100.0).unwrap()); // NYC itself is within 100m
+
+    // Test empty location
+    let empty_location = Point::new(0.0, 0.0);
+    assert!(
+        !db.contains_point("cities", &empty_location, 1000.0)
+            .unwrap()
+    ); // No cities at 0,0
+
+    // Test count_within_radius using our API
+    let count_near_nyc = db.count_within_radius("cities", &nyc, 50_000.0).unwrap();
+    assert_eq!(count_near_nyc, 2); // NYC and Brooklyn
+
+    let count_near_london = db.count_within_radius("cities", &london, 50_000.0).unwrap();
+    assert_eq!(count_near_london, 1); // Only London
+
+    // Test intersects_bounds using our API
+    assert!(
+        db.intersects_bounds("cities", 40.0, -75.0, 41.0, -73.0)
+            .unwrap()
+    ); // NYC area has points
+    assert!(
+        db.intersects_bounds("cities", 51.0, -1.0, 52.0, 1.0)
+            .unwrap()
+    ); // London area has points
+    assert!(!db.intersects_bounds("cities", 0.0, 0.0, 1.0, 1.0).unwrap()); // Empty area
+
+    // Test find_within_bounds using our API
+    let nyc_area = db
+        .find_within_bounds("cities", 40.0, -75.0, 41.0, -73.0, 10)
+        .unwrap();
+    assert_eq!(nyc_area.len(), 2); // NYC and Brooklyn
+
+    let london_area = db
+        .find_within_bounds("cities", 51.0, -1.0, 52.0, 1.0, 10)
+        .unwrap();
+    assert_eq!(london_area.len(), 1); // Only London
 }
 
 #[test]
@@ -377,7 +426,7 @@ fn test_geohash_precision_configuration() {
     let default_db = Spatio::memory_with_config(default_config).unwrap();
 
     // Test that both configurations work with spatial operations
-    let point = Point::new(40.7128, -74.0060);
+    let point = Point::new(-74.0060, 40.7128);
     let data = b"New York City";
 
     // Insert points into both databases
@@ -403,4 +452,78 @@ fn test_geohash_precision_configuration() {
     // Test contains_point queries work with both configurations
     assert!(custom_db.contains_point("cities", &point, 100.0).unwrap());
     assert!(default_db.contains_point("cities", &point, 100.0).unwrap());
+}
+
+#[test]
+fn test_coordinate_order_roundtrip() {
+    // This test verifies that lat/lon coordinates are preserved correctly
+    // through storage, AOF persistence, and replay.
+    //
+    // Regression test for coordinate swap bugs in AOF replay.
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let db_path = temp_file.path();
+
+    // Test data: specific coordinates that would be obviously wrong if swapped
+    let original_lat = 40.7128; // NYC latitude (positive, moderate value)
+    let original_lon = -74.0060; // NYC longitude (negative, larger absolute value)
+
+    // Create point using geo crate convention: Point::new(lon, lat)
+    let original_point = Point::new(original_lon, original_lat);
+
+    // Verify point stores lat/lon correctly internally
+    assert_eq!(
+        original_point.x(),
+        original_lon,
+        "Point x() should return longitude"
+    );
+    assert_eq!(
+        original_point.y(),
+        original_lat,
+        "Point y() should return latitude"
+    );
+
+    // Insert point into database and sync to AOF
+    {
+        let db = Spatio::open(db_path).unwrap();
+        db.insert_point("test", &original_point, b"NYC", None)
+            .unwrap();
+        db.sync().unwrap();
+    }
+
+    // Reopen database to trigger AOF replay
+    {
+        let db = Spatio::open(db_path).unwrap();
+
+        // Query the point back
+        let results = db
+            .query_within_radius("test", &original_point, 100.0, 10)
+            .unwrap();
+        assert_eq!(results.len(), 1, "Should find exactly one point");
+
+        let (retrieved_point, data) = &results[0];
+        assert_eq!(data.as_ref(), b"NYC");
+
+        // Verify coordinates match exactly after roundtrip
+        assert_eq!(
+            retrieved_point.x(),
+            original_lon,
+            "Longitude should be preserved after AOF replay"
+        );
+        assert_eq!(
+            retrieved_point.y(),
+            original_lat,
+            "Latitude should be preserved after AOF replay"
+        );
+
+        // Also verify the point is in the correct hemisphere
+        assert!(
+            retrieved_point.x() < 0.0,
+            "NYC longitude should be negative (Western hemisphere)"
+        );
+        assert!(
+            retrieved_point.y() > 0.0,
+            "NYC latitude should be positive (Northern hemisphere)"
+        );
+    }
 }

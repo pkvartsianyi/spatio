@@ -5,13 +5,14 @@
 
 use crate::batch::AtomicBatch;
 use crate::error::{Result, SpatioError};
-use crate::index::IndexManager;
+use crate::index::{IndexManager, SpatialKey};
 use crate::persistence::{AOFCommand, AOFFile};
-use crate::spatial::{Point, SpatialKey};
 use crate::types::{Config, DbItem, DbStats, SetOptions, TemporalPoint};
 #[cfg(feature = "time-index")]
 use crate::types::{HistoryEntry, HistoryEventKind};
 use bytes::Bytes;
+use geo::Point;
+use geohash;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -60,8 +61,8 @@ use std::time::SystemTime;
 /// let db = Spatio::memory()?;
 ///
 /// // Store geographic points (automatically indexed)
-/// let nyc = Point::new(40.7128, -74.0060);
-/// let london = Point::new(51.5074, -0.1278);
+/// let nyc = Point::new(-74.0060, 40.7128);
+/// let london = Point::new(-0.1278, 51.5074);
 ///
 /// db.insert_point("cities", &nyc, b"New York", None)?;
 /// db.insert_point("cities", &london, b"London", None)?;
@@ -465,7 +466,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let nyc = Point::new(40.7128, -74.0060);
+    /// let nyc = Point::new(-74.0060, 40.7128);
     ///
     /// db.insert_point("cities", &nyc, b"New York City", None)?;
     /// # Ok(())
@@ -485,8 +486,7 @@ impl DB {
         let mut inner = self.write()?;
 
         // Generate geohash key using configured precision
-        let geohash = point
-            .to_geohash(inner.config.geohash_precision)
+        let geohash = geohash::encode((*point).into(), inner.config.geohash_precision)
             .map_err(|_| SpatioError::InvalidGeohash)?;
 
         // Insert into main storage
@@ -533,7 +533,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Find up to 10 points within 1km
     /// let nearby = db.query_within_radius("cities", &center, 1000.0, 10)?;
@@ -574,9 +574,9 @@ impl DB {
     /// let db = Spatio::memory()?;
     ///
     /// let trajectory = vec![
-    ///     TemporalPoint { point: Point::new(40.7128, -74.0060), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
-    ///     TemporalPoint { point: Point::new(40.7150, -74.0040), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
-    ///     TemporalPoint { point: Point::new(40.7172, -74.0020), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
+    ///     TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
+    ///     TemporalPoint { point: Point::new(-74.0040, 40.7150), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) }, // 1 min later
+    ///     TemporalPoint { point: Point::new(-74.0020, 40.7172), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) }, // 2 min later
     /// ];
     ///
     /// db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
@@ -700,7 +700,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Check if there are any cities within 50km
     /// let has_nearby = db.contains_point("cities", &center, 50_000.0)?;
@@ -773,7 +773,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let db = Spatio::memory()?;
-    /// let center = Point::new(40.7128, -74.0060);
+    /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Count how many sensors are within 1km
     /// let count = db.count_within_radius("sensors", &center, 1000.0)?;
@@ -834,6 +834,181 @@ impl DB {
         inner
             .index_manager
             .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit)
+    }
+
+    /// Calculate the distance between two points using a specified metric.
+    ///
+    /// This is a convenience method that wraps geo crate distance calculations.
+    /// For most lon/lat use cases, Haversine is recommended.
+    ///
+    /// # Arguments
+    ///
+    /// * `point1` - First point
+    /// * `point2` - Second point
+    /// * `metric` - Distance metric (Haversine, Geodesic, Rhumb, or Euclidean)
+    ///
+    /// # Returns
+    ///
+    /// Distance in meters
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let nyc = Point::new(-74.0060, 40.7128);
+    /// let la = Point::new(-118.2437, 34.0522);
+    ///
+    /// let distance = db.distance_between(&nyc, &la, DistanceMetric::Haversine)?;
+    /// println!("Distance: {} meters", distance);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn distance_between(
+        &self,
+        point1: &Point,
+        point2: &Point,
+        metric: crate::spatial::DistanceMetric,
+    ) -> Result<f64> {
+        Ok(crate::spatial::distance_between(point1, point2, metric))
+    }
+
+    /// Find the K nearest points to a query point within a namespace.
+    ///
+    /// This performs a K-nearest-neighbor search using the spatial index.
+    /// It first queries a radius, then refines to the K nearest points.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace to search in
+    /// * `center` - Query point
+    /// * `k` - Number of nearest neighbors to return
+    /// * `max_radius` - Maximum search radius in meters
+    /// * `metric` - Distance metric to use
+    ///
+    /// # Returns
+    ///
+    /// Vector of (Point, Bytes, distance) tuples sorted by distance (nearest first)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point, spatial::DistanceMetric};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let nyc = Point::new(-74.0060, 40.7128);
+    /// db.insert_point("cities", &nyc, b"New York", None)?;
+    ///
+    /// let query = Point::new(-74.0, 40.7);
+    /// let nearest = db.knn("cities", &query, 5, 100_000.0, DistanceMetric::Haversine)?;
+    ///
+    /// for (point, data, distance) in nearest {
+    ///     println!("Found city at {}m", distance);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn knn(
+        &self,
+        prefix: &str,
+        center: &Point,
+        k: usize,
+        max_radius: f64,
+        metric: crate::spatial::DistanceMetric,
+    ) -> Result<Vec<(Point, Bytes, f64)>> {
+        // Query all points within max_radius
+        let candidates = self.query_within_radius(prefix, center, max_radius, usize::MAX)?;
+
+        // Convert to format expected by knn function
+        let points: Vec<(Point, Bytes)> = candidates;
+
+        // Use the spatial module's knn function
+        let results = crate::spatial::knn(center, &points, k, metric);
+
+        // Convert back to include data
+        Ok(results
+            .into_iter()
+            .map(|(pt, dist, data)| (pt, data, dist))
+            .collect())
+    }
+
+    /// Query points within a polygon boundary.
+    ///
+    /// This finds all points that are contained within the given polygon.
+    /// It uses the polygon's bounding box for initial filtering via the
+    /// spatial index, then performs precise point-in-polygon tests.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace to search in
+    /// * `polygon` - The polygon boundary
+    /// * `limit` - Maximum number of results to return
+    ///
+    /// # Returns
+    ///
+    /// Vector of (Point, Bytes) tuples for points within the polygon
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point};
+    /// use geo::{polygon, Polygon};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let db = Spatio::memory()?;
+    ///
+    /// let poly: Polygon = polygon![
+    ///     (x: -74.0, y: 40.7),
+    ///     (x: -73.9, y: 40.7),
+    ///     (x: -73.9, y: 40.8),
+    ///     (x: -74.0, y: 40.8),
+    /// ];
+    ///
+    /// let results = db.query_within_polygon("cities", &poly, 100)?;
+    /// println!("Found {} cities in polygon", results.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn query_within_polygon(
+        &self,
+        prefix: &str,
+        polygon: &geo::Polygon,
+        limit: usize,
+    ) -> Result<Vec<(Point, Bytes)>> {
+        use geo::BoundingRect;
+
+        // Get bounding box of polygon for initial filtering
+        let bbox = polygon
+            .bounding_rect()
+            .ok_or_else(|| SpatioError::InvalidInput("Polygon has no bounding box".to_string()))?;
+
+        // Query all points within the bounding box
+        let candidates = self.find_within_bounds(
+            prefix,
+            bbox.min().y,
+            bbox.min().x,
+            bbox.max().y,
+            bbox.max().x,
+            usize::MAX,
+        )?;
+
+        // Filter to only points actually within the polygon
+        let mut results = Vec::new();
+        for (point, data) in candidates {
+            if crate::spatial::point_in_polygon(polygon, &point) {
+                results.push((point, data));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     /// Force sync to disk
@@ -1273,14 +1448,14 @@ impl DBInner {
 
     fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
         if let Ok(key_str) = std::str::from_utf8(key)
-            && let Some((prefix, geohash, point_hint)) = self.parse_spatial_key_extended(key_str)
+            && let Some((prefix, _geohash_from_key, point_hint)) =
+                self.parse_spatial_key_extended(key_str)
         {
-            let point = point_hint.or_else(|| self.decode_geohash_to_point(geohash).ok());
-            if let Some(point) = point {
-                let _ = self
-                    .index_manager
-                    .insert_point(prefix, geohash, key, &point, value);
-            }
+            let point =
+                point_hint.expect("Spatial key should always contain point hint during replay");
+            let _ = self
+                .index_manager
+                .insert_point(prefix, _geohash_from_key, key, &point, value);
         }
     }
 
@@ -1312,8 +1487,8 @@ impl DBInner {
                 let lat_bits = u64::from_str_radix(parts[3], 16).ok()?;
                 let lon_bits = u64::from_str_radix(parts[4], 16).ok()?;
                 Some(Point::new(
-                    f64::from_bits(lat_bits),
                     f64::from_bits(lon_bits),
+                    f64::from_bits(lat_bits),
                 ))
             } else {
                 None
@@ -1326,12 +1501,12 @@ impl DBInner {
     }
 
     /// Decode a geohash back to a Point
-    fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
-        let (coord, _lat_err, _lon_err) =
-            geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
-        Ok(Point::new(coord.y, coord.x))
-    }
-
+    ///
+    // fn decode_geohash_to_point(&self, geohash: &str) -> Result<Point> {
+    //     let (coord, _lat_err, _lon_err) =
+    //         geohash::decode(geohash).map_err(|_| SpatioError::InvalidGeohash)?;
+    //     Ok(Point::new(coord.y, coord.x))
+    // }
     /// Write to AOF file if needed
     pub fn write_to_aof_if_needed(
         &mut self,

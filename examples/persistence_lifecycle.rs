@@ -8,7 +8,8 @@
 //! cargo run --example persistence_lifecycle
 //! ```
 
-use spatio::{Config, DBBuilder, Point, SetOptions, Spatio, SyncPolicy};
+use spatio::Point;
+use spatio::{Config, DBBuilder, SetOptions, Spatio, SyncPolicy};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -135,11 +136,11 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
 
         // Insert major cities
         let cities = vec![
-            ("New York", Point::new(40.7128, -74.0060)),
-            ("Los Angeles", Point::new(34.0522, -118.2437)),
-            ("Chicago", Point::new(41.8781, -87.6298)),
-            ("Houston", Point::new(29.7604, -95.3698)),
-            ("Phoenix", Point::new(33.4484, -112.0740)),
+            ("New York", Point::new(-74.0060, 40.7128)),
+            ("Los Angeles", Point::new(-118.2437, 34.0522)),
+            ("Chicago", Point::new(-87.6298, 41.8781)),
+            ("Houston", Point::new(-95.3698, 29.7604)),
+            ("Phoenix", Point::new(-112.0740, 33.4484)),
         ];
 
         for (name, point) in cities {
@@ -157,7 +158,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
         let db = Spatio::open(db_path)?;
 
         // Find cities near New York
-        let nyc = Point::new(40.7128, -74.0060);
+        let nyc = Point::new(-74.0060, 40.7128);
         let nearby = db.query_within_radius("cities", &nyc, 500_000.0, 10)?; // 500km radius
 
         println!(
@@ -166,7 +167,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
         );
         for (point, data) in nearby {
             let name = String::from_utf8_lossy(&data);
-            println!("    - {} at ({:.4}, {:.4})", name, point.lat, point.lon);
+            println!("    - {} at ({:.4}, {:.4})", name, point.y(), point.x());
         }
 
         // Count cities in a bounding box

@@ -1,5 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use spatio::{Config, Point, SetOptions, Spatio, SyncMode, SyncPolicy, TemporalPoint};
+use geo::Point;
+use spatio::{Config, SetOptions, Spatio, SyncMode, SyncPolicy, TemporalPoint};
 use std::time::{Duration, SystemTime};
 
 fn benchmark_basic_operations(c: &mut Criterion) {

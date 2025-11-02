@@ -1,528 +1,430 @@
-//! Spatial utilities for Spatio
+//! Spatial operations and utilities leveraging the geo crate.
 //!
-//! This module provides core spatial functionality for geographic points
-//! and basic spatial operations.
+//! This module provides high-level spatial operations that wrap and extend
+//! the functionality of the `geo` crate, making it easier to work with
+//! geographic data in Spatio.
 
 use crate::error::{Result, SpatioError};
-use geo;
-use geohash;
-#[cfg(feature = "geojson")]
-use geozero::{GeozeroGeometry, ToJson};
-use s2::cellid::CellID;
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use geo::{
+    BoundingRect, ChamberlainDuquetteArea, Contains, ConvexHull, Distance, Euclidean, Geodesic,
+    GeodesicArea, Haversine, Intersects, Point, Polygon, Rect, Rhumb,
+};
 
-/// A geographic point representing a location on Earth's surface.
+/// Distance metrics for spatial calculations.
 ///
-/// `Point` stores latitude and longitude coordinates and provides methods
-/// for spatial operations, distance calculations, and spatial indexing.
-/// All coordinates use the WGS84 coordinate reference system (EPSG:4326).
+/// Different metrics are appropriate for different use cases:
+/// - **Haversine**: Fast spherical distance, good for most lon/lat calculations
+/// - **Geodesic**: More accurate ellipsoidal distance (Karney 2013), slower
+/// - **Rhumb**: Constant bearing distance, useful for navigation
+/// - **Euclidean**: Planar distance, only for projected coordinates
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DistanceMetric {
+    /// Haversine formula - assumes spherical Earth, fast and accurate enough for most uses
+    #[default]
+    Haversine,
+    /// Geodesic distance using Karney (2013) - more accurate, accounts for Earth's ellipsoid
+    Geodesic,
+    /// Rhumb line (loxodrome) - maintains constant bearing
+    Rhumb,
+    /// Euclidean distance - for planar/projected coordinates only
+    Euclidean,
+}
+
+/// Calculate the distance between two points using the specified metric.
+///
+/// # Arguments
+///
+/// * `point1` - First point
+/// * `point2` - Second point
+/// * `metric` - Distance metric to use
+///
+/// # Returns
+///
+/// Distance in meters
 ///
 /// # Examples
 ///
 /// ```rust
-/// use spatio::Point;
+/// use spatio::{Point, spatial::{distance_between, DistanceMetric}};
 ///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Major world cities
-/// let new_york = Point::new(40.7128, -74.0060);
-/// let london = Point::new(51.5074, -0.1278);
+/// let nyc = Point::new(-74.0060, 40.7128);
+/// let la = Point::new(-118.2437, 34.0522);
 ///
-/// // Calculate distance between cities
-/// let distance_km = new_york.distance_to(&london) / 1000.0;
-/// println!("NYC to London: {:.0} km", distance_km);
+/// // Using default Haversine
+/// let dist = distance_between(&nyc, &la, DistanceMetric::Haversine);
+/// assert!(dist > 3_900_000.0); // ~3,944 km
 ///
-/// // Generate spatial index keys
-/// let geohash = new_york.to_geohash(8)?;
-/// # Ok(())
-/// # }
+/// // Using more accurate Geodesic
+/// let dist_geodesic = distance_between(&nyc, &la, DistanceMetric::Geodesic);
+/// assert!(dist_geodesic > 3_900_000.0);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Point {
-    /// Latitude in decimal degrees (-90.0 to +90.0)
-    pub lat: f64,
-    /// Longitude in decimal degrees (-180.0 to +180.0)
-    pub lon: f64,
-    /// Optional altitude in meters
-    pub alt: Option<f64>,
-}
-
-impl Point {
-    /// Creates a new point from latitude and longitude coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// * `lat` - Latitude in decimal degrees (-90° to +90°)
-    /// * `lon` - Longitude in decimal degrees (-180° to +180°)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// // Empire State Building
-    /// let empire_state = Point::new(40.7484, -73.9857);
-    ///
-    /// // Sydney Opera House
-    /// let opera_house = Point::new(-33.8568, 151.2153);
-    /// ```
-    pub fn new(lat: f64, lon: f64) -> Self {
-        Self {
-            lat,
-            lon,
-            alt: None,
-        }
-    }
-
-    /// Sets the altitude of the point.
-    pub fn with_alt(mut self, alt: f64) -> Self {
-        self.alt = Some(alt);
-        self
-    }
-
-    /// Validate that the point has valid coordinates (not NaN or infinity)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let valid_point = Point::new(40.7128, -74.0060);
-    /// assert!(valid_point.is_valid());
-    ///
-    /// let invalid_point = Point::new(f64::NAN, -74.0060);
-    /// assert!(!invalid_point.is_valid());
-    /// ```
-    pub fn is_valid(&self) -> bool {
-        self.lat.is_finite() && self.lon.is_finite() && self.alt.is_none_or(|a| a.is_finite())
-    }
-
-    /// Convert to GeoJSON Point geometry
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let point = Point::new(40.7128, -74.0060);
-    /// let geojson = point.to_geojson().unwrap();
-    /// println!("{}", geojson);
-    /// ```
-    #[cfg(feature = "geojson")]
-    pub fn to_geojson(&self) -> Result<String> {
-        self.to_json()
-            .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))
-    }
-
-    /// Create a point from GeoJSON string
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let geojson = r#"{"type":"Point","coordinates":[-74.0060,40.7128]}"#;
-    /// let point = Point::from_geojson(geojson).unwrap();
-    /// assert_eq!(point.lat, 40.7128);
-    /// assert_eq!(point.lon, -74.0060);
-    /// ```
-    #[cfg(feature = "geojson")]
-    pub fn from_geojson(geojson: &str) -> Result<Self> {
-        let geometry: geojson::Geometry = geojson
-            .parse()
-            .map_err(|e: geojson::Error| SpatioError::Other(e.to_string()))?;
-
-        if let geojson::Value::Point(coords) = &geometry.value {
-            let lon = coords[0];
-            let lat = coords[1];
-            let mut point = Point::new(lat, lon);
-
-            if coords.len() > 2 {
-                point = point.with_alt(coords[2]);
-            }
-
-            Ok(point)
-        } else {
-            Err(SpatioError::Other("Expected a Point geometry".to_string()))
-        }
-    }
-
-    /// Calculate the distance between two points using the Haversine formula.
-    ///
-    /// This method calculates the great-circle distance between two points
-    /// on Earth's surface, accounting for Earth's curvature. The result
-    /// is returned in meters.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let new_york = Point::new(40.7128, -74.0060);
-    /// let london = Point::new(51.5074, -0.1278);
-    ///
-    /// let distance_m = new_york.distance_to(&london);
-    /// let distance_km = distance_m / 1000.0;
-    /// println!("Distance: {:.0} km", distance_km);
-    /// ```
-    pub fn distance_to(&self, other: &Point) -> f64 {
-        const EARTH_RADIUS_M: f64 = 6_371_000.0;
-        const TO_RAD: f64 = std::f64::consts::PI / 180.0;
-
-        let lat1 = self.lat * TO_RAD;
-        let lat2 = other.lat * TO_RAD;
-        let dlat = (other.lat - self.lat) * TO_RAD;
-        let dlon = (other.lon - self.lon) * TO_RAD;
-
-        let half_dlat = dlat * 0.5;
-        let half_dlon = dlon * 0.5;
-        let sin_half_dlat = half_dlat.sin();
-        let sin_half_dlon = half_dlon.sin();
-
-        let a =
-            sin_half_dlat * sin_half_dlat + lat1.cos() * lat2.cos() * sin_half_dlon * sin_half_dlon;
-        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-        EARTH_RADIUS_M * c
-    }
-
-    /// Generate a geohash string for this point.
-    ///
-    /// Geohash is a geocoding system that represents geographic coordinates
-    /// as a short string. Higher precision values result in more precise
-    /// location encoding but longer strings.
-    ///
-    /// # Arguments
-    ///
-    /// * `precision` - Number of characters in the geohash (1-12)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let point = Point::new(40.7128, -74.0060); // NYC
-    ///
-    /// // Different precision levels for different use cases
-    /// let coarse_geohash = point.to_geohash(5)?;  // ~5km precision
-    /// let default_geohash = point.to_geohash(8)?; // ~39m precision (default)
-    /// let fine_geohash = point.to_geohash(10)?;   // ~61cm precision
-    ///
-    /// println!("Coarse: {}", coarse_geohash);   // e.g., "dr5re"
-    /// println!("Default: {}", default_geohash); // e.g., "dr5regw3"
-    /// println!("Fine: {}", fine_geohash);       // e.g., "dr5regw3kg"
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_geohash(&self, precision: usize) -> Result<String> {
-        geohash::encode(
-            geo::Coord {
-                x: self.lon,
-                y: self.lat,
-            },
-            precision,
-        )
-        .map_err(SpatioError::from)
-    }
-
-    /// Generate an S2 cell ID for this point.
-    ///
-    /// S2 is Google's library for spherical geometry. It represents
-    /// Earth's surface as a hierarchy of cells that can be used for
-    /// spatial indexing and proximity queries.
-    ///
-    /// # Arguments
-    ///
-    /// * `level` - S2 cell level (0-30, higher = more precise)
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let point = Point::new(40.7128, -74.0060);
-    /// let s2_cell = point.to_s2_cell(16)?;
-    /// println!("S2 cell: {}", s2_cell.0);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn to_s2_cell(&self, level: u8) -> Result<CellID> {
-        if level > 30 {
-            return Err(SpatioError::Other("S2 level must be <= 30".to_string()));
-        }
-
-        // Simplified S2 cell ID generation
-        // Map lat/lon to cell coordinates and combine with level
-        let lat_norm = ((self.lat + 90.0) / 180.0 * ((1u64 << level) as f64)) as u64;
-        let lon_norm = ((self.lon + 180.0) / 360.0 * ((1u64 << level) as f64)) as u64;
-
-        let cell_value = (level as u64) << 56 | lat_norm << 28 | lon_norm;
-        Ok(CellID(cell_value))
-    }
-
-    /// Check if this point is within the given bounding box.
-    ///
-    /// # Arguments
-    ///
-    /// * `min_lat` - Minimum latitude of bounding box
-    /// * `min_lon` - Minimum longitude of bounding box
-    /// * `max_lat` - Maximum latitude of bounding box
-    /// * `max_lon` - Maximum longitude of bounding box
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let point = Point::new(40.7128, -74.0060); // NYC
-    /// let in_usa = point.within_bounds(24.0, -125.0, 49.0, -66.0);
-    /// assert!(in_usa);
-    /// ```
-    pub fn within_bounds(&self, min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> bool {
-        self.lat >= min_lat && self.lat <= max_lat && self.lon >= min_lon && self.lon <= max_lon
-    }
-
-    /// Check if this point is within a circular region defined by center and radius.
-    ///
-    /// # Arguments
-    ///
-    /// * `center` - Center point of the circular region
-    /// * `radius_meters` - Radius of the circle in meters
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let center = Point::new(40.7128, -74.0060); // NYC
-    /// let point = Point::new(40.7150, -74.0040);  // Close to NYC
-    ///
-    /// let within_1km = point.within_distance(&center, 1000.0);
-    /// assert!(within_1km);
-    /// ```
-    pub fn within_distance(&self, center: &Point, radius_meters: f64) -> bool {
-        // For very small distances, use simple approximation to avoid expensive trig
-        if radius_meters < 100.0 {
-            const TO_RAD: f64 = std::f64::consts::PI / 180.0;
-            const EARTH_RADIUS_M: f64 = 6_371_000.0;
-
-            let dlat = (self.lat - center.lat) * TO_RAD;
-            let dlon = (self.lon - center.lon) * TO_RAD;
-            let avg_lat = (self.lat + center.lat) * 0.5 * TO_RAD;
-
-            let x = dlon * avg_lat.cos() * EARTH_RADIUS_M;
-            let y = dlat * EARTH_RADIUS_M;
-            let distance_approx = (x * x + y * y).sqrt();
-
-            return distance_approx <= radius_meters;
-        }
-
-        self.distance_to(center) <= radius_meters
-    }
-
-    /// Check if two bounding boxes intersect.
-    ///
-    /// This is a convenience method that creates BoundingBox instances and checks intersection.
-    ///
-    /// # Arguments
-    ///
-    /// * `min_lat1, min_lon1, max_lat1, max_lon1` - First bounding box
-    /// * `min_lat2, min_lon2, max_lat2, max_lon2` - Second bounding box
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// // Check if NYC area intersects with general New York state area
-    /// let intersects = Point::intersects_bounds(
-    ///     40.5, -74.5, 41.0, -73.5,  // NYC area
-    ///     40.0, -80.0, 45.0, -71.0   // NY state area
-    /// );
-    /// assert!(intersects);
-    /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub fn intersects_bounds(
-        min_lat1: f64,
-        min_lon1: f64,
-        max_lat1: f64,
-        max_lon1: f64,
-        min_lat2: f64,
-        min_lon2: f64,
-        max_lat2: f64,
-        max_lon2: f64,
-    ) -> bool {
-        let bbox1 = BoundingBox::new(min_lat1, min_lon1, max_lat1, max_lon1);
-        let bbox2 = BoundingBox::new(min_lat2, min_lon2, max_lat2, max_lon2);
-        bbox1.intersects(&bbox2)
-    }
-
-    /// Check if this point contains another point within a specified radius.
-    /// This is essentially the same as `within_distance` but with reversed semantics.
-    ///
-    /// # Arguments
-    ///
-    /// * `other` - The point to check
-    /// * `radius_meters` - Radius in meters for containment
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Point;
-    ///
-    /// let center = Point::new(40.7128, -74.0060); // NYC
-    /// let point = Point::new(40.7150, -74.0040);  // Close to NYC
-    ///
-    /// let contains = center.contains_point(&point, 1000.0);
-    /// assert!(contains);
-    /// ```
-    pub fn contains_point(&self, other: &Point, radius_meters: f64) -> bool {
-        self.distance_to(other) <= radius_meters
+pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) -> f64 {
+    match metric {
+        DistanceMetric::Haversine => Haversine.distance(*point1, *point2),
+        DistanceMetric::Geodesic => Geodesic.distance(*point1, *point2),
+        DistanceMetric::Rhumb => Rhumb.distance(*point1, *point2),
+        DistanceMetric::Euclidean => Euclidean.distance(*point1, *point2),
     }
 }
 
-#[cfg(feature = "geojson")]
-impl GeozeroGeometry for Point {
-    fn process_geom<P: geozero::GeomProcessor>(
-        &self,
-        processor: &mut P,
-    ) -> geozero::error::Result<()> {
-        processor.point_begin(0)?;
-        if let Some(alt) = self.alt {
-            processor.coordinate(self.lon, self.lat, Some(alt), None, None, None, 0)?;
-        } else {
-            processor.xy(self.lon, self.lat, 0)?;
-        }
-        processor.point_end(0)?;
-        Ok(())
-    }
-}
-
-/// A bounding box defined by minimum and maximum latitude and longitude coordinates.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BoundingBox {
-    pub min_lat: f64,
-    pub min_lon: f64,
-    pub max_lat: f64,
-    pub max_lon: f64,
-}
-
-impl BoundingBox {
-    /// Create a new bounding box
-    pub fn new(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> Self {
-        Self {
-            min_lat,
-            min_lon,
-            max_lat,
-            max_lon,
-        }
-    }
-
-    /// Check if this bounding box intersects with another bounding box.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::BoundingBox;
-    ///
-    /// let nyc_area = BoundingBox::new(40.5, -74.5, 41.0, -73.5);
-    /// let ny_state = BoundingBox::new(40.0, -80.0, 45.0, -71.0);
-    ///
-    /// assert!(nyc_area.intersects(&ny_state));
-    /// ```
-    pub fn intersects(&self, other: &BoundingBox) -> bool {
-        !(self.max_lat < other.min_lat
-            || self.min_lat > other.max_lat
-            || self.max_lon < other.min_lon
-            || self.min_lon > other.max_lon)
-    }
-}
-
-impl fmt::Display for Point {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(alt) = self.alt {
-            write!(f, "({:.6}, {:.6}, {:.1})", self.lat, self.lon, alt)
-        } else {
-            write!(f, "({:.6}, {:.6})", self.lat, self.lon)
-        }
-    }
-}
-
-/// Spatial key generation utilities for database storage.
+/// Find the K nearest neighbors from a set of points.
 ///
-/// This struct provides methods to generate keys for spatial indexing
-/// based on different spatial indexing strategies.
-pub struct SpatialKey;
+/// This is a brute-force implementation that calculates distances to all points
+/// and returns the K nearest ones. For large datasets, consider using the
+/// spatial index through `DB::query_within_radius` with an appropriate radius.
+///
+/// # Arguments
+///
+/// * `center` - The query point
+/// * `points` - Collection of candidate points with associated data
+/// * `k` - Number of nearest neighbors to return
+/// * `metric` - Distance metric to use
+///
+/// # Returns
+///
+/// Vector of (Point, distance, data) tuples, sorted by distance (nearest first)
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::{Point, spatial::{knn, DistanceMetric}};
+///
+/// let center = Point::new(-74.0060, 40.7128);
+/// let candidates = vec![
+///     (Point::new(-73.9442, 40.6782), "Brooklyn"),
+///     (Point::new(-73.9356, 40.7306), "Queens"),
+///     (Point::new(-118.2437, 34.0522), "LA"),
+/// ];
+///
+/// let nearest = knn(&center, &candidates, 2, DistanceMetric::Haversine);
+/// assert_eq!(nearest.len(), 2);
+/// // Verify LA is not in the nearest 2
+/// assert_ne!(nearest[0].2, "LA");
+/// assert_ne!(nearest[1].2, "LA");
+/// ```
+pub fn knn<T: Clone>(
+    center: &Point,
+    points: &[(Point, T)],
+    k: usize,
+    metric: DistanceMetric,
+) -> Vec<(Point, f64, T)> {
+    let mut distances: Vec<(Point, f64, T)> = points
+        .iter()
+        .map(|(pt, data)| {
+            let dist = distance_between(center, pt, metric);
+            (*pt, dist, data.clone())
+        })
+        .collect();
 
-impl SpatialKey {
-    /// Generate a geohash-based key for database storage.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace prefix for the key
-    /// * `geohash` - The geohash string
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::spatial::SpatialKey;
-    ///
-    /// let key = SpatialKey::geohash("cities", "dr5regw3");
-    /// assert_eq!(key, "cities:gh:dr5regw3");
-    /// ```
-    pub fn geohash(prefix: &str, geohash: &str) -> String {
-        format!("{}:gh:{}", prefix, geohash)
+    // Sort by distance
+    distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take K nearest
+    distances.into_iter().take(k).collect()
+}
+
+/// Create a bounding box (Rect) from min/max coordinates.
+///
+/// This is a convenience wrapper around `geo::Rect` that validates
+/// the coordinate order and creates the rectangle.
+///
+/// # Arguments
+///
+/// * `min_lon` - Minimum longitude (western boundary)
+/// * `min_lat` - Minimum latitude (southern boundary)
+/// * `max_lon` - Maximum longitude (eastern boundary)
+/// * `max_lat` - Maximum latitude (northern boundary)
+///
+/// # Returns
+///
+/// A `geo::Rect` representing the bounding box
+///
+/// # Errors
+///
+/// Returns an error if min > max for either coordinate
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::spatial::bounding_box;
+///
+/// // Manhattan bounding box
+/// let bbox = bounding_box(-74.02, 40.70, -73.93, 40.80).unwrap();
+/// ```
+pub fn bounding_box(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Result<Rect> {
+    if min_lon > max_lon {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lon ({}) must be <= max_lon ({})",
+            min_lon, max_lon
+        )));
+    }
+    if min_lat > max_lat {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lat ({}) must be <= max_lat ({})",
+            min_lat, max_lat
+        )));
     }
 
-    /// Generate a geohash-based key with a uniqueness suffix derived from point metadata.
-    ///
-    /// The generated key has the format:
-    /// `{prefix}:gh:{geohash}:{lat_bits_hex}:{lon_bits_hex}:{timestamp_hex}`
-    ///
-    /// This preserves the original geohash prefix while ensuring that multiple points
-    /// sharing the same geohash bucket can coexist without overwriting one another.
-    pub fn geohash_unique(
-        prefix: &str,
-        geohash: &str,
-        point: &Point,
-        created_at: SystemTime,
-    ) -> String {
-        let lat_bits = point.lat.to_bits();
-        let lon_bits = point.lon.to_bits();
-        let timestamp = created_at
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_nanos();
+    Ok(Rect::new(
+        geo::coord! { x: min_lon, y: min_lat },
+        geo::coord! { x: max_lon, y: max_lat },
+    ))
+}
 
-        format!(
-            "{}:gh:{}:{:016x}:{:016x}:{:016x}",
-            prefix, geohash, lat_bits, lon_bits, timestamp
-        )
+/// Check if a point is contained within a polygon.
+///
+/// Uses the `geo::Contains` trait to perform the containment test.
+///
+/// # Arguments
+///
+/// * `polygon` - The polygon to test
+/// * `point` - The point to test
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::{Point, spatial::point_in_polygon};
+/// use geo::{polygon, Polygon};
+///
+/// let poly: Polygon = polygon![
+///     (x: -74.0, y: 40.7),
+///     (x: -73.9, y: 40.7),
+///     (x: -73.9, y: 40.8),
+///     (x: -74.0, y: 40.8),
+///     (x: -74.0, y: 40.7),
+/// ];
+///
+/// let inside = Point::new(-73.95, 40.75);
+/// let outside = Point::new(-73.85, 40.75);
+///
+/// assert!(point_in_polygon(&poly, &inside));
+/// assert!(!point_in_polygon(&poly, &outside));
+/// ```
+pub fn point_in_polygon(polygon: &Polygon, point: &Point) -> bool {
+    polygon.contains(point)
+}
+
+/// Check if a point is within a bounding box.
+///
+/// # Arguments
+///
+/// * `bbox` - The bounding box
+/// * `point` - The point to test
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::{Point, spatial::{bounding_box, point_in_bbox}};
+///
+/// let bbox = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+/// let inside = Point::new(-73.95, 40.75);
+/// let outside = Point::new(-73.85, 40.75);
+///
+/// assert!(point_in_bbox(&bbox, &inside));
+/// assert!(!point_in_bbox(&bbox, &outside));
+/// ```
+pub fn point_in_bbox(bbox: &Rect, point: &Point) -> bool {
+    bbox.contains(point)
+}
+
+/// Calculate the area of a polygon in square meters.
+///
+/// For geodesic (lon/lat) coordinates, uses the Chamberlain-Duquette algorithm
+/// which assumes a spherical Earth. For more accurate results on an ellipsoid,
+/// use `geodesic_area`.
+///
+/// # Arguments
+///
+/// * `polygon` - The polygon to measure
+///
+/// # Returns
+///
+/// Area in square meters (for geodesic coordinates) or square units (for planar)
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::spatial::polygon_area;
+/// use geo::{polygon, Polygon};
+///
+/// let poly: Polygon = polygon![
+///     (x: -74.0, y: 40.7),
+///     (x: -73.9, y: 40.7),
+///     (x: -73.9, y: 40.8),
+///     (x: -74.0, y: 40.8),
+///     (x: -74.0, y: 40.7),
+/// ];
+///
+/// let area = polygon_area(&poly);
+/// assert!(area > 0.0);
+/// ```
+pub fn polygon_area(polygon: &Polygon) -> f64 {
+    polygon.chamberlain_duquette_unsigned_area()
+}
+
+/// Calculate the geodesic area of a polygon in square meters.
+///
+/// Uses Karney (2013) algorithm for accurate area calculation on an ellipsoid.
+/// More accurate than `polygon_area` but slower.
+///
+/// # Arguments
+///
+/// * `polygon` - The polygon to measure
+///
+/// # Returns
+///
+/// Area in square meters
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::spatial::geodesic_polygon_area;
+/// use geo::{polygon, Polygon};
+///
+/// let poly: Polygon = polygon![
+///     (x: -74.0, y: 40.7),
+///     (x: -73.9, y: 40.7),
+///     (x: -73.9, y: 40.8),
+///     (x: -74.0, y: 40.8),
+///     (x: -74.0, y: 40.7),
+/// ];
+///
+/// let area = geodesic_polygon_area(&poly);
+/// assert!(area > 0.0);
+/// ```
+pub fn geodesic_polygon_area(polygon: &Polygon) -> f64 {
+    polygon.geodesic_area_unsigned()
+}
+
+/// Calculate the convex hull of a set of points.
+///
+/// The convex hull is the smallest convex polygon that contains all points.
+///
+/// # Arguments
+///
+/// * `points` - Collection of points
+///
+/// # Returns
+///
+/// A polygon representing the convex hull, or None if there are fewer than 3 points
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::{Point, spatial::convex_hull};
+///
+/// let points = vec![
+///     Point::new(-74.0, 40.7),
+///     Point::new(-73.9, 40.7),
+///     Point::new(-73.95, 40.8),
+/// ];
+///
+/// let hull = convex_hull(&points);
+/// assert!(hull.is_some());
+/// ```
+pub fn convex_hull(points: &[Point]) -> Option<Polygon> {
+    if points.is_empty() {
+        return None;
     }
 
-    /// Generate an S2 cell-based key for database storage.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace prefix for the key
-    /// * `cell_id` - The S2 cell ID
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::spatial::SpatialKey;
-    /// use s2::cellid::CellID;
-    ///
-    /// let cell_id = CellID(1234567890);
-    /// let key = SpatialKey::s2_cell("sensors", cell_id);
-    /// assert_eq!(key, "sensors:s2:1234567890");
-    /// ```
-    pub fn s2_cell(prefix: &str, cell_id: CellID) -> String {
-        format!("{}:s2:{}", prefix, cell_id.0)
+    // Convert to MultiPoint for convex hull calculation
+    let multi_point = geo::MultiPoint::new(points.to_vec());
+    Some(multi_point.convex_hull())
+}
+
+/// Calculate the bounding rectangle that encompasses all points.
+///
+/// # Arguments
+///
+/// * `points` - Collection of points
+///
+/// # Returns
+///
+/// A `Rect` that bounds all points, or None if the collection is empty
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::{Point, spatial::bounding_rect_for_points};
+///
+/// let points = vec![
+///     Point::new(-74.0, 40.7),
+///     Point::new(-73.9, 40.8),
+/// ];
+///
+/// let bbox = bounding_rect_for_points(&points).unwrap();
+/// ```
+pub fn bounding_rect_for_points(points: &[Point]) -> Option<Rect> {
+    if points.is_empty() {
+        return None;
     }
+
+    let multi_point = geo::MultiPoint::new(points.to_vec());
+    multi_point.bounding_rect()
+}
+
+/// Check if two bounding boxes intersect.
+///
+/// # Arguments
+///
+/// * `bbox1` - First bounding box
+/// * `bbox2` - Second bounding box
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::spatial::{bounding_box, bboxes_intersect};
+///
+/// let bbox1 = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+/// let bbox2 = bounding_box(-73.95, 40.75, -73.85, 40.85).unwrap();
+///
+/// assert!(bboxes_intersect(&bbox1, &bbox2));
+/// ```
+pub fn bboxes_intersect(bbox1: &Rect, bbox2: &Rect) -> bool {
+    bbox1.intersects(bbox2)
+}
+
+/// Expand a bounding box by a distance in meters (approximation).
+///
+/// This is an approximation that expands the box by adding/subtracting
+/// a degree offset calculated from the distance. For more accurate buffering,
+/// consider using geo's buffer operations.
+///
+/// # Arguments
+///
+/// * `bbox` - The bounding box to expand
+/// * `distance_meters` - Distance to expand by (in meters)
+///
+/// # Returns
+///
+/// A new expanded bounding box
+///
+/// # Examples
+///
+/// ```rust
+/// use spatio::spatial::{bounding_box, expand_bbox};
+///
+/// let bbox = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+/// let expanded = expand_bbox(&bbox, 1000.0); // Expand by 1km
+/// ```
+pub fn expand_bbox(bbox: &Rect, distance_meters: f64) -> Rect {
+    // Rough approximation: 1 degree ≈ 111km at equator
+    let lat_offset = distance_meters / 111_000.0;
+
+    // Longitude offset depends on latitude
+    let avg_lat = (bbox.min().y + bbox.max().y) / 2.0;
+    let lon_offset = distance_meters / (111_000.0 * avg_lat.to_radians().cos());
+
+    Rect::new(
+        geo::coord! {
+            x: bbox.min().x - lon_offset,
+            y: bbox.min().y - lat_offset
+        },
+        geo::coord! {
+            x: bbox.max().x + lon_offset,
+            y: bbox.max().y + lat_offset
+        },
+    )
 }
 
 #[cfg(test)]
@@ -530,215 +432,111 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_point_creation() {
-        let point = Point::new(40.7128, -74.0060);
-        assert_eq!(point.lat, 40.7128);
-        assert_eq!(point.lon, -74.0060);
+    fn test_distance_between() {
+        let p1 = Point::new(-74.0060, 40.7128); // NYC
+        let p2 = Point::new(-118.2437, 34.0522); // LA
+
+        let dist_haversine = distance_between(&p1, &p2, DistanceMetric::Haversine);
+        let dist_geodesic = distance_between(&p1, &p2, DistanceMetric::Geodesic);
+
+        // Distance should be approximately 3,944 km
+        assert!(dist_haversine > 3_900_000.0 && dist_haversine < 4_000_000.0);
+        assert!(dist_geodesic > 3_900_000.0 && dist_geodesic < 4_000_000.0);
+
+        // They should be close but not identical
+        let diff = (dist_haversine - dist_geodesic).abs();
+        assert!(diff < 10_000.0); // Within 10km difference
     }
 
     #[test]
-    fn test_distance_calculation() {
-        let new_york = Point::new(40.7128, -74.0060);
-        let london = Point::new(51.5074, -0.1278);
+    fn test_knn() {
+        let center = Point::new(-74.0060, 40.7128);
+        let candidates = vec![
+            (Point::new(-73.9442, 40.6782), "Brooklyn"),
+            (Point::new(-73.9356, 40.7306), "Queens"),
+            (Point::new(-118.2437, 34.0522), "LA"),
+            (Point::new(-73.9712, 40.7831), "Upper West Side"),
+        ];
 
-        let distance = new_york.distance_to(&london);
-        // Distance should be approximately 5585 km
-        assert!((distance - 5_585_000.0).abs() < 50_000.0);
-    }
+        let nearest = knn(&center, &candidates, 2, DistanceMetric::Haversine);
 
-    #[test]
-    fn test_geohash_generation() {
-        let point = Point::new(40.7128, -74.0060);
-        let geohash = point.to_geohash(8).unwrap();
-        assert_eq!(geohash.len(), 8);
-    }
-
-    #[test]
-    fn test_geohash_unique_format() {
-        let point = Point::new(40.7128, -74.0060);
-        let created_at = UNIX_EPOCH + Duration::from_secs(1);
-        let key = SpatialKey::geohash_unique("cities", "dr5regw3", &point, created_at);
-
-        assert!(key.starts_with("cities:gh:dr5regw3:"));
-        assert!(key.split(':').count() >= 6);
-    }
-
-    #[test]
-    fn test_s2_cell_generation() {
-        let point = Point::new(40.7128, -74.0060);
-        let s2_cell = point.to_s2_cell(16).unwrap();
-        assert!(s2_cell.0 > 0);
-    }
-
-    #[test]
-    fn test_within_bounds() {
-        let point = Point::new(40.7128, -74.0060);
-
-        // Should be within USA bounds
-        assert!(point.within_bounds(24.0, -125.0, 49.0, -66.0));
-
-        // Should not be within Europe bounds
-        assert!(!point.within_bounds(35.0, -10.0, 70.0, 40.0));
-    }
-
-    #[test]
-    fn test_spatial_key_generation() {
-        let geohash_key = SpatialKey::geohash("cities", "dr5regw3");
-        assert_eq!(geohash_key, "cities:gh:dr5regw3");
-
-        let s2_key = SpatialKey::s2_cell("sensors", CellID(1234567890));
-        assert_eq!(s2_key, "sensors:s2:1234567890");
-    }
-
-    #[test]
-    fn test_point_display() {
-        let point = Point::new(40.7128, -74.0060);
-        let display = format!("{}", point);
-        assert_eq!(display, "(40.712800, -74.006000)");
-
-        let point_with_alt = Point::new(40.7128, -74.0060).with_alt(100.0);
-        let display_with_alt = format!("{}", point_with_alt);
-        assert_eq!(display_with_alt, "(40.712800, -74.006000, 100.0)");
-    }
-
-    #[test]
-    #[cfg(feature = "geojson")]
-    fn test_point_to_geojson() {
-        let point = Point::new(40.7128, -74.0060);
-        let geojson = point.to_geojson().unwrap();
-
-        let parsed: geojson::GeoJson = geojson.parse().unwrap();
-        if let geojson::GeoJson::Geometry(geom) = parsed {
-            if let geojson::Value::Point(coords) = geom.value {
-                assert_eq!(coords[0], -74.006);
-                assert_eq!(coords[1], 40.7128);
-                assert_eq!(coords.len(), 2);
-            } else {
-                panic!("Expected Point geometry");
-            }
-        } else {
-            panic!("Expected Geometry");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "geojson")]
-    fn test_point_with_alt_to_geojson() {
-        let point = Point::new(40.7128, -74.0060).with_alt(100.0);
-        let geojson = point.to_geojson().unwrap();
-
-        let parsed: geojson::GeoJson = geojson.parse().unwrap();
-        if let geojson::GeoJson::Geometry(geom) = parsed {
-            if let geojson::Value::Point(coords) = geom.value {
-                assert_eq!(coords[0], -74.006);
-                assert_eq!(coords[1], 40.7128);
-                assert_eq!(coords[2], 100.0);
-                assert_eq!(coords.len(), 3);
-            } else {
-                panic!("Expected Point geometry");
-            }
-        } else {
-            panic!("Expected Geometry");
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "geojson")]
-    fn test_point_from_geojson() {
-        let geojson = r#"{"type":"Point","coordinates":[-74.006,40.7128]}"#;
-        let point = Point::from_geojson(geojson).unwrap();
-        assert_eq!(point.lat, 40.7128);
-        assert_eq!(point.lon, -74.006);
-        assert_eq!(point.alt, None);
-    }
-
-    #[test]
-    #[cfg(feature = "geojson")]
-    fn test_point_with_alt_from_geojson() {
-        let geojson = r#"{"type":"Point","coordinates":[-74.006,40.7128,100.0]}"#;
-        let point = Point::from_geojson(geojson).unwrap();
-        assert_eq!(point.lat, 40.7128);
-        assert_eq!(point.lon, -74.006);
-        assert_eq!(point.alt, Some(100.0));
-    }
-
-    #[test]
-    fn test_within_distance() {
-        let nyc = Point::new(40.7128, -74.0060);
-        let brooklyn = Point::new(40.6782, -73.9442);
-        let london = Point::new(51.5074, -0.1278);
-
-        // Brooklyn should be within 20km of NYC
-        assert!(brooklyn.within_distance(&nyc, 20_000.0));
-
-        // London should not be within 1000km of NYC
-        assert!(!london.within_distance(&nyc, 1_000_000.0));
-
-        // Point should be within 0 distance of itself
-        assert!(nyc.within_distance(&nyc, 0.0));
-    }
-
-    #[test]
-    fn test_contains_point() {
-        let nyc = Point::new(40.7128, -74.0060);
-        let brooklyn = Point::new(40.6782, -73.9442);
-        let london = Point::new(51.5074, -0.1278);
-
-        // NYC should contain Brooklyn within 20km
-        assert!(nyc.contains_point(&brooklyn, 20_000.0));
-
-        // NYC should not contain London within 1000km
-        assert!(!nyc.contains_point(&london, 1_000_000.0));
-
-        // Point should contain itself within any positive radius
-        assert!(nyc.contains_point(&nyc, 1.0));
-    }
-
-    #[test]
-    fn test_intersects_bounds() {
-        // Test overlapping bounds
-        assert!(Point::intersects_bounds(
-            40.0, -75.0, 41.0, -73.0, // NYC area
-            40.5, -74.5, 40.8, -74.0 // Manhattan area (overlaps)
-        ));
-
-        // Test non-overlapping bounds
-        assert!(!Point::intersects_bounds(
-            40.0, -75.0, 41.0, -73.0, // NYC area
-            51.0, -1.0, 52.0, 1.0 // London area (no overlap)
-        ));
-
-        // Test identical bounds
-        assert!(Point::intersects_bounds(
-            40.0, -75.0, 41.0, -73.0, 40.0, -75.0, 41.0, -73.0
-        ));
-
-        // Test touching bounds (should intersect)
-        assert!(Point::intersects_bounds(
-            40.0, -75.0, 41.0, -73.0, 41.0, -75.0, 42.0, -73.0
-        ));
-
-        // Test completely separate bounds
-        assert!(!Point::intersects_bounds(
-            40.0, -75.0, 41.0, -73.0, 42.0, -75.0, 43.0, -73.0
-        ));
+        assert_eq!(nearest.len(), 2);
+        // Closest should be Upper West Side or Queens, not LA
+        assert_ne!(nearest[0].2, "LA");
+        assert_ne!(nearest[1].2, "LA");
     }
 
     #[test]
     fn test_bounding_box() {
-        let bbox1 = BoundingBox::new(40.0, -75.0, 41.0, -73.0);
-        let bbox2 = BoundingBox::new(40.5, -74.5, 40.8, -74.0);
-        let bbox3 = BoundingBox::new(51.0, -1.0, 52.0, 1.0);
+        let bbox = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
 
-        // Test overlapping boxes
-        assert!(bbox1.intersects(&bbox2));
-        assert!(bbox2.intersects(&bbox1));
+        assert_eq!(bbox.min().x, -74.0);
+        assert_eq!(bbox.min().y, 40.7);
+        assert_eq!(bbox.max().x, -73.9);
+        assert_eq!(bbox.max().y, 40.8);
+    }
 
-        // Test non-overlapping boxes
-        assert!(!bbox1.intersects(&bbox3));
-        assert!(!bbox3.intersects(&bbox1));
+    #[test]
+    fn test_bounding_box_invalid() {
+        let result = bounding_box(-73.9, 40.7, -74.0, 40.8);
+        assert!(result.is_err());
+    }
 
-        // Test identical boxes
-        assert!(bbox1.intersects(&bbox1));
+    #[test]
+    fn test_point_in_bbox() {
+        let bbox = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+
+        assert!(point_in_bbox(&bbox, &Point::new(-73.95, 40.75)));
+        assert!(!point_in_bbox(&bbox, &Point::new(-73.85, 40.75)));
+    }
+
+    #[test]
+    fn test_bboxes_intersect() {
+        let bbox1 = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+        let bbox2 = bounding_box(-73.95, 40.75, -73.85, 40.85).unwrap();
+        let bbox3 = bounding_box(-73.0, 40.0, -72.9, 40.1).unwrap();
+
+        assert!(bboxes_intersect(&bbox1, &bbox2));
+        assert!(!bboxes_intersect(&bbox1, &bbox3));
+    }
+
+    #[test]
+    fn test_convex_hull() {
+        let points = vec![
+            Point::new(-74.0, 40.7),
+            Point::new(-73.9, 40.7),
+            Point::new(-73.95, 40.8),
+            Point::new(-73.95, 40.75), // Interior point
+        ];
+
+        let hull = convex_hull(&points).unwrap();
+        assert_eq!(hull.exterior().0.len(), 4); // 3 points + closing point
+    }
+
+    #[test]
+    fn test_bounding_rect_for_points() {
+        let points = vec![
+            Point::new(-74.0, 40.7),
+            Point::new(-73.9, 40.8),
+            Point::new(-73.95, 40.75),
+        ];
+
+        let bbox = bounding_rect_for_points(&points).unwrap();
+        assert_eq!(bbox.min().x, -74.0);
+        assert_eq!(bbox.min().y, 40.7);
+        assert_eq!(bbox.max().x, -73.9);
+        assert_eq!(bbox.max().y, 40.8);
+    }
+
+    #[test]
+    fn test_expand_bbox() {
+        let bbox = bounding_box(-74.0, 40.7, -73.9, 40.8).unwrap();
+        let expanded = expand_bbox(&bbox, 1000.0);
+
+        // Should be larger than original
+        assert!(expanded.min().x < bbox.min().x);
+        assert!(expanded.min().y < bbox.min().y);
+        assert!(expanded.max().x > bbox.max().x);
+        assert!(expanded.max().y > bbox.max().y);
     }
 }

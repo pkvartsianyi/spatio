@@ -4,13 +4,15 @@
 //! It exposes the core functionality including database operations, spatio-temporal queries,
 //! and trajectory tracking.
 
+use geo::{Distance, Haversine, Polygon as GeoPolygon};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
+use spatio::Point as RustPoint;
+use spatio::spatial::DistanceMetric as RustDistanceMetric;
 use spatio::{
     db::DB as RustDB,
     error::Result as RustResult,
-    spatial::Point as RustPoint,
     types::{Config as RustConfig, SetOptions as RustSetOptions},
 };
 use std::time::{Duration, UNIX_EPOCH};
@@ -29,8 +31,24 @@ pub struct PyPoint {
 
 #[pymethods]
 impl PyPoint {
-    /// Create a new Point with latitude and longitude
+    /// Create a new Point with latitude and longitude.
+    ///
+    /// # Note
+    /// Altitude is currently not supported. The `alt` parameter is accepted for
+    /// API compatibility but will be ignored, as the underlying geo::Point is 2D.
+    ///
+    /// # Args
+    ///     lat: Latitude in degrees (-90 to 90)
+    ///     lon: Longitude in degrees (-180 to 180)
+    ///     alt: Optional altitude (currently ignored - see note above)
+    ///
+    /// # Returns
+    ///     A new Point instance
+    ///
+    /// # Raises
+    ///     ValueError: If latitude or longitude are out of valid range
     #[new]
+    #[pyo3(signature = (lat, lon, alt=None))]
     fn new(lat: f64, lon: f64, alt: Option<f64>) -> PyResult<Self> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
@@ -41,9 +59,9 @@ impl PyPoint {
             ));
         }
 
-        let mut point = RustPoint::new(lat, lon);
-        if let Some(alt) = alt {
-            point = point.with_alt(alt);
+        let point = RustPoint::new(lon, lat);
+        if alt.is_some() {
+            // Note: geo::Point doesn't support altitude, parameter ignored
         }
 
         Ok(PyPoint { inner: point })
@@ -51,17 +69,21 @@ impl PyPoint {
 
     #[getter]
     fn lat(&self) -> f64 {
-        self.inner.lat
+        self.inner.y()
     }
 
     #[getter]
     fn lon(&self) -> f64 {
-        self.inner.lon
+        self.inner.x()
     }
 
+    /// Get the altitude of the point.
+    ///
+    /// # Note
+    /// Always returns None as altitude is not currently supported.
     #[getter]
     fn alt(&self) -> Option<f64> {
-        self.inner.alt
+        None // geo::Point doesn't support altitude in current version
     }
 
     fn __repr__(&self) -> String {
@@ -76,9 +98,48 @@ impl PyPoint {
         self.__repr__()
     }
 
-    /// Calculate distance to another point in meters
+    /// Calculate distance to another point in meters using Haversine formula
     fn distance_to(&self, other: &PyPoint) -> f64 {
-        self.inner.distance_to(&other.inner)
+        Haversine.distance(self.inner, other.inner)
+    }
+}
+
+/// Python wrapper for distance metrics
+#[pyclass(name = "DistanceMetric")]
+#[derive(Clone, Debug)]
+pub struct PyDistanceMetric {
+    inner: RustDistanceMetric,
+}
+
+#[pymethods]
+impl PyDistanceMetric {
+    #[classattr]
+    const HAVERSINE: &'static str = "haversine";
+    #[classattr]
+    const GEODESIC: &'static str = "geodesic";
+    #[classattr]
+    const RHUMB: &'static str = "rhumb";
+    #[classattr]
+    const EUCLIDEAN: &'static str = "euclidean";
+
+    #[new]
+    fn new(metric: &str) -> PyResult<Self> {
+        let inner = match metric.to_lowercase().as_str() {
+            "haversine" => RustDistanceMetric::Haversine,
+            "geodesic" => RustDistanceMetric::Geodesic,
+            "rhumb" => RustDistanceMetric::Rhumb,
+            "euclidean" => RustDistanceMetric::Euclidean,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "Invalid metric. Use 'haversine', 'geodesic', 'rhumb', or 'euclidean'",
+                ));
+            }
+        };
+        Ok(PyDistanceMetric { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("DistanceMetric({:?})", self.inner)
     }
 }
 
@@ -299,7 +360,7 @@ impl PySpatio {
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
                 let py_value = PyBytes::new(py, &value);
-                let distance = center.inner.distance_to(&point);
+                let distance = Haversine.distance(center.inner, point);
                 let tuple = (py_point, py_value, distance).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
@@ -330,7 +391,10 @@ impl PySpatio {
             let timestamp_f64: f64 = tuple.get_item(1)?.extract()?;
             let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp_f64 as u64);
 
-            rust_trajectory.push(spatio::types::TemporalPoint { point: point.inner, timestamp });
+            rust_trajectory.push(spatio::types::TemporalPoint {
+                point: point.inner,
+                timestamp,
+            });
         }
 
         let opts = options.map(|o| o.inner.clone());
@@ -353,8 +417,14 @@ impl PySpatio {
         Python::with_gil(|py| {
             let py_list = PyList::empty(py);
             for temporal_point in results {
-                let py_point = PyPoint { inner: temporal_point.point };
-                let timestamp_f64 = temporal_point.timestamp.duration_since(UNIX_EPOCH).map_err(|e| PyRuntimeError::new_err(e.to_string()))?.as_secs_f64();
+                let py_point = PyPoint {
+                    inner: temporal_point.point,
+                };
+                let timestamp_f64 = temporal_point
+                    .timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+                    .as_secs_f64();
                 let tuple = (py_point, timestamp_f64).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
@@ -422,6 +492,90 @@ impl PySpatio {
         })
     }
 
+    /// Calculate distance between two points using a specified metric
+    fn distance_between(
+        &self,
+        point1: &PyPoint,
+        point2: &PyPoint,
+        metric: &PyDistanceMetric,
+    ) -> PyResult<f64> {
+        handle_error(
+            self.db
+                .distance_between(&point1.inner, &point2.inner, metric.inner),
+        )
+    }
+
+    /// Find K nearest neighbors to a query point
+    fn knn(
+        &self,
+        prefix: &str,
+        center: &PyPoint,
+        k: usize,
+        max_radius: f64,
+        metric: &PyDistanceMetric,
+    ) -> PyResult<PyObject> {
+        let results =
+            handle_error(
+                self.db
+                    .knn(prefix, &center.inner, k, max_radius, metric.inner),
+            )?;
+
+        Python::with_gil(|py| {
+            let py_list = PyList::empty(py);
+            for (point, value, distance) in results {
+                let py_point = PyPoint { inner: point };
+                let py_value = PyBytes::new(py, &value);
+                let tuple = (py_point, py_value, distance).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.into())
+        })
+    }
+
+    /// Query points within a polygon boundary
+    fn query_within_polygon(
+        &self,
+        prefix: &str,
+        polygon_coords: &Bound<'_, PyList>,
+        limit: usize,
+    ) -> PyResult<PyObject> {
+        // Parse polygon coordinates from list of (lon, lat) tuples
+        let mut coords = Vec::new();
+        for item in polygon_coords.iter() {
+            let tuple = item.downcast::<PyTuple>()?;
+            if tuple.len() != 2 {
+                return Err(PyValueError::new_err(
+                    "Polygon coordinates must be (lon, lat) tuples",
+                ));
+            }
+            let lon: f64 = tuple.get_item(0)?.extract()?;
+            let lat: f64 = tuple.get_item(1)?.extract()?;
+            coords.push(geo::coord! { x: lon, y: lat });
+        }
+
+        if coords.len() < 3 {
+            return Err(PyValueError::new_err(
+                "Polygon must have at least 3 coordinates",
+            ));
+        }
+
+        // Create polygon
+        let polygon = GeoPolygon::new(geo::LineString::from(coords), vec![]);
+
+        let results = handle_error(self.db.query_within_polygon(prefix, &polygon, limit))?;
+
+        Python::with_gil(|py| {
+            let py_list = PyList::empty(py);
+            for (point, value) in results {
+                let py_point = PyPoint { inner: point };
+                let py_value = PyBytes::new(py, &value);
+                let tuple = (py_point, py_value).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.into())
+        })
+    }
+
     /// Force sync to disk
     fn sync(&self) -> PyResult<()> {
         handle_error(self.db.sync())
@@ -458,6 +612,7 @@ fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPoint>()?;
     m.add_class::<PySetOptions>()?;
     m.add_class::<PyConfig>()?;
+    m.add_class::<PyDistanceMetric>()?;
 
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
