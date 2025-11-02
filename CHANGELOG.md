@@ -2,7 +2,7 @@
 
 All notable changes since the last release are documented below.
 
-## [0.1.4] - 2025-11-02
+## [0.1.5-alpha.1] - 2025-11-02
 
 ### Added
 - temporal point (#48)
@@ -12,4 +12,7 @@ All notable changes since the last release are documented below.
 - modules
 - 3D (#50)
 - georust Point and spatial methods
+
+### Fixed
+- spatio-types
 
