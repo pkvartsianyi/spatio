@@ -7,8 +7,9 @@ use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
 use crate::storage::AOFFile;
+use parking_lot::RwLock;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Builder for creating database instances with custom configuration.
 ///
