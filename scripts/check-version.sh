@@ -50,16 +50,24 @@ if [[ ! -f "py-spatio/Cargo.toml" ]]; then
     exit 1
 fi
 
+if [[ ! -f "spatio-types/Cargo.toml" ]]; then
+    print_error "spatio-types/Cargo.toml not found"
+    exit 1
+fi
+
 RUST_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 PYTHON_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+TYPES_VERSION=$(grep '^version = ' spatio-types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 # Get latest git tags
 LATEST_RUST_TAG=$(git tag -l "rust-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_PYTHON_TAG=$(git tag -l "python-v*" | sort -V | tail -1 2>/dev/null || echo "none")
-LATEST_COMBINED_TAG=$(git tag -l "v*" | grep -v "rust-v" | grep -v "python-v" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_TYPES_TAG=$(git tag -l "types-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_COMBINED_TAG=$(git tag -l "v*" | grep -v "rust-v" | grep -v "python-v" | grep -v "types-v" | sort -V | tail -1 2>/dev/null || echo "none")
 
 LATEST_RUST_TAG_VERSION=${LATEST_RUST_TAG#rust-v}
 LATEST_PYTHON_TAG_VERSION=${LATEST_PYTHON_TAG#python-v}
+LATEST_TYPES_TAG_VERSION=${LATEST_TYPES_TAG#types-v}
 LATEST_COMBINED_TAG_VERSION=${LATEST_COMBINED_TAG#v}
 
 print_info "Version Check Report"
@@ -67,9 +75,11 @@ print_info "==================="
 print_info ""
 print_info "Rust crate version:     $RUST_VERSION"
 print_info "Python package version: $PYTHON_VERSION"
+print_info "Types package version:  $TYPES_VERSION"
 print_info ""
 print_info "Latest Rust tag:        $LATEST_RUST_TAG"
 print_info "Latest Python tag:      $LATEST_PYTHON_TAG"
+print_info "Latest Types tag:       $LATEST_TYPES_TAG"
 print_info "Latest combined tag:    $LATEST_COMBINED_TAG"
 print_info ""
 
@@ -107,6 +117,20 @@ else
     print_info "No Python-specific tags found. Ready for first Python release."
 fi
 
+# Check Types version against its tag
+if [[ "$LATEST_TYPES_TAG" != "none" ]]; then
+    if [[ "$TYPES_VERSION" == "$LATEST_TYPES_TAG_VERSION" ]]; then
+        print_success "Types version matches latest Types tag"
+    elif [[ "$TYPES_VERSION" > "$LATEST_TYPES_TAG_VERSION" ]]; then
+        print_info "Types version ($TYPES_VERSION) is newer than latest Types tag ($LATEST_TYPES_TAG_VERSION)"
+        print_info "Ready for new Types release"
+    else
+        print_warning "Types version ($TYPES_VERSION) is older than latest Types tag ($LATEST_TYPES_TAG_VERSION)"
+    fi
+else
+    print_info "No Types-specific tags found. Ready for first Types release."
+fi
+
 # Check for uncommitted changes
 if ! git diff --quiet || ! git diff --cached --quiet; then
     print_info "Uncommitted changes detected:"
@@ -120,6 +144,7 @@ print_info ""
 print_info "Available commands:"
 print_info "  Rust only:   ./scripts/bump-version.sh rust <version>"
 print_info "  Python only: ./scripts/bump-version.sh python <version>"
-print_info "  Both:        ./scripts/bump-version.sh both <version>"
+print_info "  Types only:  ./scripts/bump-version.sh types <version>"
+print_info "  All:         ./scripts/bump-version.sh all <version>"
 print_info ""
 print_info "Dry run:       ./scripts/bump-version.sh <package> <version> --dry-run"

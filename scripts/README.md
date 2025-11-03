@@ -14,7 +14,7 @@ Main script for updating package versions.
 ```
 
 **Arguments:**
-- `<package>`: Which package to bump (`rust`, `python`, or `both`)
+- `<package>`: Which package to bump (`rust`, `python`, `types`, or `all`)
 - `<new_version>`: The new version (e.g., `0.1.1`, `0.2.0-alpha.1`)
 
 **Options:**
@@ -30,8 +30,11 @@ Main script for updating package versions.
 # Bump Python package version
 ./scripts/bump-version.sh python 0.1.5
 
-# Bump both to same version
-./scripts/bump-version.sh both 1.0.0
+# Bump spatio-types version
+./scripts/bump-version.sh types 0.1.1
+
+# Bump all packages to same version
+./scripts/bump-version.sh all 1.0.0
 
 # Preview changes without making them
 ./scripts/bump-version.sh rust 0.3.0 --dry-run
@@ -63,12 +66,14 @@ just check-version
 # Bump versions
 just bump-rust 0.2.1
 just bump-python 0.1.5
-just bump-both 1.0.0
+just bump-types 0.1.1
+just bump-all 1.0.0
 
 # Dry run (preview changes)
 just bump-rust-dry 0.2.1
 just bump-python-dry 0.1.5
-just bump-both-dry 1.0.0
+just bump-types-dry 0.1.1
+just bump-all-dry 1.0.0
 
 # Update without committing
 just bump-rust-no-commit 0.2.1
@@ -86,6 +91,7 @@ When you bump a version and push to `main`, GitHub Actions automatically:
 **Tag Format:**
 - Rust changes: `rust-v1.2.3`
 - Python changes: `python-v0.5.1`
+- Types changes: `types-v0.1.0`
 
 ## Version Format
 
@@ -110,7 +116,7 @@ Both packages follow [Semantic Versioning](https://semver.org/):
 
 2. **Update version:**
    ```bash
-   just bump-rust 0.2.1  # or bump-python, bump-both
+   just bump-rust 0.2.1  # or bump-python, bump-types, bump-all
    ```
 
 3. **Push to trigger release:**
@@ -120,12 +126,13 @@ Both packages follow [Semantic Versioning](https://semver.org/):
 
 ### Independent Versioning
 
-Rust and Python packages can have different versions:
+Rust, Python, and Types packages can have different versions:
 
 ```bash
-# Rust at v0.3.0, Python at v0.1.2
+# Rust at v0.3.0, Python at v0.1.2, Types at v0.1.0
 just bump-rust 0.3.1      # Only Rust updated
 just bump-python 0.1.3    # Only Python updated
+just bump-types 0.1.1     # Only Types updated
 ```
 
 ### Synchronized Versioning
@@ -133,7 +140,7 @@ just bump-python 0.1.3    # Only Python updated
 For major releases, use same version:
 
 ```bash
-just bump-both 1.0.0      # Both packages updated to same version
+just bump-all 1.0.0       # All packages updated to same version
 ```
 
 ## Files Updated
@@ -142,6 +149,7 @@ The scripts automatically update:
 
 - **Rust package**: `Cargo.toml`, `Cargo.lock`
 - **Python package**: `py-spatio/Cargo.toml`, `py-spatio/Cargo.lock`
+- **Types package**: `spatio-types/Cargo.toml`
 - **Git**: Commit with version change message
 
 ## Requirements

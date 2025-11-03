@@ -36,7 +36,7 @@ show_usage() {
 Usage: $0 <package> <new_version> [options]
 
 ARGUMENTS:
-    <package>        Which package to bump: 'rust', 'python', or 'both'
+    <package>        Which package to bump: 'rust', 'python', 'types', or 'all'
     <new_version>    The new version to set (e.g., 0.1.1, 0.2.0-alpha.1, 1.0.0-beta.2)
 
 OPTIONS:
@@ -47,13 +47,15 @@ OPTIONS:
 EXAMPLES:
     $0 rust 0.1.1                    # Bump Rust crate to 0.1.1
     $0 python 0.2.0                  # Bump Python package to 0.2.0
-    $0 both 0.1.5                    # Bump both to same version
+    $0 types 0.1.0                   # Bump spatio-types to 0.1.0
+    $0 all 0.1.5                     # Bump all packages to same version
     $0 python 0.2.0-alpha.1 --dry-run # Show what would change for Python pre-release
 
 The script will update versions in:
     - rust: Cargo.toml (main project)
     - python: py-spatio/Cargo.toml (Python bindings)
-    - both: Both Cargo.toml files (same version)
+    - types: spatio-types/Cargo.toml (Core types)
+    - all: All Cargo.toml files (same version)
 
 Note: GitHub Actions will automatically detect version changes and create releases.
 
@@ -102,7 +104,7 @@ done
 
 # Validate arguments
 if [[ -z "$PACKAGE" ]]; then
-    print_error "Package is required (rust, python, or both)"
+    print_error "Package is required (rust, python, types, or all)"
     show_usage
     exit 1
 fi
@@ -114,8 +116,8 @@ if [[ -z "$NEW_VERSION" ]]; then
 fi
 
 # Validate package argument
-if [[ "$PACKAGE" != "rust" && "$PACKAGE" != "python" && "$PACKAGE" != "both" ]]; then
-    print_error "Invalid package: $PACKAGE. Must be 'rust', 'python', or 'both'"
+if [[ "$PACKAGE" != "rust" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "all" ]]; then
+    print_error "Invalid package: $PACKAGE. Must be 'rust', 'python', 'types', or 'all'"
     show_usage
     exit 1
 fi
@@ -152,10 +154,12 @@ fi
 # Get current versions
 CURRENT_RUST_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 CURRENT_PYTHON_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+CURRENT_TYPES_VERSION=$(grep '^version = ' spatio-types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 print_info "Current versions:"
 print_info "  Rust crate: $CURRENT_RUST_VERSION"
 print_info "  Python package: $CURRENT_PYTHON_VERSION"
+print_info "  Types package: $CURRENT_TYPES_VERSION"
 print_info ""
 print_info "Updating: $PACKAGE"
 print_info "New version: $NEW_VERSION"
@@ -169,8 +173,11 @@ case "$PACKAGE" in
     "python")
         FILES_TO_UPDATE=("py-spatio/Cargo.toml")
         ;;
-    "both")
-        FILES_TO_UPDATE=("Cargo.toml" "py-spatio/Cargo.toml")
+    "types")
+        FILES_TO_UPDATE=("spatio-types/Cargo.toml")
+        ;;
+    "all")
+        FILES_TO_UPDATE=("Cargo.toml" "py-spatio/Cargo.toml" "spatio-types/Cargo.toml")
         ;;
 esac
 
@@ -217,7 +224,7 @@ if [[ "$DRY_RUN" == false ]]; then
     print_info "Updating Cargo.lock files..."
 
     case "$PACKAGE" in
-        "rust"|"both")
+        "rust"|"all")
             if cargo update --workspace --quiet; then
                 print_success "Updated main Cargo.lock"
             else
@@ -227,11 +234,21 @@ if [[ "$DRY_RUN" == false ]]; then
     esac
 
     case "$PACKAGE" in
-        "python"|"both")
+        "python"|"all")
             if (cd py-spatio && cargo update --quiet); then
                 print_success "Updated py-spatio/Cargo.lock"
             else
                 print_warning "Failed to update py-spatio/Cargo.lock"
+            fi
+            ;;
+    esac
+
+    case "$PACKAGE" in
+        "types"|"all")
+            if (cd spatio-types && cargo update --quiet 2>/dev/null); then
+                print_success "Updated spatio-types/Cargo.lock"
+            else
+                print_info "spatio-types has no Cargo.lock (workspace member or no dependencies)"
             fi
             ;;
     esac
@@ -335,8 +352,11 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
         "python")
             FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
             ;;
-        "both")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "CHANGELOG.md")
+        "types")
+            FILES_TO_ADD=("spatio-types/Cargo.toml")
+            ;;
+        "all")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "spatio-types/Cargo.toml" "CHANGELOG.md")
             ;;
     esac
 
@@ -385,9 +405,14 @@ case "$PACKAGE" in
         print_info "  - Create GitHub release with python-v$NEW_VERSION tag"
         print_info "  - Publish Python package to PyPI"
         ;;
-    "both")
-        print_info "  - Create GitHub releases for both packages"
+    "types")
+        print_info "  - Create GitHub release with types-v$NEW_VERSION tag"
+        print_info "  - Publish spatio-types to crates.io"
+        ;;
+    "all")
+        print_info "  - Create GitHub releases for all packages"
         print_info "  - Publish Rust crate to crates.io"
         print_info "  - Publish Python package to PyPI"
+        print_info "  - Publish spatio-types to crates.io"
         ;;
 esac

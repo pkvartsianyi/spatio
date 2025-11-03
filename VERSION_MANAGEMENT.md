@@ -60,12 +60,16 @@ just bump-python-dry 0.1.5
 
 #### Both Packages (Same Version)
 ```bash
-# Bump both to same version
-just bump-both 1.0.0
-./scripts/bump-version.sh both 1.0.0
+# Bump all packages to same version
+just bump-all 1.0.0
+./scripts/bump-version.sh all 1.0.0
+
+# Bump only spatio-types
+just bump-types 0.1.1
+./scripts/bump-version.sh types 0.1.1
 
 # Preview changes (dry run)
-just bump-both-dry 1.0.0
+just bump-all-dry 1.0.0
 ```
 
 ## Automatic Release Strategy
@@ -98,10 +102,10 @@ git push origin main
 For major releases, you might want to synchronize:
 
 ```bash
-# Release both with same version
-just bump-both 1.0.0
+# Release all packages with same version
+just bump-all 1.0.0
 git push origin main
-# → GitHub Actions creates both rust-v1.0.0 and python-v1.0.0 releases
+# → GitHub Actions creates rust-v1.0.0, python-v1.0.0, and types-v1.0.0 releases
 ```
 
 ### Pre-release Versions
@@ -116,7 +120,7 @@ just bump-rust 0.4.0-alpha.1
 just bump-python 0.3.0-beta.2
 
 # Combined pre-release
-just bump-both 2.0.0-rc.1
+just bump-all 2.0.0-rc.1
 ```
 
 ## Automatic Publishing
@@ -185,7 +189,7 @@ If you see version mismatch errors during CI:
 just check-version
 
 # Fix by updating the appropriate package
-just bump-rust 0.2.1  # or bump-python, bump-both
+just bump-rust 0.2.1  # or bump-python, bump-types, bump-all
 ```
 
 ### Tag Already Exists
@@ -242,10 +246,10 @@ git push origin main
 
 ```bash
 # Major release with breaking changes
-just bump-both-dry 1.0.0  # preview
-just bump-both 1.0.0      # actual bump
+just bump-all-dry 1.0.0  # preview
+just bump-all 1.0.0      # actual bump
 git push origin main
-# Auto-release triggered, both packages released
+# Auto-release triggered, all packages released
 ```
 
 ### Version-Driven Workflow Benefits

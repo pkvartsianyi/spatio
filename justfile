@@ -118,9 +118,13 @@ bump-rust VERSION:
 bump-python VERSION:
     ./scripts/bump-version.sh python {{VERSION}}
 
-# Bump both packages to same version
-bump-both VERSION:
-    ./scripts/bump-version.sh both {{VERSION}}
+# Bump spatio-types version
+bump-types VERSION:
+    ./scripts/bump-version.sh types {{VERSION}}
+
+# Bump all packages to same version
+bump-all VERSION:
+    ./scripts/bump-version.sh all {{VERSION}}
 
 # Dry run version bump to see what would change
 bump-rust-dry VERSION:
@@ -129,8 +133,11 @@ bump-rust-dry VERSION:
 bump-python-dry VERSION:
     ./scripts/bump-version.sh python {{VERSION}} --dry-run
 
-bump-both-dry VERSION:
-    ./scripts/bump-version.sh both {{VERSION}} --dry-run
+bump-types-dry VERSION:
+    ./scripts/bump-version.sh types {{VERSION}} --dry-run
+
+bump-all-dry VERSION:
+    ./scripts/bump-version.sh all {{VERSION}} --dry-run
 
 # Bump version without committing
 bump-rust-no-commit VERSION:
