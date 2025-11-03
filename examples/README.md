@@ -154,7 +154,7 @@ Spatio leverages the [georust/geo](https://github.com/georust/geo) crate for com
 
 ### Distance Calculations
 ```rust
-use spatio::spatial::{distance_between, DistanceMetric};
+use spatio::{distance_between, DistanceMetric};
 
 let dist = distance_between(&nyc, &london, DistanceMetric::Haversine);
 // Also available: Geodesic, Rhumb, Euclidean

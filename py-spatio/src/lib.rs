@@ -8,8 +8,8 @@ use geo::{Distance, Haversine, Polygon as GeoPolygon};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
+use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::Point as RustPoint;
-use spatio::spatial::DistanceMetric as RustDistanceMetric;
 use spatio::{
     config::{Config as RustConfig, SetOptions as RustSetOptions},
     db::DB as RustDB,
