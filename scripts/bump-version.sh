@@ -325,21 +325,13 @@ update_changelog() {
     print_success "CHANGELOG.md regenerated for commits since ${last_tag}"
 }
 
-if [[ "$DRY_RUN" == false ]]; then
+# Only update changelog for 'all' package bumps (combined releases)
+if [[ "$DRY_RUN" == false && "$PACKAGE" == "all" ]]; then
     print_info "Generating CHANGELOG.md from latest commits..."
     update_changelog
 fi
 
 # ------------------------------------------------------------------------------
-
-if [[ "$DRY_RUN" == false ]]; then
-    print_info "Generating CHANGELOG.md from git history..."
-    update_changelog
-fi
-
-# ------------------------------------------------------------------------------
-
-# Commit changes
 if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     print_info "Committing version changes..."
 
@@ -353,10 +345,10 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
             ;;
         "types")
-            FILES_TO_ADD=("spatio-types/Cargo.toml")
+            FILES_TO_ADD=("spatio-types/Cargo.toml" "spatio-types/Cargo.lock" "Cargo.lock")
             ;;
         "all")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "spatio-types/Cargo.toml" "CHANGELOG.md")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "spatio-types/Cargo.toml" "spatio-types/Cargo.lock" "CHANGELOG.md")
             ;;
     esac
 
