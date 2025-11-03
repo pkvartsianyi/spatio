@@ -11,11 +11,12 @@ use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
 use crate::storage::AOFFile;
 use bytes::Bytes;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::Path;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 mod batch;
@@ -428,29 +429,11 @@ impl DB {
     }
 
     pub(crate) fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        match self.inner.read() {
-            Ok(guard) => Ok(guard),
-            Err(_poison_error) => {
-                log::error!(
-                    "Database lock was poisoned - shared state may be corrupted. \
-                     This indicates a panic occurred while holding a write lock."
-                );
-                Err(SpatioError::LockError)
-            }
-        }
+        Ok(self.inner.read())
     }
 
     pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        match self.inner.write() {
-            Ok(guard) => Ok(guard),
-            Err(_poison_error) => {
-                log::error!(
-                    "Database lock was poisoned - shared state may be corrupted. \
-                     This indicates a panic occurred while holding a write lock."
-                );
-                Err(SpatioError::LockError)
-            }
-        }
+        Ok(self.inner.write())
     }
 
     /// Acquire a read lock and verify the database is not closed
@@ -545,17 +528,16 @@ impl Drop for DB {
             return;
         }
 
-        if let Ok(mut inner) = self.inner.write() {
-            if inner.closed {
-                return;
-            }
+        let mut inner = self.inner.write();
+        if inner.closed {
+            return;
+        }
 
-            let sync_mode = inner.config.sync_mode;
-            if let Some(ref mut aof_file) = inner.aof_file
-                && aof_file.sync_with_mode(sync_mode).is_ok()
-            {
-                inner.sync_ops_since_flush = 0;
-            }
+        let sync_mode = inner.config.sync_mode;
+        if let Some(ref mut aof_file) = inner.aof_file
+            && aof_file.sync_with_mode(sync_mode).is_ok()
+        {
+            inner.sync_ops_since_flush = 0;
         }
     }
 }
