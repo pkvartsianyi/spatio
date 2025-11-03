@@ -223,7 +223,7 @@ db.delete("key")?;
 
 ### Spatial Operations
 ```rust
-use spatio::spatial::{distance_between, DistanceMetric};
+use spatio::{distance_between, DistanceMetric};
 use geo::polygon;
 
 let point = Point::new(-74.0060, 40.7128);
