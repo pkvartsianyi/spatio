@@ -417,10 +417,7 @@ impl GeohashRTreeIndex {
         new_tree.insert(obj);
         *tree = new_tree;
 
-        self.object_to_cells
-            .entry(key)
-            .or_insert_with(HashSet::new)
-            .insert(hash);
+        self.object_to_cells.entry(key).or_default().insert(hash);
     }
 
     /// Insert an object into multiple geohash cells.
@@ -478,10 +475,14 @@ impl GeohashRTreeIndex {
     }
 
     /// Get all geohash cells within a radius of a point.
-    pub(crate) fn get_cells_for_radius(&self, center: &Point<f64>, radius_meters: f64) -> Vec<String> {
+    pub(crate) fn get_cells_for_radius(
+        &self,
+        center: &Point<f64>,
+        radius_meters: f64,
+    ) -> Vec<String> {
         let cell_size_meters = match self.precision {
-            1 => 5000_000.0,
-            2 => 1250_000.0,
+            1 => 5_000_000.0,
+            2 => 1_250_000.0,
             3 => 156_000.0,
             4 => 39_000.0,
             5 => 4900.0,
@@ -492,9 +493,12 @@ impl GeohashRTreeIndex {
             _ => 153.0,
         };
 
-        let rings_needed = ((radius_meters / cell_size_meters).ceil() as usize).max(1).min(10);
+        let rings_needed = ((radius_meters / cell_size_meters).ceil() as usize).clamp(1, 10);
 
-        let coord = geohash::Coord { x: center.x(), y: center.y() };
+        let coord = geohash::Coord {
+            x: center.x(),
+            y: center.y(),
+        };
         let center_hash = encode(coord, self.precision).unwrap_or_default();
 
         let mut cells = HashSet::new();

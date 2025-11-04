@@ -1,12 +1,12 @@
 //! 2D spatial operations for geographic queries.
 
+use crate::compute::spatial::{DistanceMetric, distance_between, point_in_polygon};
 use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use geo::Point;
-use crate::{distance_between, DistanceMetric};
-use crate::compute::spatial::point_in_polygon;
+use std::cmp::Ordering;
 
 impl DB {
     /// Insert a geographic point with automatic spatial indexing.
@@ -275,7 +275,7 @@ impl DB {
         max_lat: f64,
         max_lon: f64,
         limit: usize,
-    ) -> Result<Vec<(f64, f64, String, Bytes)>> {
+    ) -> Result<Vec<(Point, Bytes)>> {
         let results = self
             .inner
             .spatial_index
@@ -379,7 +379,11 @@ impl DB {
         metric: DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let results = self.inner.spatial_index.knn_2d_with_max_distance(
-            prefix, center.x(), center.y(), k * 2, Some(max_radius)
+            prefix,
+            center.x(),
+            center.y(),
+            k * 2,
+            Some(max_radius),
         );
 
         let mut candidates: Vec<_> = results

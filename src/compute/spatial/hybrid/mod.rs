@@ -113,10 +113,10 @@
 //!
 //! // Insert points
 //! let nyc = Point::new(-74.0060, 40.7128);
-//! index.insert_point("nyc", nyc, b"New York City");
+//! index.insert_point("nyc", nyc, &b"New York City"[..]);
 //!
 //! let sf = Point::new(-122.4194, 37.7749);
-//! index.insert_point("sf", sf, b"San Francisco");
+//! index.insert_point("sf", sf, &b"San Francisco"[..]);
 //!
 //! // Query within 1000m radius
 //! let results = index.query_within_radius(&nyc, 1000.0, 10);

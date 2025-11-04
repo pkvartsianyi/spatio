@@ -35,6 +35,8 @@ pub use config::{
     PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,
     TemporalBoundingBox3D, TemporalPoint, TemporalPoint3D, Trajectory, Trajectory3D,
 };
+
+pub use compute::spatial::DistanceMetric;
 #[cfg(feature = "time-index")]
 pub use config::{HistoryEntry, HistoryEventKind};
 

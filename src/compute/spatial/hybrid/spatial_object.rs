@@ -291,8 +291,12 @@ pub fn haversine_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
 ///
 /// 3D distance in meters.
 pub fn haversine_distance_3d(
-    lon1: f64, lat1: f64, alt1: f64,
-    lon2: f64, lat2: f64, alt2: f64
+    lon1: f64,
+    lat1: f64,
+    alt1: f64,
+    lon2: f64,
+    lat2: f64,
+    alt2: f64,
 ) -> f64 {
     let horizontal = haversine_distance(lon1, lat1, lon2, lat2);
     let vertical = (alt2 - alt1).abs();

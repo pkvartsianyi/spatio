@@ -4,5 +4,10 @@ pub use algorithms::{
     point_in_polygon,
 };
 
+pub mod queries;
+
 pub mod rtree;
-pub use rtree::rtree::SpatialIndexManager;
+pub use rtree::{BBoxQuery, CylinderQuery, SpatialIndexManager};
+
+pub mod hybrid;
+pub use hybrid::{GeohashRTreeIndex, ObjectType, SpatialObject};

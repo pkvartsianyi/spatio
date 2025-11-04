@@ -194,7 +194,7 @@ impl GeohashRTreeIndex {
         let mut results = Vec::new();
         let mut seen_keys = FxHashSet::default();
 
-        for (cell_hash, tree) in &self.cells {
+        for tree in self.cells.values() {
             for obj in tree.iter() {
                 if seen_keys.insert(&obj.key) && obj.intersects_bbox(bbox) {
                     results.push(QueryResult::new(
