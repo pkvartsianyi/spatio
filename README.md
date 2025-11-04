@@ -62,8 +62,6 @@ No SQL parser, no external dependencies, and requires no setup.
 ### Language Support
 - **Rust** — Native
 - **Python** — Provides bindings implemented via PyO3 (`pip install spatio`)
-- **C / C++** — Provides an extern "C" ABI for interoperability (see [C ABI](#c-abi))
-
 
 ### Compile-Time Feature Flags
 - `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="aof,geojson"`.
@@ -145,67 +143,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 ```
-
-### C ABI
-
-Note: The C ABI is experimental and is not actively developed.
-
-The crate ships with a C-compatible ABI for embedding. Build the shared
-library once:
-
-```bash
-cargo build --release --lib
-# target/release/libspatio.so    (Linux)
-# target/release/libspatio.dylib (macOS)
-# target/release/spatio.dll      (Windows)
-```
-
-Link the resulting library and declare the externs you need (or generate them
-with `bindgen`). Minimal usage example:
-
-```c
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
-typedef struct SpatioHandle SpatioHandle;
-typedef struct {
-    unsigned char *data;
-    size_t len;
-} SpatioBuffer;
-
-extern SpatioHandle *spatio_open(const char *path);
-extern void spatio_close(SpatioHandle *handle);
-extern int spatio_insert(SpatioHandle *handle, const char *key,
-                         const unsigned char *value, size_t value_len);
-extern int spatio_get(SpatioHandle *handle, const char *key, SpatioBuffer *out);
-extern void spatio_free_buffer(SpatioBuffer buffer);
-
-int main(void) {
-    SpatioHandle *db = spatio_open("example.aof");
-    if (!db) {
-        fprintf(stderr, "failed to open database\n");
-        return 1;
-    }
-
-    const char *key = "greeting";
-    const char *value = "hello";
-    spatio_insert(db, key, (const unsigned char *)value, strlen(value));
-
-    SpatioBuffer buf = {0};
-    if (spatio_get(db, key, &buf) == 0) {
-        printf("value = %.*s\n", (int)buf.len, buf.data);
-        spatio_free_buffer(buf);
-    }
-
-    spatio_close(db);
-    return 0;
-}
-```
-
-> **Safety note:**
-> Callers must pass valid, null-terminated strings and free any buffers produced by `spatio_get` using `spatio_free_buffer`.
-> Structured error reporting is under development; `spatio_last_error_message` currently returns `NULL`.
 
 For runnable demos and extended use-case walkthroughs, check
 `examples/README.md`.

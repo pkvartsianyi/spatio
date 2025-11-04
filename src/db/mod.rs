@@ -3,7 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::compute::spatial::SpatialIndexManager;
+use crate::compute::spatial::rtree::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 #[cfg(feature = "time-index")]
 use crate::config::{HistoryEntry, HistoryEventKind};

@@ -1,6 +1,5 @@
 //! 3D spatial operations for altitude-aware geographic queries.
 
-use super::{BBoxQuery, CylinderQuery};
 use crate::config::{BoundingBox3D, Point3d, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::Result;

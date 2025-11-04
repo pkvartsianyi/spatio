@@ -1,11 +1,12 @@
 //! 2D spatial operations for geographic queries.
 
-use super::{DistanceMetric, distance_between, point_in_polygon};
 use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use geo::Point;
+use crate::{distance_between, DistanceMetric};
+use crate::compute::spatial::point_in_polygon;
 
 impl DB {
     /// Insert a geographic point with automatic spatial indexing.

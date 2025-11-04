@@ -31,10 +31,6 @@ pub type Spatio = DB;
 
 pub use geo::{Point, Polygon, Rect};
 
-pub use compute::{
-    BBoxQuery, CylinderQuery, DistanceMetric, bounding_box, convex_hull, distance_between, knn,
-};
-
 pub use config::{
     BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
     PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,
@@ -61,8 +57,6 @@ pub mod prelude {
     pub use crate::SyncDB;
 
     pub use geo::{Point, Polygon, Rect};
-
-    pub use crate::compute::{DistanceMetric, bounding_box, distance_between, knn};
 
     pub use crate::{Config, SetOptions, SyncPolicy};
 

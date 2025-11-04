@@ -1,13 +1,13 @@
 //! Internal database operations and state management.
 
 use super::{DBInner, HistoryTracker};
-use crate::compute::spatial::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::error::{Result, SpatioError};
 use crate::storage::{AOFCommand, AOFFile};
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
+use crate::compute::spatial::SpatialIndexManager;
 
 impl DBInner {
     const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);

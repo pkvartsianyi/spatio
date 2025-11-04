@@ -12,8 +12,3 @@
 pub mod spatial;
 pub mod temporal;
 
-// Re-export commonly used spatial items
-pub use spatial::{
-    BBoxQuery, CylinderQuery, DistanceMetric, IndexedPoint3D, SpatialIndexManager, bounding_box,
-    convex_hull, distance_between, knn,
-};
