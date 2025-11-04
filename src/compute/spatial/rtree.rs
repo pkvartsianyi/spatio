@@ -1,10 +1,9 @@
 //! 3D spatial index using R-tree.
 
 use bytes::Bytes;
+use geo::{Distance, Haversine, HaversineMeasure, Point as GeoPoint};
 use rstar::{Point as RstarPoint, RTree};
 use rustc_hash::FxHashMap;
-
-const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 
 /// Query parameters for bounding box queries.
 #[derive(Debug, Clone, Copy)]
@@ -152,10 +151,11 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
-        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+        let lat_degrees = (radius / HaversineMeasure::GRS80_MEAN_RADIUS.radius()).to_degrees();
 
-        let lon_degrees =
-            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+        let lon_degrees = (radius
+            / (HaversineMeasure::GRS80_MEAN_RADIUS.radius() * center_y.to_radians().cos()))
+        .to_degrees();
 
         let min_x = center_x - lon_degrees;
         let max_x = center_x + lon_degrees;
@@ -271,11 +271,12 @@ impl SpatialIndexManager {
         };
 
         // Convert radius from meters to degrees for latitude
-        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+        let lat_degrees = (radius / HaversineMeasure::GRS80_MEAN_RADIUS.radius()).to_degrees();
 
         // Convert radius from meters to degrees for longitude
-        let lon_degrees =
-            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+        let lon_degrees = (radius
+            / (HaversineMeasure::GRS80_MEAN_RADIUS.radius() * center_y.to_radians().cos()))
+        .to_degrees();
 
         let min_x = center_x - lon_degrees;
         let max_x = center_x + lon_degrees;
@@ -305,10 +306,11 @@ impl SpatialIndexManager {
             return false;
         };
 
-        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+        let lat_degrees = (radius / HaversineMeasure::GRS80_MEAN_RADIUS.radius()).to_degrees();
 
-        let lon_degrees =
-            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+        let lon_degrees = (radius
+            / (HaversineMeasure::GRS80_MEAN_RADIUS.radius() * center_y.to_radians().cos()))
+        .to_degrees();
 
         let min_x = center_x - lon_degrees;
         let max_x = center_x + lon_degrees;
@@ -614,10 +616,12 @@ pub struct SpatialIndexStats {
 ///
 /// Distance in meters.
 #[inline]
-fn haversine_3d_distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) -> f64 {
-    let h_dist = haversine_2d_distance(x1, y1, x2, y2);
-    let z_diff = z2 - z1;
-    (h_dist * h_dist + z_diff * z_diff).sqrt()
+fn haversine_3d_distance(lon1: f64, lat1: f64, alt1: f64, lon2: f64, lat2: f64, alt2: f64) -> f64 {
+    let p1 = GeoPoint::new(lon1, lat1);
+    let p2 = GeoPoint::new(lon2, lat2);
+    let horizontal = Haversine.distance(p1, p2);
+    let vertical = (alt2 - alt1).abs();
+    (horizontal.powi(2) + vertical.powi(2)).sqrt()
 }
 
 /// Calculate 2D haversine distance between two points.
@@ -627,16 +631,9 @@ fn haversine_3d_distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) -
 /// Distance in meters.
 #[inline]
 fn haversine_2d_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
-    let lat1_rad = lat1.to_radians();
-    let lat2_rad = lat2.to_radians();
-    let delta_lat = (lat2 - lat1).to_radians();
-    let delta_lon = (lon2 - lon1).to_radians();
-
-    let a = (delta_lat / 2.0).sin().powi(2)
-        + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
-    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-    EARTH_RADIUS_METERS * c
+    let p1 = GeoPoint::new(lon1, lat1);
+    let p2 = GeoPoint::new(lon2, lat2);
+    Haversine.distance(p1, p2)
 }
 
 #[cfg(test)]

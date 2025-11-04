@@ -4,7 +4,7 @@
 //! in the hybrid index system.
 
 use bytes::Bytes;
-use geo::{Point, Polygon, Rect};
+use geo::{Distance, Haversine, Point, Polygon, Rect};
 use rstar::{AABB, RTreeObject};
 
 /// Type of spatial object stored in the index.
@@ -259,19 +259,9 @@ impl RTreeObject for SpatialObject {
 ///
 /// Distance in meters.
 pub fn haversine_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
-    const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
-
-    let lat1_rad = lat1.to_radians();
-    let lat2_rad = lat2.to_radians();
-    let delta_lat = (lat2 - lat1).to_radians();
-    let delta_lon = (lon2 - lon1).to_radians();
-
-    let a = (delta_lat / 2.0).sin().powi(2)
-        + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
-
-    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-    EARTH_RADIUS_METERS * c
+    let p1 = Point::new(lon1, lat1);
+    let p2 = Point::new(lon2, lat2);
+    Haversine.distance(p1, p2)
 }
 
 /// Calculate 3D Haversine distance with altitude component.
