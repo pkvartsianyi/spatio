@@ -37,14 +37,15 @@ uuid = { version = "1.0", features = ["v4"] }
 spatio-types = { version = "0.1.0", path = "./spatio-types" }
 
 [features]
-default = ["aof", "geojson", "time-index"]
+default = ["snapshot", "geojson", "time-index"]
 geojson = ["dep:geozero", "geozero/with-geojson"]
 aof = ["dep:bincode"]
+snapshot = ["dep:bincode"]
 toml = ["dep:toml"]
 time-index = []
 bench-prof = []
 sync = []
-full = ["geojson", "aof", "toml", "time-index", "sync"]
+full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -67,6 +68,14 @@ name = "trajectory_tracking"
 
 [[example]]
 name = "comprehensive_demo"
+
+[[example]]
+name = "persistence_lifecycle"
+required-features = ["aof"]
+
+[[test]]
+name = "aof_rewrite_test"
+required-features = ["aof"]
 
 [profile.release]
 lto = "thin"

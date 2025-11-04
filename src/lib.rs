@@ -69,6 +69,9 @@ pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 #[cfg(feature = "aof")]
 pub use storage::{AOFConfig, AOFFile};
 
+#[cfg(feature = "snapshot")]
+pub use storage::{SnapshotConfig, SnapshotFile};
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Common imports

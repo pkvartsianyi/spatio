@@ -4,6 +4,7 @@ use super::{DBInner, HistoryTracker};
 use crate::compute::spatial::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::error::{Result, SpatioError};
+#[cfg(feature = "aof")]
 use crate::storage::{AOFCommand, AOFFile};
 use bytes::Bytes;
 use std::collections::BTreeMap;
@@ -47,16 +48,31 @@ impl DBInner {
         Self {
             keys: BTreeMap::new(),
             spatial_index: SpatialIndexManager::new(),
+            #[cfg(feature = "aof")]
             aof_file: None,
+            #[cfg(feature = "snapshot")]
+            snapshot_file: None,
             closed: false,
             stats: DbStats::default(),
             config: config.clone(),
+            #[cfg(feature = "aof")]
             sync_ops_since_flush: 0,
             #[cfg(feature = "time-index")]
             created_index: BTreeMap::new(),
             #[cfg(feature = "time-index")]
             history: config.history_capacity.map(HistoryTracker::new),
         }
+    }
+
+    #[cfg(feature = "snapshot")]
+    pub fn load_from_snapshot(
+        &mut self,
+        snapshot_file: &crate::storage::SnapshotFile,
+    ) -> Result<()> {
+        let keys = snapshot_file.load()?;
+        self.keys = keys;
+        self.stats.key_count = self.keys.len();
+        Ok(())
     }
 
     #[cfg(feature = "time-index")]
@@ -134,6 +150,7 @@ impl DBInner {
         self.keys.get(key)
     }
 
+    #[cfg(feature = "aof")]
     pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
         for command in aof_file.replay()? {
             match command {
@@ -155,6 +172,7 @@ impl DBInner {
         Ok(())
     }
 
+    #[cfg(feature = "aof")]
     fn apply_set_from_aof(
         &mut self,
         key: Bytes,
@@ -185,6 +203,7 @@ impl DBInner {
         Ok(())
     }
 
+    #[cfg(feature = "aof")]
     fn apply_delete_from_aof(&mut self, key: Bytes) -> Result<()> {
         if let Some(item) = self.keys.remove(&key) {
             #[cfg(feature = "time-index")]
@@ -198,10 +217,29 @@ impl DBInner {
             }
         }
 
-        self.remove_from_spatial_index(&key);
         Ok(())
     }
 
+    #[cfg(feature = "snapshot")]
+    pub(super) fn maybe_auto_snapshot(&mut self) -> Result<()> {
+        if let Some(snapshot_file) = self.snapshot_file.as_mut() {
+            snapshot_file.record_operation();
+            if snapshot_file.should_snapshot() {
+                snapshot_file.save(&self.keys)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "snapshot")]
+    pub(super) fn save_snapshot(&mut self) -> Result<()> {
+        if let Some(snapshot_file) = self.snapshot_file.as_mut() {
+            snapshot_file.save(&self.keys)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "aof")]
     fn rebuild_spatial_index(&mut self, key: &Bytes, value: &Bytes) {
         if let Ok(key_str) = std::str::from_utf8(key) {
             let parts: Vec<&str> = key_str.split(':').collect();
@@ -263,19 +301,7 @@ impl DBInner {
         }
     }
 
-    fn remove_from_spatial_index(&mut self, key: &Bytes) {
-        if !key.contains(&b':') {
-            return;
-        }
-
-        if let Ok(key_str) = std::str::from_utf8(key)
-            && let Some(colon_pos) = key_str.find(':')
-        {
-            let prefix = &key_str[..colon_pos];
-            let _ = self.spatial_index.remove_entry(prefix, key_str);
-        }
-    }
-
+    #[cfg(feature = "aof")]
     pub fn write_to_aof_if_needed(
         &mut self,
         key: &Bytes,
@@ -297,6 +323,18 @@ impl DBInner {
         Ok(())
     }
 
+    #[cfg(not(feature = "aof"))]
+    pub fn write_to_aof_if_needed(
+        &mut self,
+        _key: &Bytes,
+        _value: &[u8],
+        _options: Option<&SetOptions>,
+        _created_at: SystemTime,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "aof")]
     pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
         let Some(aof_file) = self.aof_file.as_mut() else {
             return Ok(());
@@ -311,6 +349,12 @@ impl DBInner {
         Ok(())
     }
 
+    #[cfg(not(feature = "aof"))]
+    pub fn write_delete_to_aof_if_needed(&mut self, _key: &Bytes) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "aof")]
     pub fn write_batch_to_aof(
         &mut self,
         operations: &[(Bytes, Bytes, Option<SetOptions>, SystemTime, bool)], // (key, value, opts, created_at, is_delete)
@@ -337,6 +381,15 @@ impl DBInner {
         Ok(())
     }
 
+    #[cfg(not(feature = "aof"))]
+    pub fn write_batch_to_aof(
+        &mut self,
+        _operations: &[(Bytes, Bytes, Option<SetOptions>, SystemTime, bool)],
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(feature = "aof")]
     fn maybe_flush_or_sync(
         &mut self,
         policy: crate::config::SyncPolicy,

@@ -233,7 +233,10 @@ impl fmt::Display for Namespace {
 
 impl Default for Namespace {
     fn default() -> Self {
-        Self::new("default").unwrap()
+        Self {
+            name: NamespaceName("default".to_string()),
+            separator: Self::DEFAULT_SEPARATOR.to_string(),
+        }
     }
 }
 

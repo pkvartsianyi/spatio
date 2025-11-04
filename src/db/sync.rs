@@ -394,6 +394,12 @@ impl SyncDB {
         self.inner.write().sync()
     }
 
+    /// Manually trigger a snapshot write (if snapshot persistence is enabled).
+    #[cfg(feature = "snapshot")]
+    pub fn snapshot(&self) -> Result<()> {
+        self.inner.write().snapshot()
+    }
+
     /// Closes the database.
     pub fn close(&self) -> Result<()> {
         self.inner.write().close()

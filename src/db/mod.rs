@@ -10,6 +10,8 @@ use crate::config::{HistoryEntry, HistoryEventKind};
 use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
 use crate::storage::AOFFile;
+#[cfg(feature = "snapshot")]
+use crate::storage::SnapshotFile;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
@@ -52,7 +54,11 @@ pub(crate) struct DBInner {
     /// Spatial index manager for 2D and 3D spatial operations (R-tree based)
     pub spatial_index: SpatialIndexManager,
     /// Append-only file for persistence
+    #[cfg(feature = "aof")]
     pub aof_file: Option<AOFFile>,
+    #[cfg(feature = "snapshot")]
+    /// Snapshot file for persistence
+    pub snapshot_file: Option<SnapshotFile>,
     #[cfg(feature = "time-index")]
     /// Optional per-key history tracker
     pub history: Option<HistoryTracker>,
@@ -61,29 +67,41 @@ pub(crate) struct DBInner {
     /// Database statistics
     pub stats: DbStats,
     /// Configuration
+    #[allow(dead_code)]
     pub config: Config,
     /// Number of writes since last forced sync (SyncPolicy::Always only)
+    #[cfg(feature = "aof")]
     sync_ops_since_flush: usize,
 }
 
 impl DB {
     /// Open or create a database at the given path. Use ":memory:" for in-memory storage.
-    /// Existing AOF files are automatically replayed on startup.
+    /// Existing persistence files are automatically loaded on startup.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, Config::default())
     }
 
     /// Open or create a database with custom configuration.
-    pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
+    pub fn open_with_config<P: AsRef<Path>>(
+        #[cfg_attr(not(feature = "aof"), allow(unused_variables))] path: P,
+        config: Config,
+    ) -> Result<Self> {
+        #[cfg(feature = "aof")]
         let path = path.as_ref();
-        let is_memory = path.to_str() == Some(":memory:");
 
+        #[cfg(feature = "aof")]
         let mut inner = DBInner::new_with_config(&config);
+        #[cfg(not(feature = "aof"))]
+        let inner = DBInner::new_with_config(&config);
 
-        if !is_memory {
-            let mut aof_file = AOFFile::open(path)?;
-            inner.load_from_aof(&mut aof_file)?;
-            inner.aof_file = Some(aof_file);
+        #[cfg(feature = "aof")]
+        {
+            let is_memory = path.to_str() == Some(":memory:");
+            if !is_memory {
+                let mut aof_file = AOFFile::open(path)?;
+                inner.load_from_aof(&mut aof_file)?;
+                inner.aof_file = Some(aof_file);
+            }
         }
 
         Ok(DB {
@@ -140,6 +158,10 @@ impl DB {
         let old = self.inner.insert_item(key_bytes.clone(), item);
         self.inner
             .write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
+
+        #[cfg(feature = "snapshot")]
+        self.inner.maybe_auto_snapshot()?;
+
         Ok(old.map(|item| item.value))
     }
 
@@ -177,6 +199,10 @@ impl DB {
 
         if let Some(item) = self.inner.remove_item(&key_bytes) {
             self.inner.write_delete_to_aof_if_needed(&key_bytes)?;
+
+            #[cfg(feature = "snapshot")]
+            self.inner.maybe_auto_snapshot()?;
+
             Ok(Some(item.value))
         } else {
             Ok(None)
@@ -196,12 +222,25 @@ impl DB {
 
     /// Force fsync of all pending writes to disk.
     pub fn sync(&mut self) -> Result<()> {
-        let sync_mode = self.inner.config.sync_mode;
-        if let Some(ref mut aof_file) = self.inner.aof_file {
-            aof_file.sync_with_mode(sync_mode)?;
-            self.inner.sync_ops_since_flush = 0;
+        #[cfg(feature = "aof")]
+        {
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file {
+                aof_file.sync_with_mode(sync_mode)?;
+                self.inner.sync_ops_since_flush = 0;
+            }
         }
         Ok(())
+    }
+
+    /// Manually trigger a snapshot write.
+    /// Writes the current database state to the snapshot file.
+    #[cfg(feature = "snapshot")]
+    pub fn snapshot(&mut self) -> Result<()> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.inner.save_snapshot()
     }
 
     /// Close the database and sync all pending writes.
@@ -212,11 +251,21 @@ impl DB {
         }
 
         self.inner.closed = true;
-        let sync_mode = self.inner.config.sync_mode;
-        if let Some(ref mut aof_file) = self.inner.aof_file {
-            aof_file.sync_with_mode(sync_mode)?;
-            self.inner.sync_ops_since_flush = 0;
+
+        #[cfg(feature = "aof")]
+        {
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file {
+                aof_file.sync_with_mode(sync_mode)?;
+                self.inner.sync_ops_since_flush = 0;
+            }
         }
+
+        #[cfg(feature = "snapshot")]
+        if let Some(ref mut snapshot_file) = self.inner.snapshot_file {
+            snapshot_file.save(&self.inner.keys)?;
+        }
+
         Ok(())
     }
 }
@@ -285,11 +334,19 @@ impl Drop for DB {
             return;
         }
 
-        let sync_mode = self.inner.config.sync_mode;
-        if let Some(ref mut aof_file) = self.inner.aof_file
-            && aof_file.sync_with_mode(sync_mode).is_ok()
+        #[cfg(feature = "aof")]
         {
-            self.inner.sync_ops_since_flush = 0;
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file
+                && aof_file.sync_with_mode(sync_mode).is_ok()
+            {
+                self.inner.sync_ops_since_flush = 0;
+            }
+        }
+
+        #[cfg(feature = "snapshot")]
+        if let Some(ref mut snapshot_file) = self.inner.snapshot_file {
+            let _ = snapshot_file.save(&self.inner.keys);
         }
     }
 }
@@ -305,6 +362,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    #[cfg(feature = "aof")]
     fn test_drop_syncs_to_disk() {
         use std::fs;
         let temp_path = std::env::temp_dir().join("test_drop_sync.aof");

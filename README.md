@@ -41,8 +41,8 @@ No SQL parser, no external dependencies, and requires no setup.
 
 ### Performance Scope
 - **Spatio-temporal queries** — Use a geohash + R-tree hybrid to balance lookup precision and performance for moderate datasets
-- **Configurable persistence** — Append-Only File (AOF) with sync policies
-- **Startup and Shutdown** — AOF logs are replayed automatically on startup
+- **Configurable persistence** — Snapshot-based (default) or AOF with sync policies
+- **Startup and Shutdown** — Persistence files are loaded automatically on startup
 
 ### Spatio-Temporal Indexing and Querying
 - **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
@@ -64,7 +64,9 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Python** — Provides bindings implemented via PyO3 (`pip install spatio`)
 
 ### Compile-Time Feature Flags
-- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="aof,geojson"`.
+- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="snapshot,geojson"`.
+- `snapshot` *(default)* — enables snapshot-based persistence (point-in-time saves)
+- `aof` — enables append-only file persistence (write-ahead log style)
 
 ### Sync Strategy Configuration
 - `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
@@ -299,6 +301,39 @@ db.atomic(|batch| {
     batch.delete("old_key")?;
     Ok(())
 })?;
+
+### Persistence Modes
+
+Spatio supports two persistence strategies:
+
+**Snapshot (default)**: Point-in-time saves, fast recovery, predictable overhead
+```rust
+use spatio::{DBBuilder, Config};
+
+// Manual snapshot
+let mut db = DBBuilder::new()
+    .snapshot_path("data.snapshot")
+    .build()?;
+db.insert("key", b"value", None)?;
+db.snapshot()?; // Explicit save
+
+// Auto-snapshot every N operations
+let config = Config::default().with_snapshot_auto_ops(1000);
+let mut db = DBBuilder::new()
+    .snapshot_path("data.snapshot")
+    .config(config)
+    .build()?;
+// Automatically snapshots every 1000 operations
+```
+
+**AOF (optional)**: Append-only log, durable per-write, replay on startup
+```rust
+use spatio::DBBuilder;
+
+let mut db = DBBuilder::new()
+    .aof_path("data.aof")
+    .build()?;
+// Requires `aof` feature: cargo add spatio --features aof
 ```
 
 ### Time-to-Live (TTL)
@@ -321,7 +356,7 @@ let removed = db.cleanup_expired()?;
 
 Spatio is organized in layered modules:
 
-- **Storage** – Pluggable backends (in-memory by default, AOF for durability) with a common trait surface.
+- **Storage** – Pluggable backends (in-memory by default, snapshot or AOF for durability) with a common trait surface.
 - **Indexing** – Geohash-based point index with configurable precision and smart fallback during searches.
 - **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
 - **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.

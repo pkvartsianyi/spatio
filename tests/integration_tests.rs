@@ -165,6 +165,7 @@ fn test_geohash_generation() {
 }
 
 #[test]
+#[cfg(feature = "aof")]
 fn test_persistence() {
     let temp_file = NamedTempFile::new().unwrap();
     let db_path = temp_file.path();
@@ -455,6 +456,7 @@ fn test_geohash_precision_configuration() {
 }
 
 #[test]
+#[cfg(feature = "aof")]
 fn test_coordinate_order_roundtrip() {
     // This test verifies that lat/lon coordinates are preserved correctly
     // through storage, AOF persistence, and replay.

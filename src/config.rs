@@ -63,6 +63,10 @@ pub struct Config {
     #[cfg(feature = "time-index")]
     #[serde(default)]
     pub history_capacity: Option<usize>,
+
+    #[cfg(feature = "snapshot")]
+    #[serde(default)]
+    pub snapshot_auto_ops: Option<usize>,
 }
 
 impl Config {
@@ -82,6 +86,12 @@ impl Config {
         IndexType::RTree
     }
 
+    #[cfg(feature = "snapshot")]
+    pub fn with_snapshot_auto_ops(mut self, ops: usize) -> Self {
+        self.snapshot_auto_ops = Some(ops);
+        self
+    }
+
     pub fn with_geohash_precision(precision: usize) -> Self {
         assert!(
             (1..=12).contains(&precision),
@@ -97,6 +107,8 @@ impl Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
+            #[cfg(feature = "snapshot")]
+            snapshot_auto_ops: None,
         }
     }
 
@@ -207,17 +219,18 @@ impl Default for Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
+            #[cfg(feature = "snapshot")]
+            snapshot_auto_ops: None,
         }
     }
 }
 
-/// Options for setting values with optional TTL
-#[derive(Debug, Clone, Default)]
 /// Options for setting values with TTL.
 ///
 /// TTL is **lazy/passive**: expired items are filtered on read operations
 /// (`get()`, spatial queries) but remain in storage until manually cleaned up
 /// with `cleanup_expired()` or overwritten.
+#[derive(Debug, Clone, Default)]
 pub struct SetOptions {
     /// Time-to-live for this item
     pub ttl: Option<Duration>,
