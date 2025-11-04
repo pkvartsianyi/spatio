@@ -46,7 +46,6 @@ impl DBInner {
     pub(crate) fn new_with_config(config: &Config) -> Self {
         Self {
             keys: BTreeMap::new(),
-            expirations: BTreeMap::new(),
             spatial_index: SpatialIndexManager::new(),
             aof_file: None,
             closed: false,
@@ -57,34 +56,6 @@ impl DBInner {
             created_index: BTreeMap::new(),
             #[cfg(feature = "time-index")]
             history: config.history_capacity.map(HistoryTracker::new),
-        }
-    }
-
-    pub(super) fn add_expiration(&mut self, key: &Bytes, expires_at: Option<SystemTime>) {
-        if let Some(exp) = expires_at {
-            let keys_at_time = self.expirations.entry(exp).or_default();
-            keys_at_time.push(key.clone());
-
-            const EXPIRATION_VEC_WARN_THRESHOLD: usize = 10_000;
-            if keys_at_time.len() == EXPIRATION_VEC_WARN_THRESHOLD {
-                log::warn!(
-                    "Large expiration cluster detected: {} keys expire at {:?}. \
-                     Consider spreading TTL values to avoid cleanup spikes.",
-                    keys_at_time.len(),
-                    exp
-                );
-            }
-        }
-    }
-
-    pub(super) fn remove_expiration_entry(&mut self, key: &Bytes, item: &DbItem) {
-        if let Some(exp) = item.expires_at
-            && let Some(keys) = self.expirations.get_mut(&exp)
-        {
-            keys.retain(|k| k != key);
-            if keys.is_empty() {
-                self.expirations.remove(&exp);
-            }
         }
     }
 
@@ -107,20 +78,19 @@ impl DBInner {
     }
 
     pub fn insert_item(&mut self, key: Bytes, item: DbItem) -> Option<DbItem> {
-        let expires_at = item.expires_at;
         #[cfg(feature = "time-index")]
         let created_at = item.created_at;
+        #[cfg(feature = "time-index")]
+        let expires_at = item.expires_at;
         #[cfg(feature = "time-index")]
         let history_value = self.history.as_ref().map(|_| item.value.clone());
 
         let old_item = self.keys.insert(key.clone(), item);
         if let Some(ref old) = old_item {
-            self.remove_expiration_entry(&key, old);
             #[cfg(feature = "time-index")]
             self.remove_created_index(&key, old);
         }
 
-        self.add_expiration(&key, expires_at);
         #[cfg(feature = "time-index")]
         self.add_created_index(&key, created_at);
 
@@ -139,7 +109,6 @@ impl DBInner {
         if let Some(item) = self.keys.remove(key) {
             #[cfg(feature = "time-index")]
             let history_value = self.history.as_ref().map(|_| item.value.clone());
-            self.remove_expiration_entry(key, &item);
             #[cfg(feature = "time-index")]
             self.remove_created_index(key, &item);
 
@@ -159,44 +128,6 @@ impl DBInner {
         } else {
             None
         }
-    }
-
-    pub(super) fn amortized_cleanup(&mut self, max_items: usize) -> Result<usize> {
-        if max_items == 0 {
-            return Ok(0);
-        }
-
-        let now = SystemTime::now();
-        let mut removed = 0;
-        let timestamps_to_check: Vec<SystemTime> =
-            self.expirations.range(..=now).map(|(ts, _)| *ts).collect();
-
-        for ts in timestamps_to_check {
-            if removed >= max_items {
-                break;
-            }
-
-            let Some(mut keys) = self.expirations.remove(&ts) else {
-                continue;
-            };
-
-            let to_process = (max_items - removed).min(keys.len());
-
-            for _ in 0..to_process {
-                if let Some(key) = keys.pop()
-                    && self.remove_item(&key).is_some()
-                {
-                    self.write_delete_to_aof_if_needed(&key)?;
-                    removed += 1;
-                }
-            }
-
-            if !keys.is_empty() {
-                self.expirations.insert(ts, keys);
-            }
-        }
-
-        Ok(removed)
     }
 
     pub fn get_item(&self, key: &Bytes) -> Option<&DbItem> {
@@ -238,12 +169,10 @@ impl DBInner {
         };
 
         if let Some(old) = self.keys.insert(key.clone(), item) {
-            self.remove_expiration_entry(&key, &old);
             #[cfg(feature = "time-index")]
             self.remove_created_index(&key, &old);
         }
 
-        self.add_expiration(&key, expires_at);
         #[cfg(feature = "time-index")]
         self.add_created_index(&key, created_at);
 
@@ -260,7 +189,6 @@ impl DBInner {
         if let Some(item) = self.keys.remove(&key) {
             #[cfg(feature = "time-index")]
             let deleted_value = item.value.clone();
-            self.remove_expiration_entry(&key, &item);
             #[cfg(feature = "time-index")]
             self.remove_created_index(&key, &item);
 

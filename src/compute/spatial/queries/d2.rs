@@ -74,6 +74,122 @@ impl DB {
         Ok(())
     }
 
+    /// Insert or update a geographic point with automatic spatial indexing.
+    ///
+    /// Unlike `insert_point` which creates a new entry each time, `upsert_point`
+    /// uses a deterministic key based on the object_id, allowing updates to
+    /// replace previous positions. This is ideal for real-time tracking where
+    /// you only need the current position of each object.
+    ///
+    /// # Use Cases
+    ///
+    /// - Real-time vehicle/drone tracking (current position only)
+    /// - IoT sensor networks (latest reading)
+    /// - User location services (where is user now)
+    ///
+    /// # Memory Impact
+    ///
+    /// With `upsert_point`, each object_id has exactly ONE entry in memory:
+    /// - 10,000 drones = 10,000 points = ~4 MB
+    ///
+    /// With `insert_point`, each update creates a NEW entry:
+    /// - 10,000 drones × 100 updates = 1,000,000 points = ~400 MB
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace for the point (e.g., "drones", "vehicles")
+    /// * `object_id` - Stable identifier for the tracked object
+    /// * `point` - Current geographic coordinates
+    /// * `value` - Associated data to store
+    /// * `opts` - Optional settings like TTL
+    ///
+    /// # Returns
+    ///
+    /// Returns the previous position data if the object existed, None otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut db = Spatio::memory()?;
+    ///
+    /// // Update drone position (replaces old position)
+    /// let drone_pos = Point::new(-74.0060, 40.7128);
+    /// db.upsert_point("drones", "drone_123", &drone_pos, b"active", None)?;
+    ///
+    /// // Later update - overwrites previous position
+    /// let new_pos = Point::new(-74.0070, 40.7138);
+    /// let old_data = db.upsert_point("drones", "drone_123", &new_pos, b"active", None)?;
+    /// assert!(old_data.is_some()); // Returns previous data
+    ///
+    /// // Query still works with current positions
+    /// let nearby = db.query_within_radius("drones", &drone_pos, 1000.0, 10)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// - First insert: Same as insert_point
+    /// - Updates: Removes old spatial entry, inserts new one
+    /// - Spatial queries: Same performance as insert_point
+    pub fn upsert_point(
+        &mut self,
+        prefix: &str,
+        object_id: &str,
+        point: &Point,
+        value: &[u8],
+        opts: Option<SetOptions>,
+    ) -> Result<Option<Bytes>> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let data_ref = Bytes::copy_from_slice(value);
+
+        let item = match opts {
+            Some(SetOptions { ttl: Some(ttl), .. }) => {
+                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
+            }
+            Some(SetOptions {
+                expires_at: Some(expires_at),
+                ..
+            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
+            _ => crate::config::DbItem::new(data_ref.clone()),
+        };
+        let created_at = item.created_at;
+
+        DBInner::validate_timestamp(created_at)?;
+
+        // Use deterministic key: prefix:obj:object_id
+        let key = format!("{}:obj:{}", prefix, object_id);
+        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
+        // Remove old spatial index entry if exists
+        if self.inner.keys.contains_key(&key_bytes) {
+            let _ = self.inner.spatial_index.remove_entry(prefix, &key);
+        }
+
+        // Insert/update main storage
+        let old_value = self.inner.insert_item(key_bytes.clone(), item);
+
+        // Insert into spatial index
+        self.inner.spatial_index.insert_point_2d(
+            prefix,
+            point.x(),
+            point.y(),
+            key.clone(),
+            data_ref.clone(),
+        );
+
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
+
+        Ok(old_value.map(|item| item.value))
+    }
+
     /// Find nearby points within a radius.
     ///
     /// Uses spatial indexing for efficient queries. Results are ordered

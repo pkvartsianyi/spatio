@@ -46,8 +46,6 @@ pub struct DB {
 pub(crate) struct DBInner {
     /// Main key-value storage (B-tree for ordered access)
     pub keys: BTreeMap<Bytes, DbItem>,
-    /// Items ordered by expiration time
-    pub expirations: BTreeMap<SystemTime, Vec<Bytes>>,
     #[cfg(feature = "time-index")]
     /// Items indexed by creation time for time-range queries
     pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
@@ -126,11 +124,6 @@ impl DB {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let cleanup_batch = self.inner.config.amortized_cleanup_batch;
-        if cleanup_batch > 0 {
-            let _ = self.inner.amortized_cleanup(cleanup_batch)?;
-        }
-
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
         let value_bytes = Bytes::copy_from_slice(value.as_ref());
 
@@ -151,6 +144,10 @@ impl DB {
     }
 
     /// Get a value by key.
+    ///
+    /// Returns `None` if the key doesn't exist or has expired.
+    /// **Note**: Expired items are not physically deleted here (get() is immutable).
+    /// They remain in storage until overwritten or manually cleaned with `cleanup_expired()`.
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         if self.inner.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -158,9 +155,12 @@ impl DB {
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = self.inner.get_item(&key_bytes)
-            && !item.is_expired()
-        {
+        if let Some(item) = self.inner.get_item(&key_bytes) {
+            if item.is_expired() {
+                // Lazy expiration: treat as non-existent without physically deleting
+                // (get() is immutable, cannot modify storage)
+                return Ok(None);
+            }
             return Ok(Some(item.value.clone()));
         }
 

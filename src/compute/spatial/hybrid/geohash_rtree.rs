@@ -11,31 +11,20 @@ use rstar::RTree;
 use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 
-/// Statistics for a single geohash cell.
 #[derive(Debug, Clone)]
 pub struct CellStats {
-    /// The geohash string for this cell
     pub geohash: String,
-    /// Number of objects in this cell's R-tree
     pub object_count: usize,
-    /// Memory estimate for this cell's R-tree in bytes
     pub estimated_memory: usize,
 }
 
-/// Overall statistics for the geohash-rtree index.
 #[derive(Debug, Clone)]
 pub struct GeohashStats {
-    /// Total number of geohash cells
     pub cell_count: usize,
-    /// Total number of objects across all cells (may include duplicates)
     pub total_objects: usize,
-    /// Number of unique objects (deduplicated count)
     pub unique_objects: usize,
-    /// Average objects per cell
     pub avg_objects_per_cell: f64,
-    /// Geohash precision level
     pub precision: usize,
-    /// Per-cell statistics
     pub cells: Vec<CellStats>,
 }
 
@@ -88,8 +77,6 @@ pub struct GeohashRTreeIndex {
     /// Map of geohash -> R-tree for that cell
     pub(crate) cells: FxHashMap<String, RTree<SpatialObject>>,
 
-    /// Reverse index: object key -> set of geohash cells it belongs to
-    /// This enables efficient deletion and prevents duplicates
     object_to_cells: FxHashMap<String, HashSet<String>>,
 
     /// Geohash precision (1-12)
@@ -137,17 +124,14 @@ impl GeohashRTreeIndex {
         }
     }
 
-    /// Get the geohash precision used by this index.
     pub fn precision(&self) -> usize {
         self.precision
     }
 
-    /// Get the number of geohash cells in use.
     pub fn cell_count(&self) -> usize {
         self.cells.len()
     }
 
-    /// Get the total number of unique objects in the index.
     pub fn object_count(&self) -> usize {
         self.object_to_cells.len()
     }
@@ -180,20 +164,14 @@ impl GeohashRTreeIndex {
         let key = key.into();
         let data = data.into();
 
-        // Calculate geohash for this point
         let coord = geohash::Coord {
             x: point.x(),
             y: point.y(),
         };
-        let hash = encode(coord, self.precision).unwrap_or_else(|_| {
-            // Fallback for invalid coordinates
-            "invalid".to_string()
-        });
+        let hash = encode(coord, self.precision).unwrap_or_else(|_| "invalid".to_string());
 
-        // Create spatial object
         let obj = SpatialObject::from_point(key.clone(), point, data);
 
-        // Insert into the appropriate cell
         self.insert_object_into_cell(key, obj, hash);
     }
 
@@ -217,14 +195,11 @@ impl GeohashRTreeIndex {
         let key = key.into();
         let data = data.into();
 
-        // Calculate geohash (only uses x, y)
         let coord = geohash::Coord { x, y };
         let hash = encode(coord, self.precision).unwrap_or_else(|_| "invalid".to_string());
 
-        // Create 3D spatial object
         let obj = SpatialObject::from_point_3d(key.clone(), x, y, z, data);
 
-        // Insert into the appropriate cell
         self.insert_object_into_cell(key, obj, hash);
     }
 
@@ -247,19 +222,15 @@ impl GeohashRTreeIndex {
         let key = key.into();
         let data = data.into();
 
-        // Get bounding box of polygon
         use geo::BoundingRect;
         let Some(bbox) = polygon.bounding_rect() else {
             return; // Empty polygon
         };
 
-        // Create spatial object
         let obj = SpatialObject::from_polygon(key.clone(), polygon, data);
 
-        // Get all geohash cells that intersect the bounding box
         let cells = self.get_cells_for_bbox(&bbox);
 
-        // Insert into all intersecting cells
         self.insert_object_into_cells(key, obj, cells);
     }
 
@@ -279,13 +250,10 @@ impl GeohashRTreeIndex {
         let key = key.into();
         let data = data.into();
 
-        // Create spatial object
         let obj = SpatialObject::from_bbox(key.clone(), bbox, data);
 
-        // Get all geohash cells that intersect the bounding box
         let cells = self.get_cells_for_bbox(bbox);
 
-        // Insert into all intersecting cells
         self.insert_object_into_cells(key, obj, cells);
     }
 
@@ -314,15 +282,12 @@ impl GeohashRTreeIndex {
     /// assert!(!index.remove("sf")); // Already removed
     /// ```
     pub fn remove(&mut self, key: &str) -> bool {
-        // Get all cells this object is in
         let Some(cell_hashes) = self.object_to_cells.remove(key) else {
             return false;
         };
 
-        // Remove from each cell's R-tree
         for hash in cell_hashes {
             if let Some(tree) = self.cells.get_mut(&hash) {
-                // Remove objects with matching key
                 let new_tree = RTree::bulk_load(
                     tree.iter()
                         .filter(|obj| obj.key != key)
@@ -330,10 +295,8 @@ impl GeohashRTreeIndex {
                         .collect::<Vec<_>>(),
                 );
 
-                // Replace the tree
                 *tree = new_tree;
 
-                // Clean up empty cells to save memory
                 if tree.size() == 0 {
                     self.cells.remove(&hash);
                 }

@@ -63,9 +63,6 @@ pub struct Config {
     #[cfg(feature = "time-index")]
     #[serde(default)]
     pub history_capacity: Option<usize>,
-
-    #[serde(default = "Config::default_amortized_cleanup_batch_size")]
-    pub amortized_cleanup_batch: usize,
 }
 
 impl Config {
@@ -85,15 +82,6 @@ impl Config {
         IndexType::RTree
     }
 
-    const fn default_amortized_cleanup_batch_size() -> usize {
-        0
-    }
-
-    pub fn with_amortized_cleanup(mut self, batch_size: usize) -> Self {
-        self.amortized_cleanup_batch = batch_size;
-        self
-    }
-
     pub fn with_geohash_precision(precision: usize) -> Self {
         assert!(
             (1..=12).contains(&precision),
@@ -109,7 +97,6 @@ impl Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
-            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
         }
     }
 
@@ -220,13 +207,17 @@ impl Default for Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
-            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
         }
     }
 }
 
 /// Options for setting values with optional TTL
 #[derive(Debug, Clone, Default)]
+/// Options for setting values with TTL.
+///
+/// TTL is **lazy/passive**: expired items are filtered on read operations
+/// (`get()`, spatial queries) but remain in storage until manually cleaned up
+/// with `cleanup_expired()` or overwritten.
 pub struct SetOptions {
     /// Time-to-live for this item
     pub ttl: Option<Duration>,
@@ -258,13 +249,16 @@ impl SetOptions {
     }
 }
 
-/// Internal representation of a database item
+/// Internal representation of a database item.
+///
+/// Note: Items with expired `expires_at` are not automatically deleted.
+/// They are filtered out during reads and can be removed with `cleanup_expired()`.
 #[derive(Debug, Clone)]
 pub struct DbItem {
     /// The value bytes
     pub value: Bytes,
     pub created_at: SystemTime,
-    /// Expiration time (if any)
+    /// Expiration time (if any). Item is considered expired when SystemTime::now() >= expires_at.
     pub expires_at: Option<SystemTime>,
 }
 
@@ -326,7 +320,9 @@ impl DbItem {
         }
     }
 
-    /// Check if this item has expired
+    /// Check if this item has expired.
+    ///
+    /// Note: This only checks the expiration time; it does not delete the item.
     pub fn is_expired(&self) -> bool {
         self.is_expired_at(SystemTime::now())
     }

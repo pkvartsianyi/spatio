@@ -11,24 +11,29 @@ use crate::config::HistoryEntry;
 
 impl DB {
     /// Remove all expired keys and compact indexes.
+    /// This is a manual cleanup operation that scans all keys.
     pub fn cleanup_expired(&mut self) -> Result<usize> {
         let now = SystemTime::now();
-        let expired_times: Vec<SystemTime> = self
+
+        // Collect all expired keys
+        let expired_keys: Vec<Bytes> = self
             .inner
-            .expirations
-            .range(..=now)
-            .map(|(&ts, _)| ts)
+            .keys
+            .iter()
+            .filter_map(|(key, item)| {
+                if item.is_expired_at(now) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let mut removed = 0;
-        for ts in expired_times {
-            if let Some(keys) = self.inner.expirations.remove(&ts) {
-                for key in keys {
-                    if let Some(_item) = self.inner.remove_item(&key) {
-                        self.inner.write_delete_to_aof_if_needed(&key)?;
-                        removed += 1;
-                    }
-                }
+        for key in expired_keys {
+            if self.inner.remove_item(&key).is_some() {
+                self.inner.write_delete_to_aof_if_needed(&key)?;
+                removed += 1;
             }
         }
 

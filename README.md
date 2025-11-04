@@ -54,7 +54,7 @@ No SQL parser, no external dependencies, and requires no setup.
 
 ### Data Management
 - **Namespaces** — Isolate data logically within the same instance
-- **TTL Support** — Automatically removes expired data
+- **TTL Support** — Lazy expiration on read with manual cleanup
 - **Temporal Queries** — Filter keys by recent activity with optional history tracking
 - **Atomic Batches** — Supports grouped write operations with atomic semantics
 - **Custom Configs** — JSON/TOML serializable configuration
@@ -277,12 +277,6 @@ RUST_LOG=warn cargo run
 RUST_LOG=spatio=debug cargo run
 ```
 
-Spatio logs important events such as:
-- Database lock errors (poisoned locks)
-- AOF replay warnings (invalid coordinates, corrupted entries)
-- Performance warnings (large expiration clusters)
-- Spatial index warnings (invalid query parameters)
-
 ### Trajectory Tracking
 ```rust
 // Store movement over time
@@ -308,10 +302,19 @@ db.atomic(|batch| {
 ```
 
 ### Time-to-Live (TTL)
+
+TTL support is **passive/lazy** - expired items are filtered on read and can be manually cleaned up:
+
 ```rust
 // Data expires in 1 hour
 let opts = SetOptions::with_ttl(Duration::from_secs(3600));
 db.insert("temp_key", b"temp_value", Some(opts))?;
+
+// Expired items return None on get()
+let value = db.get("temp_key")?; // None if expired
+
+// Manual cleanup: removes all expired keys and writes deletions to AOF
+let removed = db.cleanup_expired()?;
 ```
 
 ## Architecture Overview
@@ -320,7 +323,7 @@ Spatio is organized in layered modules:
 
 - **Storage** – Pluggable backends (in-memory by default, AOF for durability) with a common trait surface.
 - **Indexing** – Geohash-based point index with configurable precision and smart fallback during searches.
-- **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared index and TTL cleanup workers.
+- **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
 - **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.
 
 See the [docs site](https://pkvartsianyi.github.io/spatio/) for deeper architectural notes.

@@ -68,10 +68,6 @@ name = "trajectory_tracking"
 [[example]]
 name = "comprehensive_demo"
 
-[[example]]
-name = "sync_wrapper"
-required-features = ["sync"]
-
 [profile.release]
 lto = "thin"
 codegen-units = 1
