@@ -37,10 +37,9 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Self-contained** — Runs without external services or dependencies
 - **Minimal API surface** — Open, insert, and query
 - **Low memory footprint** — Suitable for IoT, edge, and embedded environments
-- **Single-Writer Thread Safety** — Uses a shared Arc<RwLock> (without lock upgrades) to allow concurrent readers and a single writer
+- **Single-Writer Thread Safety** — Uses a shared RwLock (without lock upgrades) to allow concurrent readers and a single writer
 
 ### Performance Scope
-- **Concurrent read access** — Multiple readers operate without blocking; writes are serialized under a global lock
 - **Spatio-temporal queries** — Use a geohash + R-tree hybrid to balance lookup precision and performance for moderate datasets
 - **Configurable persistence** — Append-Only File (AOF) with sync policies
 - **Startup and Shutdown** — AOF logs are replayed automatically on startup
@@ -57,7 +56,7 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Namespaces** — Isolate data logically within the same instance
 - **TTL Support** — Automatically removes expired data
 - **Temporal Queries** — Filter keys by recent activity with optional history tracking
-- **Atomic Batches** — Supports grouped write operations with atomic semantics.
+- **Atomic Batches** — Supports grouped write operations with atomic semantics
 - **Custom Configs** — JSON/TOML serializable configuration
 
 ### Language Support

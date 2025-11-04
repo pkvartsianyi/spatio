@@ -60,25 +60,30 @@ impl AtomicBatch {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }
 
+        // First pass: Apply all in-memory operations and collect AOF data
+        let mut aof_ops = Vec::with_capacity(self.operations.len());
+
         for operation in self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
                     let item = crate::config::DbItem::from_options(value.clone(), opts.as_ref());
                     let created_at = item.created_at;
                     inner.insert_item(key.clone(), item);
-                    inner.write_to_aof_if_needed(
-                        &key,
-                        value.as_ref(),
-                        opts.as_ref(),
-                        created_at,
-                    )?;
+
+                    // Collect for batch AOF write
+                    aof_ops.push((key, value, opts, created_at, false));
                 }
                 BatchOperation::Delete { key } => {
                     inner.remove_item(&key);
-                    inner.write_delete_to_aof_if_needed(&key)?;
+
+                    // Collect for batch AOF write (using dummy values for delete)
+                    aof_ops.push((key, Bytes::new(), None, std::time::SystemTime::now(), true));
                 }
             }
         }
+
+        // Second pass: Write all operations to AOF in one batch
+        inner.write_batch_to_aof(&aof_ops)?;
 
         Ok(())
     }

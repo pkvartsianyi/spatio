@@ -410,6 +410,36 @@ impl DBInner {
         Ok(())
     }
 
+    /// Write a batch of operations to AOF efficiently
+    /// This method writes all operations first, then syncs once at the end
+    pub fn write_batch_to_aof(
+        &mut self,
+        operations: &[(Bytes, Bytes, Option<SetOptions>, SystemTime, bool)], // (key, value, opts, created_at, is_delete)
+    ) -> Result<()> {
+        let Some(aof_file) = self.aof_file.as_mut() else {
+            return Ok(());
+        };
+
+        let sync_policy = self.config.sync_policy;
+        let sync_mode = self.config.sync_mode;
+        let batch_size = self.config.sync_batch_size;
+
+        // Write all operations to AOF buffer
+        for (key, value, opts, created_at, is_delete) in operations {
+            if *is_delete {
+                aof_file.write_delete(key)?;
+            } else {
+                aof_file.write_set(key, value, opts.as_ref(), *created_at)?;
+            }
+        }
+
+        // Single flush/sync for entire batch
+        self.sync_ops_since_flush += operations.len();
+        self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
+
+        Ok(())
+    }
+
     fn maybe_flush_or_sync(
         &mut self,
         policy: crate::config::SyncPolicy,
