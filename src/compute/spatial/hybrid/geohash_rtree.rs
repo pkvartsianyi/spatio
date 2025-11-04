@@ -408,23 +408,19 @@ impl GeohashRTreeIndex {
 
     /// Insert an object into a single geohash cell.
     fn insert_object_into_cell(&mut self, key: String, obj: SpatialObject, hash: String) {
-        // Remove old version if it exists
         if self.object_to_cells.contains_key(&key) {
             self.remove(&key);
         }
 
-        // Get or create the R-tree for this cell
         let tree = self.cells.entry(hash.clone()).or_default();
+        let mut new_tree = tree.clone();
+        new_tree.insert(obj);
+        *tree = new_tree;
 
-        // Insert into R-tree (bulk load for efficiency)
-        let mut objects: Vec<SpatialObject> = tree.iter().cloned().collect();
-        objects.push(obj);
-        *tree = RTree::bulk_load(objects);
-
-        // Update reverse index
-        let mut cell_set = HashSet::new();
-        cell_set.insert(hash);
-        self.object_to_cells.insert(key, cell_set);
+        self.object_to_cells
+            .entry(key)
+            .or_insert_with(HashSet::new)
+            .insert(hash);
     }
 
     /// Insert an object into multiple geohash cells.
@@ -457,105 +453,70 @@ impl GeohashRTreeIndex {
     pub(crate) fn get_cells_for_bbox(&self, bbox: &Rect<f64>) -> Vec<String> {
         let mut cells = HashSet::new();
 
-        // Get corners of bbox
-        let min_coord = geohash::Coord {
-            x: bbox.min().x,
-            y: bbox.min().y,
-        };
-        let max_coord = geohash::Coord {
-            x: bbox.max().x,
-            y: bbox.max().y,
+        let cell_size_degrees = match self.precision {
+            5 => 0.04,
+            6 => 0.01,
+            7 => 0.0024,
+            8 => 0.0006,
+            _ => 0.001,
         };
 
-        // Get geohashes for all four corners
-        let min_hash = encode(min_coord, self.precision).unwrap_or_default();
-        let max_hash = encode(max_coord, self.precision).unwrap_or_default();
-
-        let top_left = encode(
-            geohash::Coord {
-                x: bbox.min().x,
-                y: bbox.max().y,
-            },
-            self.precision,
-        )
-        .unwrap_or_default();
-        let bottom_right = encode(
-            geohash::Coord {
-                x: bbox.max().x,
-                y: bbox.min().y,
-            },
-            self.precision,
-        )
-        .unwrap_or_default();
-
-        cells.insert(min_hash.clone());
-        cells.insert(max_hash.clone());
-        cells.insert(top_left.clone());
-        cells.insert(bottom_right.clone());
-
-        // Add neighbors for all corners to ensure complete coverage
-        for corner in &[min_hash, max_hash, top_left, bottom_right] {
-            if let Ok(nb) = neighbors(corner) {
-                cells.insert(nb.n);
-                cells.insert(nb.ne);
-                cells.insert(nb.e);
-                cells.insert(nb.se);
-                cells.insert(nb.s);
-                cells.insert(nb.sw);
-                cells.insert(nb.w);
-                cells.insert(nb.nw);
+        let mut lon = bbox.min().x;
+        while lon <= bbox.max().x {
+            let mut lat = bbox.min().y;
+            while lat <= bbox.max().y {
+                let coord = geohash::Coord { x: lon, y: lat };
+                if let Ok(hash) = encode(coord, self.precision) {
+                    cells.insert(hash);
+                }
+                lat += cell_size_degrees;
             }
+            lon += cell_size_degrees;
         }
 
         cells.into_iter().collect()
     }
 
     /// Get all geohash cells within a radius of a point.
-    pub(crate) fn get_cells_for_radius(
-        &self,
-        center: &Point<f64>,
-        radius_meters: f64,
-    ) -> Vec<String> {
-        // For very large radii (>1000km), search all cells
-        // This is more efficient than trying to calculate exact cells
-        if radius_meters > 1_000_000.0 {
-            return self.cells.keys().cloned().collect();
-        }
-
-        // Conservative approach: get center cell and multiple rings of neighbors
-        let coord = geohash::Coord {
-            x: center.x(),
-            y: center.y(),
+    pub(crate) fn get_cells_for_radius(&self, center: &Point<f64>, radius_meters: f64) -> Vec<String> {
+        let cell_size_meters = match self.precision {
+            1 => 5000_000.0,
+            2 => 1250_000.0,
+            3 => 156_000.0,
+            4 => 39_000.0,
+            5 => 4900.0,
+            6 => 1200.0,
+            7 => 153.0,
+            8 => 38.0,
+            9 => 4.8,
+            _ => 153.0,
         };
+
+        let rings_needed = ((radius_meters / cell_size_meters).ceil() as usize).max(1).min(10);
+
+        let coord = geohash::Coord { x: center.x(), y: center.y() };
         let center_hash = encode(coord, self.precision).unwrap_or_default();
 
         let mut cells = HashSet::new();
         cells.insert(center_hash.clone());
 
-        // Add all immediate neighbors (ring 1)
-        if let Ok(nb) = neighbors(&center_hash) {
-            cells.insert(nb.n.clone());
-            cells.insert(nb.ne.clone());
-            cells.insert(nb.e.clone());
-            cells.insert(nb.se.clone());
-            cells.insert(nb.s.clone());
-            cells.insert(nb.sw.clone());
-            cells.insert(nb.w.clone());
-            cells.insert(nb.nw.clone());
+        let mut current_ring = vec![center_hash];
 
-            // Add ring 2 neighbors (neighbors of neighbors) for better coverage
-            let ring1 = vec![nb.n, nb.ne, nb.e, nb.se, nb.s, nb.sw, nb.w, nb.nw];
-            for cell in ring1 {
-                if let Ok(nb2) = neighbors(&cell) {
-                    cells.insert(nb2.n);
-                    cells.insert(nb2.ne);
-                    cells.insert(nb2.e);
-                    cells.insert(nb2.se);
-                    cells.insert(nb2.s);
-                    cells.insert(nb2.sw);
-                    cells.insert(nb2.w);
-                    cells.insert(nb2.nw);
+        // Expand rings dynamically
+        for _ in 0..rings_needed {
+            let mut next_ring = Vec::new();
+            for cell in &current_ring {
+                if let Ok(nb) = neighbors(cell) {
+                    for neighbor in [nb.n, nb.ne, nb.e, nb.se, nb.s, nb.sw, nb.w, nb.nw] {
+                        if cells.insert(neighbor.clone()) {
+                            next_ring.push(neighbor);
+                        }
+                    }
                 }
+            }
+            current_ring = next_ring;
+            if current_ring.is_empty() {
+                break;
             }
         }
 

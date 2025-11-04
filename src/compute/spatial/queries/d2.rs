@@ -275,7 +275,7 @@ impl DB {
         max_lat: f64,
         max_lon: f64,
         limit: usize,
-    ) -> Result<Vec<(Point, Bytes)>> {
+    ) -> Result<Vec<(f64, f64, String, Bytes)>> {
         let results = self
             .inner
             .spatial_index
@@ -379,27 +379,21 @@ impl DB {
         metric: DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let results = self.inner.spatial_index.knn_2d_with_max_distance(
-            prefix,
-            center.x(),
-            center.y(),
-            k,
-            Some(max_radius),
+            prefix, center.x(), center.y(), k * 2, Some(max_radius)
         );
 
-        let mut filtered: Vec<(Point, Bytes, f64)> = results
+        let mut candidates: Vec<_> = results
             .into_iter()
-            .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
+            .map(|(x, y, _key, data, _)| {
+                let point = Point::new(x, y);
+                let dist = distance_between(center, &point, metric);
+                (point, data, dist)
+            })
             .collect();
 
-        if metric != DistanceMetric::Haversine {
-            for (point, _, dist) in &mut filtered {
-                *dist = distance_between(center, point, metric);
-            }
-            filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-            filtered.truncate(k);
-        }
-
-        Ok(filtered)
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(Ordering::Equal));
+        candidates.truncate(k);
+        Ok(candidates)
     }
 
     /// Query points within a polygon boundary.

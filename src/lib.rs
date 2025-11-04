@@ -17,7 +17,6 @@ pub mod compute;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod ffi;
 pub mod storage;
 
 pub use builder::DBBuilder;

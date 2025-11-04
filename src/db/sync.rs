@@ -40,6 +40,7 @@
 //! ```
 
 use super::DB;
+use crate::compute::spatial::DistanceMetric;
 use crate::{
     AtomicBatch, BoundingBox2D, BoundingBox3D, Config, Point, Point3d, Polygon, Result, SetOptions,
     TemporalPoint, Trajectory,
@@ -48,7 +49,6 @@ use bytes::Bytes;
 use parking_lot::RwLock;
 use std::path::Path;
 use std::sync::Arc;
-use crate::compute::spatial::DistanceMetric;
 
 /// Thread-safe wrapper around `DB` using `Arc<RwLock<DB>>`.
 ///

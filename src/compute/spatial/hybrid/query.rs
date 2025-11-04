@@ -191,42 +191,24 @@ impl GeohashRTreeIndex {
     /// assert_eq!(results.len(), 1);
     /// ```
     pub fn query_within_bbox(&self, bbox: &Rect<f64>, limit: usize) -> Vec<QueryResult> {
-        // For bbox queries, search all cells to ensure coverage
-        // A more sophisticated implementation would calculate exact cells,
-        // but this guarantees correctness at the cost of examining more cells
-        let all_cells: Vec<String> = self.cells.keys().cloned().collect();
-
-        // Collect candidates from all cells
         let mut results = Vec::new();
         let mut seen_keys = FxHashSet::default();
 
-        for cell_hash in all_cells {
-            if let Some(tree) = self.cells.get(&cell_hash) {
-                for obj in tree.iter() {
-                    // Deduplicate
-                    if seen_keys.contains(&obj.key) {
-                        continue;
-                    }
-                    seen_keys.insert(obj.key.clone());
-
-                    // Check if object intersects bbox
-                    if obj.intersects_bbox(bbox) {
-                        results.push(QueryResult {
-                            key: obj.key.clone(),
-                            data: obj.data.clone(),
-                            distance: None,
-                            object: obj.clone(),
-                        });
-
-                        // Apply limit
-                        if results.len() >= limit {
-                            return results;
-                        }
+        for (cell_hash, tree) in &self.cells {
+            for obj in tree.iter() {
+                if seen_keys.insert(&obj.key) && obj.intersects_bbox(bbox) {
+                    results.push(QueryResult::new(
+                        obj.key.clone(),
+                        obj.data.clone(),
+                        None,
+                        obj.clone(),
+                    ));
+                    if results.len() >= limit {
+                        return results;
                     }
                 }
             }
         }
-
         results
     }
 
