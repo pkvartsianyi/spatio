@@ -78,7 +78,3 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"
 strip = "symbols"
-
-[[bench]]
-name = "batch_vs_single"
-harness = false

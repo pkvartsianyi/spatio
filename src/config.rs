@@ -33,11 +33,20 @@ pub enum SyncMode {
     Data,
 }
 
-/// Database configuration with support for JSON/TOML serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum IndexType {
+    RTree,
+    Geohash,
+}
+
+/// Database configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
-    #[serde(default)]
+    #[serde(default = "Config::default_sync_policy")]
     pub sync_policy: SyncPolicy,
+    #[serde(default = "Config::default_index_type")]
+    pub index_type: IndexType,
 
     #[serde(default)]
     pub default_ttl_seconds: Option<f64>,
@@ -68,6 +77,14 @@ impl Config {
         1
     }
 
+    const fn default_sync_policy() -> SyncPolicy {
+        SyncPolicy::EverySecond
+    }
+
+    const fn default_index_type() -> IndexType {
+        IndexType::RTree
+    }
+
     const fn default_amortized_cleanup_batch_size() -> usize {
         0
     }
@@ -85,6 +102,7 @@ impl Config {
 
         Self {
             sync_policy: SyncPolicy::default(),
+            index_type: IndexType::Geohash,
             default_ttl_seconds: None,
             geohash_precision: precision,
             sync_mode: SyncMode::default(),
@@ -195,6 +213,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             sync_policy: SyncPolicy::default(),
+            index_type: IndexType::RTree,
             default_ttl_seconds: None,
             geohash_precision: Self::default_geohash_precision(),
             sync_mode: SyncMode::default(),

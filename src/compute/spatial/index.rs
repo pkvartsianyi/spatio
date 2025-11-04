@@ -152,8 +152,22 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
+        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+
+        let lon_degrees =
+            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+
+        let min_x = center_x - lon_degrees;
+        let max_x = center_x + lon_degrees;
+        let min_y = center_y - lat_degrees;
+        let max_y = center_y + lat_degrees;
+
+        let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new(), Bytes::new());
+        let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new(), Bytes::new());
+        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
+
         let mut results: Vec<_> = tree
-            .iter()
+            .locate_in_envelope_intersecting(&envelope)
             .filter_map(|point| {
                 let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
                 if distance <= radius {
@@ -205,15 +219,10 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
-        tree.iter()
-            .filter(|point| {
-                point.x >= min_x
-                    && point.x <= max_x
-                    && point.y >= min_y
-                    && point.y <= max_y
-                    && point.z >= min_z
-                    && point.z <= max_z
-            })
+        let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new(), Bytes::new());
+        let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new(), Bytes::new());
+        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
+        tree.locate_in_envelope_intersecting(&envelope)
             .map(|point| (point.key.clone(), point.data.clone()))
             .collect()
     }
@@ -261,7 +270,23 @@ impl SpatialIndexManager {
             return 0;
         };
 
-        tree.iter()
+        // Convert radius from meters to degrees for latitude
+        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+
+        // Convert radius from meters to degrees for longitude
+        let lon_degrees =
+            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+
+        let min_x = center_x - lon_degrees;
+        let max_x = center_x + lon_degrees;
+        let min_y = center_y - lat_degrees;
+        let max_y = center_y + lat_degrees;
+
+        let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new(), Bytes::new());
+        let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new(), Bytes::new());
+        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
+
+        tree.locate_in_envelope_intersecting(&envelope)
             .filter(|point| {
                 let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
                 distance <= radius
@@ -280,10 +305,25 @@ impl SpatialIndexManager {
             return false;
         };
 
-        tree.iter().any(|point| {
-            let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
-            distance <= radius
-        })
+        let lat_degrees = (radius / EARTH_RADIUS_METERS).to_degrees();
+
+        let lon_degrees =
+            (radius / (EARTH_RADIUS_METERS * center_y.to_radians().cos())).to_degrees();
+
+        let min_x = center_x - lon_degrees;
+        let max_x = center_x + lon_degrees;
+        let min_y = center_y - lat_degrees;
+        let max_y = center_y + lat_degrees;
+
+        let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new(), Bytes::new());
+        let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new(), Bytes::new());
+        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
+
+        tree.locate_in_envelope_intersecting(&envelope)
+            .any(|point| {
+                let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
+                distance <= radius
+            })
     }
 
     pub fn knn_2d(
