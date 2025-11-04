@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn fibonacci(n: u64) -> u64 {
     match n {
         0 => 1,
         1 => 1,
-        n => fibonacci(n-1) + fibonacci(n-2),
+        n => fibonacci(n - 1) + fibonacci(n - 2),
     }
 }
 
