@@ -14,10 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// AOF configuration for rewriting
 #[derive(Debug, Clone)]
 pub struct AOFConfig {
-    /// Trigger rewrite when file size exceeds this many bytes
     pub rewrite_size_threshold: u64,
 }
 
@@ -29,7 +27,6 @@ impl Default for AOFConfig {
     }
 }
 
-/// Simplified AOF (Append-Only File) for embedded database persistence
 pub struct AOFFile {
     file: File,
     writer: BufWriter<File>,
@@ -97,12 +94,10 @@ impl AOFFile {
         Ok(aof)
     }
 
-    /// Open AOF file with default configuration
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, AOFConfig::default())
     }
 
-    /// Open AOF file with custom configuration
     pub fn open_with_config<P: AsRef<Path>>(path: P, config: AOFConfig) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
 
@@ -131,12 +126,10 @@ impl AOFFile {
         })
     }
 
-    /// Get current file size
     pub fn size(&self) -> u64 {
         self.size
     }
 
-    /// Write a SET command to the AOF
     pub fn write_set(
         &mut self,
         key: &[u8],
@@ -159,7 +152,6 @@ impl AOFFile {
         self.write_command(&command)
     }
 
-    /// Write a DELETE command to the AOF
     pub fn write_delete(&mut self, key: &[u8]) -> Result<()> {
         let command = AOFCommand::Delete {
             key: Bytes::copy_from_slice(key),
@@ -167,7 +159,6 @@ impl AOFFile {
         self.write_command(&command)
     }
 
-    /// Write a command to the AOF file
     fn write_command(&mut self, command: &AOFCommand) -> Result<()> {
         #[cfg(feature = "bench-prof")]
         let serialize_start = Instant::now();
@@ -188,7 +179,6 @@ impl AOFFile {
         }
         self.size += written_len as u64;
 
-        // Track consecutive small writes and shrink buffer more aggressively
         if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD {
             if written_len <= SCRATCH_INITIAL_CAPACITY {
                 self.scratch_small_write_count += 1;
@@ -208,23 +198,18 @@ impl AOFFile {
         Ok(())
     }
 
-    /// Check if AOF should be rewritten based on size threshold
     fn should_rewrite(&self) -> bool {
         !self.rewrite_in_progress && self.size >= self.config.rewrite_size_threshold
     }
 
-    /// Trigger AOF rewrite if conditions are met
     fn maybe_trigger_rewrite(&mut self) -> Result<()> {
         if self.rewrite_in_progress {
             return Ok(());
         }
 
-        // Always perform synchronous rewrite for embedded database
-        // Background rewrite would require thread coordination which we avoid
         self.perform_rewrite()
     }
 
-    /// Perform the actual AOF rewrite operation
     fn perform_rewrite(&mut self) -> Result<()> {
         if self.rewrite_in_progress {
             return Err(SpatioError::RewriteInProgress);
@@ -232,9 +217,7 @@ impl AOFFile {
 
         self.rewrite_in_progress = true;
 
-        // Perform the rewrite and always clear the flag, even on error
         let result = (|| {
-            // Flush current writer to ensure all data is persisted
             self.writer.flush()?;
             self.file.sync_all()?;
 
@@ -262,7 +245,6 @@ impl AOFFile {
                 }
             }
 
-            // Create temporary rewrite file
             let rewrite_path = Self::rewrite_path_for(&target_path);
             let mut rewrite_file = Self::open_rewrite(&rewrite_path, self.config.clone())?;
 
@@ -279,12 +261,9 @@ impl AOFFile {
                 rewrite_file_for_sync.sync_all()?;
             }
 
-            // Flush and sync before any handle manipulation
             self.writer.flush()?;
             self.file.sync_all()?;
 
-            // Close all existing handles ATOMICALLY using dummy file
-            // This prevents window where we have invalid file handles
             let dummy_path = if cfg!(target_os = "windows") {
                 "NUL"
             } else {
@@ -297,7 +276,6 @@ impl AOFFile {
             ));
             drop(std::mem::replace(&mut self.file, File::open(dummy_path)?));
 
-            // Atomic rename (on POSIX systems)
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 

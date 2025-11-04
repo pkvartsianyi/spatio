@@ -48,9 +48,6 @@ pub use db::{AtomicBatch, Namespace, NamespaceManager};
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 
 #[cfg(feature = "aof")]
-pub use storage::AOFBackend;
-
-#[cfg(feature = "aof")]
 pub use storage::{AOFConfig, AOFFile};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -72,9 +69,6 @@ pub mod prelude {
     pub use crate::{AtomicBatch, Namespace, NamespaceManager};
 
     pub use crate::{MemoryBackend, StorageBackend};
-
-    #[cfg(feature = "aof")]
-    pub use crate::AOFBackend;
 
     pub use std::time::Duration;
 }

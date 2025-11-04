@@ -10,10 +10,8 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
 
 impl DBInner {
-    /// Maximum allowed timestamp drift into the future (1 day)
     const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);
 
-    /// Validate that a timestamp is reasonable (not too far in the future)
     pub(crate) fn validate_timestamp(created_at: SystemTime) -> Result<()> {
         let now = SystemTime::now();
         if created_at > now + Self::MAX_FUTURE_TIMESTAMP {
@@ -22,8 +20,6 @@ impl DBInner {
         Ok(())
     }
 
-    /// Generate a spatial key with encoded coordinates for AOF replay
-    /// Format: "prefix:lat_hex:lon_hex:z_hex:timestamp_nanos:uuid"
     pub(crate) fn generate_spatial_key(
         prefix: &str,
         x: f64,
@@ -110,7 +106,6 @@ impl DBInner {
         }
     }
 
-    /// Insert an item into the database
     pub fn insert_item(&mut self, key: Bytes, item: DbItem) -> Option<DbItem> {
         let expires_at = item.expires_at;
         #[cfg(feature = "time-index")]
@@ -140,7 +135,6 @@ impl DBInner {
         old_item
     }
 
-    /// Remove an item from the database
     pub fn remove_item(&mut self, key: &Bytes) -> Option<DbItem> {
         if let Some(item) = self.keys.remove(key) {
             #[cfg(feature = "time-index")]
@@ -205,29 +199,10 @@ impl DBInner {
         Ok(removed)
     }
 
-    /// Get an item from the database
     pub fn get_item(&self, key: &Bytes) -> Option<&DbItem> {
         self.keys.get(key)
     }
 
-    /// Load database state from the AOF file (startup replay).
-    ///
-    /// This method replays all commands from the append-only file to restore
-    /// the database to its previous state. It's called automatically during
-    /// database initialization.
-    ///
-    /// The replay process:
-    /// 1. Reads all commands from the AOF sequentially
-    /// 2. Applies each SET and DELETE command to rebuild state
-    /// 3. Reconstructs spatial indexes from geographic data
-    /// 4. Updates statistics (key counts, etc.)
-    ///
-    /// # Error Handling
-    ///
-    /// If the AOF is corrupted or unreadable, this method returns an error
-    /// and the database will not open. To recover from corruption:
-    /// - Restore from backup if available
-    /// - Or delete the AOF file to start fresh (data loss)
     pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
         for command in aof_file.replay()? {
             match command {
@@ -373,7 +348,6 @@ impl DBInner {
         }
     }
 
-    /// Write to AOF file if needed
     pub fn write_to_aof_if_needed(
         &mut self,
         key: &Bytes,
@@ -395,7 +369,6 @@ impl DBInner {
         Ok(())
     }
 
-    /// Write delete operation to AOF if needed
     pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
         let Some(aof_file) = self.aof_file.as_mut() else {
             return Ok(());
@@ -410,8 +383,6 @@ impl DBInner {
         Ok(())
     }
 
-    /// Write a batch of operations to AOF efficiently
-    /// This method writes all operations first, then syncs once at the end
     pub fn write_batch_to_aof(
         &mut self,
         operations: &[(Bytes, Bytes, Option<SetOptions>, SystemTime, bool)], // (key, value, opts, created_at, is_delete)
@@ -424,7 +395,6 @@ impl DBInner {
         let sync_mode = self.config.sync_mode;
         let batch_size = self.config.sync_batch_size;
 
-        // Write all operations to AOF buffer
         for (key, value, opts, created_at, is_delete) in operations {
             if *is_delete {
                 aof_file.write_delete(key)?;
@@ -433,7 +403,6 @@ impl DBInner {
             }
         }
 
-        // Single flush/sync for entire batch
         self.sync_ops_since_flush += operations.len();
         self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
 

@@ -109,23 +109,6 @@ impl SpatialIndexManager {
             .insert(point);
     }
 
-    /// Query points within a 3D spherical radius.
-    ///
-    /// This finds all points within a spherical distance from the center point,
-    /// considering altitude differences.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `center_x` - Center X coordinate
-    /// * `center_y` - Center Y coordinate
-    /// * `center_z` - Center Z coordinate (altitude)
-    /// * `radius` - Radius in meters (3D distance)
-    /// * `limit` - Maximum number of results to return
-    ///
-    /// # Returns
-    ///
-    /// Vector of (key, data, distance) tuples within the spherical radius, sorted by distance.
     pub fn query_within_sphere(
         &self,
         prefix: &str,
@@ -139,32 +122,9 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
-        // Pre-compute bounding box for quick rejection
-        // Approximate: radius in meters to degrees (1 degree ≈ 111km)
-        let radius_deg = radius / 111_000.0;
-        let min_x = center_x - radius_deg;
-        let max_x = center_x + radius_deg;
-        let min_y = center_y - radius_deg;
-        let max_y = center_y + radius_deg;
-        let min_z = center_z - radius;
-        let max_z = center_z + radius;
-
-        // Iterate over all points and filter by distance
         let mut results: Vec<_> = tree
             .iter()
             .filter_map(|point| {
-                // Quick bounding box rejection (cheap)
-                if point.x < min_x
-                    || point.x > max_x
-                    || point.y < min_y
-                    || point.y > max_y
-                    || point.z < min_z
-                    || point.z > max_z
-                {
-                    return None;
-                }
-
-                // Precise distance check (expensive)
                 let distance =
                     haversine_3d_distance(center_x, center_y, center_z, point.x, point.y, point.z);
                 if distance <= radius {
@@ -175,27 +135,11 @@ impl SpatialIndexManager {
             })
             .collect();
 
-        // Sort by distance
         results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Apply limit
         results.truncate(limit);
         results
     }
 
-    /// Query points within a 2D radius (ignoring altitude).
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `center_x` - Center X coordinate
-    /// * `center_y` - Center Y coordinate
-    /// * `radius` - Radius in meters (2D distance)
-    /// * `limit` - Maximum number of results to return
-    ///
-    /// # Returns
-    ///
-    /// Vector of (x, y, key, data, distance) tuples within the radius, sorted by distance.
     pub fn query_within_radius_2d(
         &self,
         prefix: &str,
@@ -208,7 +152,6 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
-        // Iterate over all points and filter by 2D distance
         let mut results: Vec<_> = tree
             .iter()
             .filter_map(|point| {
@@ -227,25 +170,11 @@ impl SpatialIndexManager {
             })
             .collect();
 
-        // Sort by distance
         results.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Apply limit
         results.truncate(limit);
         results
     }
 
-    /// Query points within a 3D bounding box.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `min_x`, `min_y`, `min_z` - Minimum coordinates of the bounding box
-    /// * `max_x`, `max_y`, `max_z` - Maximum coordinates of the bounding box
-    ///
-    /// # Returns
-    ///
-    /// Vector of (key, data) tuples within the bounding box.
     pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String, Bytes)> {
         let mut min_x = query.min_x;
         let mut min_y = query.min_y;
@@ -262,7 +191,6 @@ impl SpatialIndexManager {
             return Vec::new();
         }
 
-        // Auto-correct if needed (swap min/max)
         if min_x > max_x {
             std::mem::swap(&mut min_x, &mut max_x);
         }
@@ -322,18 +250,6 @@ impl SpatialIndexManager {
         )
     }
 
-    /// Count points within a 2D radius.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `center_x` - Center X coordinate
-    /// * `center_y` - Center Y coordinate
-    /// * `radius` - Radius in meters
-    ///
-    /// # Returns
-    ///
-    /// Number of points within the radius.
     pub fn count_within_radius_2d(
         &self,
         prefix: &str,
@@ -353,14 +269,6 @@ impl SpatialIndexManager {
             .count()
     }
 
-    /// Check if any points exist within a 2D radius.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `center_x` - Center X coordinate
-    /// * `center_y` - Center Y coordinate
-    /// * `radius` - Radius in meters
     pub fn contains_point_2d(
         &self,
         prefix: &str,
@@ -378,18 +286,6 @@ impl SpatialIndexManager {
         })
     }
 
-    /// Find the k nearest neighbors in 2D space (ignoring altitude).
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `x` - Query point X coordinate
-    /// * `y` - Query point Y coordinate
-    /// * `k` - Number of nearest neighbors to find
-    ///
-    /// # Returns
-    ///
-    /// Vector of (x, y, key, data, distance) tuples for the k nearest points.
     pub fn knn_2d(
         &self,
         prefix: &str,
@@ -589,15 +485,6 @@ impl SpatialIndexManager {
     }
 
     /// Check if a point exists within altitude range at given coordinates.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `x` - X coordinate
-    /// * `y` - Y coordinate
-    /// * `min_z` - Minimum altitude
-    /// * `max_z` - Maximum altitude
-    /// * `tolerance` - Horizontal coordinate tolerance
     pub fn contains_point_in_altitude_range(
         &self,
         prefix: &str,
@@ -612,10 +499,8 @@ impl SpatialIndexManager {
         };
 
         tree.iter().any(|point| {
-            (point.x - x).abs() <= tolerance
-                && (point.y - y).abs() <= tolerance
-                && point.z >= min_z
-                && point.z <= max_z
+            let horizontal_distance = haversine_2d_distance(x, y, point.x, point.y);
+            horizontal_distance <= tolerance && point.z >= min_z && point.z <= max_z
         })
     }
 

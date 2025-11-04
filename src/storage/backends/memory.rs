@@ -97,20 +97,6 @@ impl StorageBackend for MemoryBackend {
         Ok(keys)
     }
 
-    /// Efficiently scan for all key-value pairs with a given prefix using BTreeMap range operations.
-    ///
-    /// This implementation uses O(log n + k) complexity where n is the total number of keys
-    /// and k is the number of matching keys, rather than O(n) linear scan.
-    ///
-    /// The algorithm works by:
-    /// 1. Computing an upper bound key (prefix with last byte incremented)
-    /// 2. Using BTreeMap's range() method to iterate only over the relevant key range
-    /// 3. Handling edge cases like prefixes ending in 0xFF bytes
-    ///
-    /// Examples:
-    /// - prefix "abc" -> range ["abc", "abd")
-    /// - prefix "test\xFF" -> range ["test\xFF", "tesu")
-    /// - prefix "abc\xFF\xFF" -> range ["abc\xFF\xFF", "abd")
     fn scan_prefix(&self, prefix: &[u8]) -> Result<BTreeMap<Bytes, DbItem>> {
         let mut result = BTreeMap::new();
 

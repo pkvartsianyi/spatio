@@ -33,128 +33,10 @@ pub use namespace::{Namespace, NamespaceManager};
 #[cfg(feature = "sync")]
 pub use sync::SyncDB;
 
-/// Main Spatio database structure (single-threaded by design).
+/// Embedded spatio-temporal database.
 ///
-/// The `DB` struct is the core of Spatio, offering:
-/// - Key-value storage with spatio-temporal indexing
-/// - Geographic point operations with automatic spatial indexing
-/// - Trajectory tracking for moving objects
-/// - Time-to-live (TTL) support for temporal data
-/// - Atomic batch operations
-/// - Optional persistence with append-only file (AOF) format
-///
-/// # Thread Safety
-///
-/// **`DB` is NOT thread-safe by default.** It cannot be sent between threads
-/// or shared without synchronization. This design choice provides:
-///
-/// - **Maximum performance** for single-threaded use cases
-/// - **Flexibility** to choose your own concurrency model
-/// - **Compile-time safety** - you cannot accidentally share `DB` unsafely
-///
-/// ## Options for Multi-Threaded Use
-///
-/// ### Option 1: Use the `sync` feature (easiest)
-///
-/// ```toml
-/// [dependencies]
-/// spatio = { version = "2.0", features = ["sync"] }
-/// ```
-///
-/// ```rust,ignore
-/// use spatio::SyncDB;
-/// use std::thread;
-///
-/// let db = SyncDB::open("data.db").unwrap();
-/// let db_clone = db.clone();
-///
-/// thread::spawn(move || {
-///     db_clone.insert("key", b"value", None).unwrap();
-/// });
-/// ```
-///
-/// ### Option 2: Manual wrapping with RwLock/Mutex
-///
-/// ```rust,ignore
-/// use spatio::Spatio;
-/// use parking_lot::RwLock;
-/// use std::sync::Arc;
-///
-/// let db = Arc::new(RwLock::new(Spatio::open("data.db").unwrap()));
-/// let db_clone = db.clone();
-///
-/// std::thread::spawn(move || {
-///     db_clone.write().insert("key", b"value", None).unwrap();
-/// });
-/// ```
-///
-/// ### Option 3: Actor pattern (recommended for async)
-///
-/// For async applications, use an actor/channel pattern.
-/// See `examples/actor_pattern.rs` for details.
-///
-/// # Examples
-///
-/// ## Single-threaded usage (no wrapper needed)
-///
-/// ```rust
-/// use spatio::{Spatio, Point, SetOptions};
-/// use std::time::Duration;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create an in-memory database
-/// let mut db = Spatio::memory()?;
-///
-/// // Store a simple key-value pair
-/// db.insert("key1", b"value1", None)?;
-///
-/// // Store data with TTL
-/// let opts = SetOptions::with_ttl(Duration::from_secs(300));
-/// db.insert("temp_key", b"expires_in_5_minutes", Some(opts))?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Spatial Operations
-///
-/// ```rust
-/// use spatio::{Spatio, Point};
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut db = Spatio::memory()?;
-///
-/// // Store geographic points (automatically indexed)
-/// let nyc = Point::new(-74.0060, 40.7128);
-/// let london = Point::new(-0.1278, 51.5074);
-///
-/// db.insert_point("cities", &nyc, b"New York", None)?;
-/// db.insert_point("cities", &london, b"London", None)?;
-///
-/// // Find nearby cities within 100km
-/// let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
-/// println!("Found {} cities within 100km", nearby.len());
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Atomic batching
-///
-/// ```rust
-/// use spatio::Spatio;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut db = Spatio::memory()?;
-///
-/// // All operations succeed or fail together
-/// db.atomic(|batch| {
-///     batch.insert("key1", b"value1", None)?;
-///     batch.insert("key2", b"value2", None)?;
-///     batch.delete("old_key")?;
-///     Ok(())
-/// })?;
-/// # Ok(())
-/// # }
-/// ```
+/// Provides key-value storage with spatial indexing, TTL support, and optional persistence.
+/// Single-threaded by default. Use the `sync` feature for thread-safe access via `SyncDB`.
 pub struct DB {
     pub(crate) inner: DBInner,
     #[cfg(not(feature = "sync"))]
@@ -187,75 +69,13 @@ pub(crate) struct DBInner {
 }
 
 impl DB {
-    /// Opens a Spatio database from a file path or creates a new one.
-    ///
-    /// When opening an existing database, this method automatically replays the
-    /// append-only file (AOF) to restore all data and spatial indexes to their
-    /// previous state. This ensures durability across restarts.
-    ///
-    /// # Startup Replay
-    ///
-    /// The database performs the following steps on startup:
-    /// 1. Opens the AOF file at the specified path (creates if doesn't exist)
-    /// 2. Replays all commands from the AOF to restore state
-    /// 3. Rebuilds spatial indexes for all geographic data
-    /// 4. Ready for new operations
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File system path or ":memory:" for in-memory storage
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let _ = std::fs::remove_file("my_data.db");
-    /// // Create persistent database with automatic AOF replay on open
-    /// let persistent_db = Spatio::open("my_data.db")?;
-    ///
-    /// // Create in-memory database (no persistence)
-    /// let mem_db = Spatio::open(":memory:")?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Open or create a database at the given path. Use ":memory:" for in-memory storage.
+    /// Existing AOF files are automatically replayed on startup.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, Config::default())
     }
 
-    /// Creates a new Spatio database with custom configuration.
-    ///
-    /// This method provides full control over database behavior including:
-    /// - Geohash precision for spatial indexing
-    /// - Sync policy for durability vs performance tradeoff
-    /// - Default TTL for automatic expiration
-    ///
-    /// Like `open()`, this method automatically replays the AOF on startup
-    /// to restore previous state.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File path for the database (use ":memory:" for in-memory)
-    /// * `config` - Database configuration including geohash precision settings
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{Spatio, Config, SyncPolicy};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // High-precision config for dense urban areas
-    /// let config = Config::with_geohash_precision(10)
-    ///     .with_sync_policy(SyncPolicy::Always)
-    ///     .with_default_ttl(Duration::from_secs(3600));
-    /// # let _ = std::fs::remove_file("my_database.db");
-    ///
-    /// let mut db = Spatio::open_with_config("my_database.db", config)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Open or create a database with custom configuration.
     pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
         let path = path.as_ref();
         let is_memory = path.to_str() == Some(":memory:");
@@ -275,75 +95,27 @@ impl DB {
         })
     }
 
-    /// Creates a new in-memory Spatio database.
+    /// Create an in-memory database with default configuration.
     pub fn memory() -> Result<Self> {
         Self::open(":memory:")
     }
 
-    /// Create an in-memory database with custom configuration
+    /// Create an in-memory database with custom configuration.
     pub fn memory_with_config(config: Config) -> Result<Self> {
         Self::open_with_config(":memory:", config)
     }
 
-    /// Create a database builder for advanced configuration.
-    ///
-    /// The builder provides full control over database configuration including:
-    /// - Custom AOF (Append-Only File) paths
-    /// - In-memory vs persistent storage
-    /// - Full configuration options
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Create database with custom AOF path
-    /// let temp_path = std::env::temp_dir().join("builder_demo.aof");
-    /// let mut db = Spatio::builder()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    ///
-    /// db.insert("key", b"value", None)?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Create a builder for advanced configuration options.
     pub fn builder() -> crate::builder::DBBuilder {
         crate::builder::DBBuilder::new()
     }
 
-    /// Get database statistics
+    /// Get database statistics.
     pub fn stats(&self) -> DbStats {
         self.inner.stats.clone()
     }
 
-    /// Inserts a key-value pair into the database.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to store
-    /// * `value` - The value to associate with the key
-    /// * `opts` - Optional settings like TTL
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{Spatio, SetOptions};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut db = Spatio::memory()?;
-    ///
-    /// // Simple insert
-    /// db.insert("user:123", b"John Doe", None)?;
-    ///
-    /// // Insert with TTL
-    /// let opts = SetOptions::with_ttl(Duration::from_secs(300));
-    /// db.insert("session:abc", b"user_data", Some(opts))?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Insert a key-value pair, optionally with TTL settings.
     pub fn insert(
         &mut self,
         key: impl AsRef<[u8]>,
@@ -378,7 +150,7 @@ impl DB {
         Ok(old.map(|item| item.value))
     }
 
-    /// Get a value by key
+    /// Get a value by key.
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         if self.inner.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -395,7 +167,7 @@ impl DB {
         Ok(None)
     }
 
-    /// Delete a key atomically
+    /// Delete a key.
     pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
         if self.inner.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -411,7 +183,7 @@ impl DB {
         }
     }
 
-    /// Execute multiple operations atomically
+    /// Execute multiple operations atomically.
     pub fn atomic<F, R>(&mut self, f: F) -> Result<R>
     where
         F: FnOnce(&mut AtomicBatch) -> Result<R>,
@@ -422,26 +194,7 @@ impl DB {
         Ok(result)
     }
 
-    /// Force sync all pending writes to disk.
-    ///
-    /// This method flushes the AOF buffer and calls fsync to ensure all data
-    /// is durably written to disk. Useful before critical operations or when
-    /// you need to guarantee data persistence.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut db = Spatio::open("my_data.db")?;
-    /// db.insert("critical_key", b"important_data", None)?;
-    ///
-    /// // Ensure data is on disk before continuing
-    /// db.sync()?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Force fsync of all pending writes to disk.
     pub fn sync(&mut self) -> Result<()> {
         let sync_mode = self.inner.config.sync_mode;
         if let Some(ref mut aof_file) = self.inner.aof_file {
@@ -451,36 +204,8 @@ impl DB {
         Ok(())
     }
 
-    /// Gracefully close the database.
-    ///
-    /// This method performs a clean shutdown by:
-    /// 1. Marking the database as closed (rejecting new operations)
-    /// 2. Flushing any pending writes to the AOF
-    /// 3. Syncing the AOF to disk (fsync)
-    /// 4. Releasing resources
-    ///
-    /// After calling `close()`, any further operations on this database
-    /// instance will return `DatabaseClosed` errors.
-    ///
-    /// **Note:** The database is also automatically closed when dropped,
-    /// so explicitly calling `close()` is optional but recommended for
-    /// explicit error handling.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let _ = std::fs::remove_file("my_data.db");
-    /// let mut db = Spatio::open("my_data.db")?;
-    /// db.insert("key", b"value", None)?;
-    ///
-    /// // Explicitly close and handle errors
-    /// db.close()?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Close the database and sync all pending writes.
+    /// Subsequent operations will return errors.
     pub fn close(&mut self) -> Result<()> {
         if self.inner.closed {
             return Err(SpatioError::DatabaseClosed);
@@ -553,16 +278,7 @@ impl HistoryTracker {
     }
 }
 
-/// Automatic graceful shutdown on drop.
-///
-/// When the last reference to the database is dropped, it automatically performs a graceful shutdown:
-/// - Flushes pending writes
-/// - Syncs to disk (best effort, errors are silently ignored)
-/// - Releases resources
-///
-/// Note: Since DB uses Arc internally, this syncs only when the last clone is dropped.
-/// The database is NOT marked as closed here to allow other clones to continue operating.
-/// Use `close()` explicitly if you need to prevent further operations.
+/// Sync pending writes on drop (best effort, errors ignored).
 impl Drop for DB {
     fn drop(&mut self) {
         if self.inner.closed {

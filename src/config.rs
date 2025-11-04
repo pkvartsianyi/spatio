@@ -14,81 +14,47 @@ pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
 pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
 pub use spatio_types::trajectory::{Trajectory, Trajectory3D};
 
-/// Synchronization policy for persistence
+/// Synchronization policy for persistence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncPolicy {
-    /// Never sync to disk (fastest, least safe)
     Never,
-    /// Sync every second (recommended default)
     #[default]
     EverySecond,
-    /// Sync after every write (slowest, safest)
     Always,
 }
 
-/// File synchronization strategy.
+/// File synchronization strategy (fsync vs fdatasync).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
-    /// Call `fsync` / `File::sync_all` to persist metadata + data.
     #[default]
     All,
-    /// Call `fdatasync` / `File::sync_data` to persist data only.
     Data,
 }
 
-/// Simplified database configuration
-///
-/// This configuration is designed to be easily serializable and loadable
-/// from JSON, TOML, or other formats while keeping complexity minimal.
-///
-/// # Example
-///
-/// ```rust
-/// use spatio::{Config, SyncPolicy};
-/// use std::time::Duration;
-///
-/// // Create default config
-/// let config = Config::default();
-///
-/// // Load from JSON
-/// let json = r#"{
-///     "sync_policy": "always",
-///     "default_ttl_seconds": 3600,
-///     "geohash_precision": 10
-/// }"#;
-/// let config: Config = serde_json::from_str(json).unwrap();
-/// ```
+/// Database configuration with support for JSON/TOML serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// How often data is synced to disk
     #[serde(default)]
     pub sync_policy: SyncPolicy,
 
-    /// Default TTL for items in seconds (None means no default TTL)
     #[serde(default)]
     pub default_ttl_seconds: Option<f64>,
 
-    /// Geohash precision for spatial indexing (1-12, default: 8)
-    /// Higher values = more precision but more memory usage
     #[serde(default = "Config::default_geohash_precision")]
     pub geohash_precision: usize,
 
-    /// Controls whether the database issues `fsync` or `fdatasync`.
     #[serde(default)]
     pub sync_mode: SyncMode,
 
-    /// Number of writes to batch before forcing a sync when `SyncPolicy::Always`.
     #[serde(default = "Config::default_sync_batch_size")]
     pub sync_batch_size: usize,
 
-    /// Optional history capacity per key (number of events to retain)
     #[cfg(feature = "time-index")]
     #[serde(default)]
     pub history_capacity: Option<usize>,
 
-    /// Batch size for amortized cleanup
     #[serde(default = "Config::default_amortized_cleanup_batch_size")]
     pub amortized_cleanup_batch: usize,
 }
@@ -144,14 +110,12 @@ impl Config {
         self
     }
 
-    /// Adjust the number of writes to batch before syncing when `SyncPolicy::Always`.
     pub fn with_sync_batch_size(mut self, batch_size: usize) -> Self {
         assert!(batch_size > 0, "Sync batch size must be greater than zero");
         self.sync_batch_size = batch_size;
         self
     }
 
-    /// Enable update history with a maximum number of entries per key.
     #[cfg(feature = "time-index")]
     pub fn with_history_capacity(mut self, capacity: usize) -> Self {
         assert!(capacity > 0, "History capacity must be greater than zero");
@@ -159,7 +123,6 @@ impl Config {
         self
     }
 
-    /// Get default TTL as Duration
     pub fn default_ttl(&self) -> Option<Duration> {
         self.default_ttl_seconds.and_then(|ttl| {
             if ttl.is_finite() && ttl > 0.0 && ttl <= u64::MAX as f64 {
@@ -170,7 +133,6 @@ impl Config {
         })
     }
 
-    /// Validate configuration values
     pub fn validate(&self) -> Result<(), String> {
         if self.geohash_precision < 1 || self.geohash_precision > 12 {
             return Err("Geohash precision must be between 1 and 12".to_string());
@@ -202,7 +164,6 @@ impl Config {
         Ok(())
     }
 
-    /// Load configuration from JSON string
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let config: Config = serde_json::from_str(json)?;
         if let Err(e) = config.validate() {
@@ -211,12 +172,10 @@ impl Config {
         Ok(config)
     }
 
-    /// Save configuration as JSON string
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Load configuration from TOML string (requires toml feature)
     #[cfg(feature = "toml")]
     pub fn from_toml(toml_str: &str) -> Result<Self, toml::de::Error> {
         let config: Config = toml::from_str(toml_str)?;
@@ -226,7 +185,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Save configuration as TOML string (requires toml feature)
     #[cfg(feature = "toml")]
     pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)

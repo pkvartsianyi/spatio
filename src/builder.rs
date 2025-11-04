@@ -9,64 +9,7 @@ use crate::error::Result;
 use crate::storage::AOFFile;
 use std::path::PathBuf;
 
-/// Builder for creating database instances with custom configuration.
-///
-/// The `DBBuilder` provides a flexible way to configure databases with
-/// options for:
-/// - Custom AOF (Append-Only File) paths separate from the logical database path
-/// - In-memory databases
-/// - Full configuration control
-/// - Automatic startup replay
-///
-/// # Examples
-///
-/// ## Basic usage with custom AOF path
-/// ```rust
-/// use spatio::DBBuilder;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let temp_path = std::env::temp_dir().join("test_db.aof");
-/// let mut db = DBBuilder::new()
-///     .aof_path(&temp_path)
-///     .build()?;
-///
-/// db.insert("key", b"value", None)?;
-/// # let _ = std::fs::remove_file(&temp_path);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## In-memory database
-/// ```rust
-/// use spatio::DBBuilder;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut db = DBBuilder::new()
-///     .in_memory()
-///     .build()?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Full configuration
-/// ```rust
-/// use spatio::{DBBuilder, Config, SyncPolicy};
-/// use std::time::Duration;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Config::with_geohash_precision(10)
-///     .with_sync_policy(SyncPolicy::Always)
-///     .with_default_ttl(Duration::from_secs(3600));
-///
-/// let temp_path = std::env::temp_dir().join("high_precision.aof");
-/// let mut db = DBBuilder::new()
-///     .aof_path(&temp_path)
-///     .config(config)
-///     .build()?;
-/// # let _ = std::fs::remove_file(&temp_path);
-/// # Ok(())
-/// # }
-/// ```
+/// Builder for database configuration with custom AOF paths and settings.
 #[derive(Debug)]
 pub struct DBBuilder {
     aof_path: Option<PathBuf>,
@@ -75,18 +18,7 @@ pub struct DBBuilder {
 }
 
 impl DBBuilder {
-    /// Create a new database builder with default configuration.
-    ///
-    /// By default, creates an in-memory database. Use `aof_path()` to
-    /// enable persistence.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// let builder = DBBuilder::new();
-    /// ```
+    /// Create a new builder with default in-memory configuration.
     pub fn new() -> Self {
         Self {
             aof_path: None,
@@ -95,145 +27,36 @@ impl DBBuilder {
         }
     }
 
-    /// Set the AOF (Append-Only File) path for persistence.
-    ///
-    /// When an AOF path is set:
-    /// - The database will persist all writes to this file
-    /// - On startup, the AOF will be replayed to restore state
-    /// - The database is durable across restarts
-    ///
-    /// If the file doesn't exist, it will be created. If it exists,
-    /// it will be opened and replayed to restore previous state.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File system path for the AOF file
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let temp_path = std::env::temp_dir().join("myapp_data.aof");
-    /// let mut db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Set the AOF path for persistence. File is created if needed and replayed on startup.
     pub fn aof_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.aof_path = Some(path.into());
         self.in_memory = false;
         self
     }
 
-    /// Create an in-memory database with no persistence.
-    ///
-    /// In-memory databases:
-    /// - Are extremely fast (no disk I/O)
-    /// - Do not persist data across restarts
-    /// - Are ideal for caching, testing, and ephemeral data
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut db = DBBuilder::new()
-    ///     .in_memory()
-    ///     .build()?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Configure for in-memory storage with no persistence.
     pub fn in_memory(mut self) -> Self {
         self.in_memory = true;
         self.aof_path = None;
         self
     }
 
-    /// Set the database configuration.
-    ///
-    /// The configuration controls:
-    /// - Geohash precision for spatial indexing
-    /// - Sync policy (durability vs performance tradeoff)
-    /// - Default TTL for automatic expiration
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Database configuration
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{DBBuilder, Config, SyncPolicy};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = Config::with_geohash_precision(10)
-    ///     .with_sync_policy(SyncPolicy::Always)
-    ///     .with_default_ttl(Duration::from_secs(3600));
-    ///
-    /// let temp_path = std::env::temp_dir().join("high_precision.aof");
-    /// let mut db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .config(config)
-    ///     .build()?;
-    /// # let _ = std::fs::remove_file(&temp_path);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Set the database configuration (geohash precision, sync policy, TTL).
     pub fn config(mut self, config: Config) -> Self {
         self.config = config;
         self
     }
-    /// Enable update history tracking with a fixed per-key capacity.
-    ///
-    /// Each key retains at most `capacity` recent operations (set/delete).
+    /// Enable history tracking with a fixed per-key capacity.
     #[cfg(feature = "time-index")]
     pub fn history_capacity(mut self, capacity: usize) -> Self {
         self.config = self.config.clone().with_history_capacity(capacity);
         self
     }
 
-    /// Build the database with the configured options.
-    ///
-    /// This method:
-    /// 1. Creates the database instance
-    /// 2. Opens the AOF file (if persistence is enabled)
-    /// 3. Replays the AOF to restore previous state (startup replay)
-    /// 4. Rebuilds spatial indexes
-    /// 5. Returns a ready-to-use database
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The AOF file cannot be opened or created
-    /// - The AOF file is corrupted and cannot be replayed
-    /// - File system permissions prevent access
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let temp_path = std::env::temp_dir().join("my_data.aof");
-    /// let mut db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    ///
-    /// db.insert("key", b"value", None)?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Build the database. Opens AOF if configured and replays to restore state.
     pub fn build(self) -> Result<DB> {
         let mut inner = DBInner::new_with_config(&self.config);
 
-        // Initialize persistence if AOF path is specified
         if !self.in_memory
             && let Some(aof_path) = self.aof_path
         {
