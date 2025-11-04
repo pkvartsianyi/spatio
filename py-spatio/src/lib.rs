@@ -12,7 +12,7 @@ use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::Point as RustPoint;
 use spatio::{
     config::{Config as RustConfig, SetOptions as RustSetOptions},
-    db::DB as RustDB,
+    SyncDB as RustDB,
     error::Result as RustResult,
 };
 use std::time::{Duration, UNIX_EPOCH};
@@ -583,7 +583,7 @@ impl PySpatio {
 
     /// Get database statistics
     fn stats(&self) -> PyResult<PyObject> {
-        let stats = handle_error(self.db.stats())?;
+        let stats = self.db.stats();
 
         Python::with_gil(|py| {
             let dict = pyo3::types::PyDict::new(py);

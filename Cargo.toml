@@ -43,7 +43,8 @@ aof = ["dep:bincode"]
 toml = ["dep:toml"]
 time-index = []
 bench-prof = []
-full = ["geojson", "aof", "toml", "time-index"]
+sync = []
+full = ["geojson", "aof", "toml", "time-index", "sync"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -66,6 +67,10 @@ name = "trajectory_tracking"
 
 [[example]]
 name = "comprehensive_demo"
+
+[[example]]
+name = "sync_wrapper"
+required-features = ["sync"]
 
 [profile.release]
 lto = "thin"

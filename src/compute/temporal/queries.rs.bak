@@ -84,7 +84,7 @@ impl DB {
     /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut db = Spatio::memory()?;
+    /// let db = Spatio::memory()?;
     ///
     /// let trajectory = vec![
     ///     TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
@@ -143,7 +143,7 @@ impl DB {
     /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut db = Spatio::memory()?;
+    /// let db = Spatio::memory()?;
     ///
     /// // Query trajectory for first hour
     /// let path = db.query_trajectory("vehicle:truck001", 1640995200, 1640998800)?;

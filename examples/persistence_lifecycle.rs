@@ -43,7 +43,7 @@ fn demo_basic_persistence() -> Result<(), Box<dyn std::error::Error>> {
     // First session: Write data
     {
         println!("Session 1: Writing data...");
-        let db = Spatio::open(db_path)?;
+        let mut db = Spatio::open(db_path)?;
 
         db.insert("user:001", b"Alice Johnson", None)?;
         db.insert("user:002", b"Bob Smith", None)?;
@@ -77,7 +77,7 @@ fn demo_basic_persistence() -> Result<(), Box<dyn std::error::Error>> {
             String::from_utf8_lossy(&counter)
         );
 
-        let stats = db.stats()?;
+        let stats = db.stats();
         println!("  ✓ Total keys: {}", stats.key_count);
     }
 
@@ -94,7 +94,7 @@ fn demo_custom_aof_path() -> Result<(), Box<dyn std::error::Error>> {
     // First session: Create database with custom AOF path
     {
         println!("Session 1: Creating database with custom AOF path...");
-        let db = DBBuilder::new().aof_path(aof_path).build()?;
+        let mut db = DBBuilder::new().aof_path(aof_path).build()?;
 
         db.insert("config:version", b"1.0.0", None)?;
         db.insert("config:environment", b"production", None)?;
@@ -132,7 +132,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
     // First session: Insert spatial data
     {
         println!("Session 1: Inserting spatial data...");
-        let db = Spatio::open(db_path)?;
+        let mut db = Spatio::open(db_path)?;
 
         // Insert major cities
         let cities = vec![
@@ -148,7 +148,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ✓ Inserted city: {}", name);
         }
 
-        let stats = db.stats()?;
+        let stats = db.stats();
         println!("  ✓ Total keys: {}", stats.key_count);
     }
 
@@ -232,7 +232,7 @@ fn demo_config_based_persistence() -> Result<(), Box<dyn std::error::Error>> {
         println!("Config 1: Always sync (maximum durability)");
         let config = Config::default().with_sync_policy(SyncPolicy::Always);
 
-        let db = DBBuilder::new()
+        let mut db = DBBuilder::new()
             .aof_path("/tmp/spatio_always_sync.aof")
             .config(config)
             .build()?;
@@ -248,7 +248,7 @@ fn demo_config_based_persistence() -> Result<(), Box<dyn std::error::Error>> {
             .with_sync_policy(SyncPolicy::EverySecond)
             .with_default_ttl(Duration::from_secs(3600));
 
-        let db = DBBuilder::new()
+        let mut db = DBBuilder::new()
             .aof_path("/tmp/spatio_balanced.aof")
             .config(config)
             .build()?;
@@ -261,7 +261,7 @@ fn demo_config_based_persistence() -> Result<(), Box<dyn std::error::Error>> {
     // In-memory configuration (no persistence)
     {
         println!("Config 3: In-memory (no persistence)");
-        let db = DBBuilder::new().in_memory().build()?;
+        let mut db = DBBuilder::new().in_memory().build()?;
 
         db.insert("cache:key", b"temporary_value", None)?;
         println!("  ✓ Fast in-memory storage, no disk I/O");

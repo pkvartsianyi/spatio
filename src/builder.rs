@@ -7,9 +7,7 @@ use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
 use crate::storage::AOFFile;
-use parking_lot::RwLock;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Builder for creating database instances with custom configuration.
 ///
@@ -28,7 +26,7 @@ use std::sync::Arc;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let temp_path = std::env::temp_dir().join("test_db.aof");
-/// let db = DBBuilder::new()
+/// let mut db = DBBuilder::new()
 ///     .aof_path(&temp_path)
 ///     .build()?;
 ///
@@ -43,7 +41,7 @@ use std::sync::Arc;
 /// use spatio::DBBuilder;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let db = DBBuilder::new()
+/// let mut db = DBBuilder::new()
 ///     .in_memory()
 ///     .build()?;
 /// # Ok(())
@@ -61,7 +59,7 @@ use std::sync::Arc;
 ///     .with_default_ttl(Duration::from_secs(3600));
 ///
 /// let temp_path = std::env::temp_dir().join("high_precision.aof");
-/// let db = DBBuilder::new()
+/// let mut db = DBBuilder::new()
 ///     .aof_path(&temp_path)
 ///     .config(config)
 ///     .build()?;
@@ -118,7 +116,7 @@ impl DBBuilder {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let temp_path = std::env::temp_dir().join("myapp_data.aof");
-    /// let db = DBBuilder::new()
+    /// let mut db = DBBuilder::new()
     ///     .aof_path(&temp_path)
     ///     .build()?;
     /// # std::fs::remove_file(temp_path)?;
@@ -144,7 +142,7 @@ impl DBBuilder {
     /// use spatio::DBBuilder;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = DBBuilder::new()
+    /// let mut db = DBBuilder::new()
     ///     .in_memory()
     ///     .build()?;
     /// # Ok(())
@@ -179,7 +177,7 @@ impl DBBuilder {
     ///     .with_default_ttl(Duration::from_secs(3600));
     ///
     /// let temp_path = std::env::temp_dir().join("high_precision.aof");
-    /// let db = DBBuilder::new()
+    /// let mut db = DBBuilder::new()
     ///     .aof_path(&temp_path)
     ///     .config(config)
     ///     .build()?;
@@ -223,7 +221,7 @@ impl DBBuilder {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let temp_path = std::env::temp_dir().join("my_data.aof");
-    /// let db = DBBuilder::new()
+    /// let mut db = DBBuilder::new()
     ///     .aof_path(&temp_path)
     ///     .build()?;
     ///
@@ -246,7 +244,9 @@ impl DBBuilder {
         }
 
         Ok(DB {
-            inner: Arc::new(RwLock::new(inner)),
+            inner,
+            #[cfg(not(feature = "sync"))]
+            _not_send_sync: std::marker::PhantomData,
         })
     }
 }
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_builder_in_memory() {
-        let db = DBBuilder::new().in_memory().build().unwrap();
+        let mut db = DBBuilder::new().in_memory().build().unwrap();
         db.insert("test", b"value", None).unwrap();
         assert_eq!(db.get("test").unwrap().unwrap().as_ref(), b"value");
     }
@@ -285,14 +285,14 @@ mod tests {
             .with_sync_policy(SyncPolicy::Always)
             .with_default_ttl(Duration::from_secs(3600));
 
-        let db = DBBuilder::new().config(config).build().unwrap();
+        let mut db = DBBuilder::new().config(config).build().unwrap();
         db.insert("test", b"value", None).unwrap();
     }
 
     #[cfg(feature = "time-index")]
     #[test]
     fn test_builder_history_capacity() {
-        let db = DBBuilder::new().history_capacity(2).build().unwrap();
+        let mut db = DBBuilder::new().history_capacity(2).build().unwrap();
 
         db.insert("key", b"v1", None).unwrap();
         db.insert("key", b"v2", None).unwrap();
@@ -312,7 +312,7 @@ mod tests {
         // Clean up any existing file
         let _ = std::fs::remove_file(&aof_path);
 
-        let db = DBBuilder::new().aof_path(&aof_path).build().unwrap();
+        let mut db = DBBuilder::new().aof_path(&aof_path).build().unwrap();
 
         db.insert("persistent", b"data", None).unwrap();
         drop(db);

@@ -9,7 +9,7 @@ fn test_aof_rewrite_functionality() {
     let db_path = temp_dir.path().join("test.aof");
 
     // Create database with AOF persistence
-    let db = Spatio::open(&db_path).unwrap();
+    let mut db = Spatio::open(&db_path).unwrap();
 
     // Write data using simple key-value pairs to avoid spatial indexing issues
     for i in 0..50 {
@@ -72,7 +72,7 @@ fn test_aof_file_handle_consistency() {
     let db_path = temp_dir.path().join("handle_test.aof");
 
     // Create a database with AOF persistence
-    let db = Spatio::open(&db_path).unwrap();
+    let mut db = Spatio::open(&db_path).unwrap();
 
     // Write initial data
     for i in 0..20 {
@@ -147,7 +147,7 @@ fn test_aof_rewrite_atomicity() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("atomicity_test.aof");
 
-    let db = Spatio::open(&db_path).unwrap();
+    let mut db = Spatio::open(&db_path).unwrap();
 
     // Write data that will create a significant AOF file
     for i in 0..30 {
@@ -210,7 +210,7 @@ fn test_aof_persistence_across_restarts() {
 
     // First session: write data
     {
-        let db = Spatio::open(&db_path).unwrap();
+        let mut db = Spatio::open(&db_path).unwrap();
 
         // Insert various types of data
         db.insert("simple_key", b"simple_value", None).unwrap();
@@ -269,7 +269,7 @@ fn test_aof_persistence_across_restarts() {
 
     // Third session: modify data and verify persistence
     {
-        let db = Spatio::open(&db_path).unwrap();
+        let mut db = Spatio::open(&db_path).unwrap();
 
         // Update existing data
         db.insert("simple_key", b"updated_value", None).unwrap();
@@ -321,7 +321,7 @@ fn test_synchronous_rewrite_behavior() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("sync_rewrite_test.aof");
 
-    let db = Spatio::open(&db_path).unwrap();
+    let mut db = Spatio::open(&db_path).unwrap();
 
     // Write enough data to potentially trigger rewrite
     for i in 0..100 {

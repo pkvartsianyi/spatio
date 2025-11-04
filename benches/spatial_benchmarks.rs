@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 fn benchmark_basic_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("basic_operations");
 
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Benchmark single insert
     group.bench_function("single_insert", |b| {
@@ -51,7 +51,7 @@ fn benchmark_basic_operations(c: &mut Criterion) {
 fn benchmark_spatial_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("spatial_operations");
 
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Benchmark spatial point insertion
     group.bench_function("spatial_point_insert", |b| {
@@ -103,7 +103,7 @@ fn benchmark_spatial_operations(c: &mut Criterion) {
 fn benchmark_trajectory_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("trajectory_operations");
 
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Benchmark trajectory insertion
     group.bench_function("trajectory_insert", |b| {
@@ -161,7 +161,7 @@ fn benchmark_trajectory_operations(c: &mut Criterion) {
 fn benchmark_concurrent_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_operations");
 
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Benchmark concurrent inserts
     group.bench_function("sequential_inserts", |b| {
@@ -185,7 +185,7 @@ fn benchmark_concurrent_operations(c: &mut Criterion) {
 fn benchmark_ttl_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("ttl_operations");
 
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Benchmark TTL insertion
     group.bench_function("ttl_insert", |b| {
@@ -213,7 +213,7 @@ fn benchmark_large_datasets(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(30));
 
     for dataset_size in [1000, 10000, 100000].iter() {
-        let db = Spatio::memory().unwrap();
+        let mut db = Spatio::memory().unwrap();
 
         // Pre-populate with spatial data
         for i in 0..*dataset_size {
@@ -253,7 +253,7 @@ fn benchmark_persistence(c: &mut Criterion) {
     group.bench_function("aof_write_operations", |b| {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().unwrap();
-        let db = Spatio::open(temp_file.path()).unwrap();
+        let mut db = Spatio::open(temp_file.path()).unwrap();
 
         let mut counter = 0;
         b.iter(|| {
@@ -271,7 +271,7 @@ fn benchmark_persistence(c: &mut Criterion) {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().unwrap();
         let config = Config::default().with_sync_mode(SyncMode::Data);
-        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+        let mut db = Spatio::open_with_config(temp_file.path(), config).unwrap();
 
         let mut counter = 0;
         b.iter(|| {
@@ -288,7 +288,7 @@ fn benchmark_persistence(c: &mut Criterion) {
         use tempfile::NamedTempFile;
         let temp_file = NamedTempFile::new().unwrap();
         let config = Config::default().with_sync_policy(SyncPolicy::Always);
-        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+        let mut db = Spatio::open_with_config(temp_file.path(), config).unwrap();
 
         let mut counter = 0;
         b.iter(|| {
@@ -308,7 +308,7 @@ fn benchmark_persistence(c: &mut Criterion) {
         let config = Config::default()
             .with_sync_policy(SyncPolicy::Always)
             .with_sync_batch_size(8);
-        let db = Spatio::open_with_config(temp_file.path(), config).unwrap();
+        let mut db = Spatio::open_with_config(temp_file.path(), config).unwrap();
 
         let mut counter = 0;
         b.iter(|| {

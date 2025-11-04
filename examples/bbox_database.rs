@@ -7,10 +7,9 @@ use spatio::{BoundingBox2D, Point, Spatio};
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("=== Spatio - Bounding Box Database Integration ===\n");
+    println!("=== Spatio - Bounding Box Database ===\n");
 
-    // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // ========================================
@@ -268,7 +267,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\n9. Database Statistics");
     println!("-----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys: {}", stats.key_count);
     println!("   Total operations: {}", stats.operations_count);
 

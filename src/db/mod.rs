@@ -11,22 +11,29 @@ use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
 use crate::storage::AOFFile;
 use bytes::Bytes;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
+#[cfg(not(feature = "sync"))]
+use std::marker::PhantomData;
 use std::path::Path;
-use std::sync::Arc;
+
 use std::time::SystemTime;
 
 mod batch;
 mod internal;
 mod namespace;
 
+#[cfg(feature = "sync")]
+mod sync;
+
 pub use batch::AtomicBatch;
 pub use namespace::{Namespace, NamespaceManager};
 
-/// Main Spatio database structure providing spatio-temporal data storage.
+#[cfg(feature = "sync")]
+pub use sync::SyncDB;
+
+/// Main Spatio database structure (single-threaded by design).
 ///
 /// The `DB` struct is the core of Spatio, offering:
 /// - Key-value storage with spatio-temporal indexing
@@ -36,16 +43,67 @@ pub use namespace::{Namespace, NamespaceManager};
 /// - Atomic batch operations
 /// - Optional persistence with append-only file (AOF) format
 ///
+/// # Thread Safety
+///
+/// **`DB` is NOT thread-safe by default.** It cannot be sent between threads
+/// or shared without synchronization. This design choice provides:
+///
+/// - **Maximum performance** for single-threaded use cases
+/// - **Flexibility** to choose your own concurrency model
+/// - **Compile-time safety** - you cannot accidentally share `DB` unsafely
+///
+/// ## Options for Multi-Threaded Use
+///
+/// ### Option 1: Use the `sync` feature (easiest)
+///
+/// ```toml
+/// [dependencies]
+/// spatio = { version = "2.0", features = ["sync"] }
+/// ```
+///
+/// ```rust,ignore
+/// use spatio::SyncDB;
+/// use std::thread;
+///
+/// let db = SyncDB::open("data.db").unwrap();
+/// let db_clone = db.clone();
+///
+/// thread::spawn(move || {
+///     db_clone.insert("key", b"value", None).unwrap();
+/// });
+/// ```
+///
+/// ### Option 2: Manual wrapping with RwLock/Mutex
+///
+/// ```rust,ignore
+/// use spatio::Spatio;
+/// use parking_lot::RwLock;
+/// use std::sync::Arc;
+///
+/// let db = Arc::new(RwLock::new(Spatio::open("data.db").unwrap()));
+/// let db_clone = db.clone();
+///
+/// std::thread::spawn(move || {
+///     db_clone.write().insert("key", b"value", None).unwrap();
+/// });
+/// ```
+///
+/// ### Option 3: Actor pattern (recommended for async)
+///
+/// For async applications, use an actor/channel pattern.
+/// See `examples/actor_pattern.rs` for details.
+///
 /// # Examples
 ///
-/// ## Basic Usage
+/// ## Single-threaded usage (no wrapper needed)
+///
 /// ```rust
 /// use spatio::{Spatio, Point, SetOptions};
 /// use std::time::Duration;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create an in-memory database
-/// let db = Spatio::memory()?;
+/// let mut db = Spatio::memory()?;
 ///
 /// // Store a simple key-value pair
 /// db.insert("key1", b"value1", None)?;
@@ -58,11 +116,12 @@ pub use namespace::{Namespace, NamespaceManager};
 /// ```
 ///
 /// ## Spatial Operations
+///
 /// ```rust
 /// use spatio::{Spatio, Point};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let db = Spatio::memory()?;
+/// let mut db = Spatio::memory()?;
 ///
 /// // Store geographic points (automatically indexed)
 /// let nyc = Point::new(-74.0060, 40.7128);
@@ -77,9 +136,29 @@ pub use namespace::{Namespace, NamespaceManager};
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
+///
+/// ## Atomic batching
+///
+/// ```rust
+/// use spatio::Spatio;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut db = Spatio::memory()?;
+///
+/// // All operations succeed or fail together
+/// db.atomic(|batch| {
+///     batch.insert("key1", b"value1", None)?;
+///     batch.insert("key2", b"value2", None)?;
+///     batch.delete("old_key")?;
+///     Ok(())
+/// })?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct DB {
-    pub(crate) inner: Arc<RwLock<DBInner>>,
+    pub(crate) inner: DBInner,
+    #[cfg(not(feature = "sync"))]
+    pub(crate) _not_send_sync: PhantomData<*const ()>,
 }
 
 pub(crate) struct DBInner {
@@ -173,7 +252,7 @@ impl DB {
     ///     .with_default_ttl(Duration::from_secs(3600));
     /// # let _ = std::fs::remove_file("my_database.db");
     ///
-    /// let db = Spatio::open_with_config("my_database.db", config)?;
+    /// let mut db = Spatio::open_with_config("my_database.db", config)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -190,7 +269,9 @@ impl DB {
         }
 
         Ok(DB {
-            inner: Arc::new(RwLock::new(inner)),
+            inner,
+            #[cfg(not(feature = "sync"))]
+            _not_send_sync: PhantomData,
         })
     }
 
@@ -219,7 +300,7 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Create database with custom AOF path
     /// let temp_path = std::env::temp_dir().join("builder_demo.aof");
-    /// let db = Spatio::builder()
+    /// let mut db = Spatio::builder()
     ///     .aof_path(&temp_path)
     ///     .build()?;
     ///
@@ -233,9 +314,8 @@ impl DB {
     }
 
     /// Get database statistics
-    pub fn stats(&self) -> Result<DbStats> {
-        let inner = self.read()?;
-        Ok(inner.stats.clone())
+    pub fn stats(&self) -> DbStats {
+        self.inner.stats.clone()
     }
 
     /// Inserts a key-value pair into the database.
@@ -253,7 +333,7 @@ impl DB {
     /// use std::time::Duration;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Simple insert
     /// db.insert("user:123", b"John Doe", None)?;
@@ -265,16 +345,18 @@ impl DB {
     /// # }
     /// ```
     pub fn insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        let mut inner = self.write_checked()?;
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
 
-        let cleanup_batch = inner.config.amortized_cleanup_batch;
+        let cleanup_batch = self.inner.config.amortized_cleanup_batch;
         if cleanup_batch > 0 {
-            let _ = inner.amortized_cleanup(cleanup_batch)?;
+            let _ = self.inner.amortized_cleanup(cleanup_batch)?;
         }
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
@@ -290,41 +372,23 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        let old = inner.insert_item(key_bytes.clone(), item);
-        inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
+        let old = self.inner.insert_item(key_bytes.clone(), item);
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
         Ok(old.map(|item| item.value))
     }
 
     /// Get a value by key
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key_bytes = Bytes::copy_from_slice(key.as_ref());
-
-        {
-            let inner = self.read_checked()?;
-
-            if let Some(item) = inner.get_item(&key_bytes) {
-                if !item.is_expired() {
-                    return Ok(Some(item.value.clone()));
-                }
-            } else {
-                return Ok(None);
-            }
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
         }
 
-        let mut inner = self.write_checked()?;
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = inner.get_item(&key_bytes) {
-            if item.is_expired() {
-                if let Some(_old) = inner.remove_item(&key_bytes) {
-                    inner.write_delete_to_aof_if_needed(&key_bytes)?;
-
-                    let cleanup_batch = inner.config.amortized_cleanup_batch;
-                    if cleanup_batch > 0 {
-                        let _ = inner.amortized_cleanup(cleanup_batch)?;
-                    }
-                }
-                return Ok(None);
-            }
+        if let Some(item) = self.inner.get_item(&key_bytes)
+            && !item.is_expired()
+        {
             return Ok(Some(item.value.clone()));
         }
 
@@ -332,13 +396,15 @@ impl DB {
     }
 
     /// Delete a key atomically
-    pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let mut inner = self.write_checked()?;
+    pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = inner.remove_item(&key_bytes) {
-            inner.write_delete_to_aof_if_needed(&key_bytes)?;
+        if let Some(item) = self.inner.remove_item(&key_bytes) {
+            self.inner.write_delete_to_aof_if_needed(&key_bytes)?;
             Ok(Some(item.value))
         } else {
             Ok(None)
@@ -346,11 +412,11 @@ impl DB {
     }
 
     /// Execute multiple operations atomically
-    pub fn atomic<F, R>(&self, f: F) -> Result<R>
+    pub fn atomic<F, R>(&mut self, f: F) -> Result<R>
     where
         F: FnOnce(&mut AtomicBatch) -> Result<R>,
     {
-        let mut batch = AtomicBatch::new(self.clone());
+        let mut batch = AtomicBatch::new(&mut self.inner);
         let result = f(&mut batch)?;
         batch.commit()?;
         Ok(result)
@@ -368,7 +434,7 @@ impl DB {
     /// use spatio::Spatio;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::open("my_data.db")?;
+    /// let mut db = Spatio::open("my_data.db")?;
     /// db.insert("critical_key", b"important_data", None)?;
     ///
     /// // Ensure data is on disk before continuing
@@ -376,12 +442,11 @@ impl DB {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn sync(&self) -> Result<()> {
-        let mut inner = self.write()?;
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file {
+    pub fn sync(&mut self) -> Result<()> {
+        let sync_mode = self.inner.config.sync_mode;
+        if let Some(ref mut aof_file) = self.inner.aof_file {
             aof_file.sync_with_mode(sync_mode)?;
-            inner.sync_ops_since_flush = 0;
+            self.inner.sync_ops_since_flush = 0;
         }
         Ok(())
     }
@@ -417,41 +482,17 @@ impl DB {
     /// # }
     /// ```
     pub fn close(&mut self) -> Result<()> {
-        let mut inner = self.write_checked()?;
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
 
-        inner.closed = true;
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file {
+        self.inner.closed = true;
+        let sync_mode = self.inner.config.sync_mode;
+        if let Some(ref mut aof_file) = self.inner.aof_file {
             aof_file.sync_with_mode(sync_mode)?;
-            inner.sync_ops_since_flush = 0;
+            self.inner.sync_ops_since_flush = 0;
         }
         Ok(())
-    }
-
-    pub(crate) fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        Ok(self.inner.read())
-    }
-
-    pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        Ok(self.inner.write())
-    }
-
-    /// Acquire a read lock and verify the database is not closed
-    pub(crate) fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        let guard = self.read()?;
-        if guard.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-        Ok(guard)
-    }
-
-    /// Acquire a write lock and verify the database is not closed
-    pub(crate) fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        let guard = self.write()?;
-        if guard.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-        Ok(guard)
     }
 }
 
@@ -524,20 +565,15 @@ impl HistoryTracker {
 /// Use `close()` explicitly if you need to prevent further operations.
 impl Drop for DB {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) != 1 {
+        if self.inner.closed {
             return;
         }
 
-        let mut inner = self.inner.write();
-        if inner.closed {
-            return;
-        }
-
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file
+        let sync_mode = self.inner.config.sync_mode;
+        if let Some(ref mut aof_file) = self.inner.aof_file
             && aof_file.sync_with_mode(sync_mode).is_ok()
         {
-            inner.sync_ops_since_flush = 0;
+            self.inner.sync_ops_since_flush = 0;
         }
     }
 }
@@ -549,32 +585,20 @@ mod tests {
     use super::*;
     #[cfg(feature = "time-index")]
     use bytes::Bytes;
-    use std::sync::Arc;
     use std::thread::sleep;
     use std::time::Duration;
 
     #[test]
-    fn test_drop_only_syncs_on_last_reference() {
+    fn test_drop_syncs_to_disk() {
         use std::fs;
         let temp_path = std::env::temp_dir().join("test_drop_sync.aof");
         let _ = fs::remove_file(&temp_path);
 
-        let db = DB::open(&temp_path).unwrap();
-        db.insert("key1", b"value1", None).unwrap();
-
-        // Create clones
-        let db2 = db.clone();
-        let db3 = db.clone();
-
-        assert_eq!(Arc::strong_count(&db.inner), 3);
-
-        drop(db2);
-        assert_eq!(Arc::strong_count(&db.inner), 2);
-
-        drop(db3);
-        assert_eq!(Arc::strong_count(&db.inner), 1);
-
-        drop(db);
+        {
+            let mut db = DB::open(&temp_path).unwrap();
+            db.insert("key1", b"value1", None).unwrap();
+            // DB dropped here, should sync
+        }
 
         let db = DB::open(&temp_path).unwrap();
         assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
@@ -594,23 +618,11 @@ mod tests {
         assert!(db.delete("key").is_err());
     }
 
-    #[test]
-    fn test_clone_shares_state() {
-        let db = DB::memory().unwrap();
-        let db2 = db.clone();
-
-        db.insert("key1", b"value1", None).unwrap();
-        db2.insert("key2", b"value2", None).unwrap();
-
-        assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
-        assert_eq!(db.get("key2").unwrap().unwrap().as_ref(), b"value2");
-        assert_eq!(db2.get("key1").unwrap().unwrap().as_ref(), b"value1");
-        assert_eq!(db2.get("key2").unwrap().unwrap().as_ref(), b"value2");
-    }
+    // Note: DB is no longer Clone - removed test_clone_shares_state
 
     #[test]
     fn test_cleanup_expired_removes_keys() {
-        let db = DB::memory().unwrap();
+        let mut db = DB::memory().unwrap();
         db.insert(
             "ttl",
             b"value",
@@ -629,7 +641,7 @@ mod tests {
     #[cfg(feature = "time-index")]
     #[test]
     fn test_keys_created_time_filters() {
-        let db = DB::memory().unwrap();
+        let mut db = DB::memory().unwrap();
         db.insert("old", b"1", None).unwrap();
         sleep(Duration::from_millis(30));
         db.insert("recent", b"2", None).unwrap();
@@ -640,10 +652,8 @@ mod tests {
 
         let old_key = Bytes::copy_from_slice(b"old");
         let new_key = Bytes::copy_from_slice(b"recent");
-        let inner = db.read().unwrap();
-        let old_created = inner.get_item(&old_key).unwrap().created_at;
-        let new_created = inner.get_item(&new_key).unwrap().created_at;
-        drop(inner);
+        let old_created = db.inner.get_item(&old_key).unwrap().created_at;
+        let new_created = db.inner.get_item(&new_key).unwrap().created_at;
 
         let between = db.keys_created_between(old_created, new_created).unwrap();
         assert!(between.iter().any(|k| k.as_ref() == b"old"));
@@ -654,7 +664,7 @@ mod tests {
     #[test]
     fn test_history_tracking_with_capacity() {
         let config = Config::default().with_history_capacity(2);
-        let db = DB::open_with_config(":memory:", config).unwrap();
+        let mut db = DB::open_with_config(":memory:", config).unwrap();
 
         db.insert("key", b"v1", None).unwrap();
         db.insert("key", b"v2", None).unwrap();

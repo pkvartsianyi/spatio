@@ -4,7 +4,7 @@ use std::time::{Duration, UNIX_EPOCH};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Comprehensive Demo ===\n");
 
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === 1. BASIC KEY-VALUE OPERATIONS ===
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_name = db.get("app:name")?.unwrap();
     println!("   Stored: {}", String::from_utf8_lossy(&app_name));
 
-    let count = db.stats()?.key_count;
+    let count = db.stats().key_count;
     println!("   Total keys: {}\n", count);
 
     // === 2. TTL (TIME-TO-LIVE) ===
@@ -174,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("9. Database Statistics");
     println!("----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 

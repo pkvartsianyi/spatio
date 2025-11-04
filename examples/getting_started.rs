@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Getting Started ===\n");
 
     // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === BASIC KEY-VALUE STORAGE ===
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("6. Database Statistics");
     println!("----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys stored: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 

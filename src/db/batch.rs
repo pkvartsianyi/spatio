@@ -1,13 +1,13 @@
 //! Atomic batch operations.
 
-use super::DB;
+use super::DBInner;
 use crate::config::SetOptions;
 use crate::error::Result;
 use bytes::Bytes;
 
 /// Atomic batch. All operations succeed or all fail.
-pub struct AtomicBatch {
-    db: DB,
+pub struct AtomicBatch<'a> {
+    inner: &'a mut DBInner,
     operations: Vec<BatchOperation>,
 }
 
@@ -23,10 +23,10 @@ enum BatchOperation {
     },
 }
 
-impl AtomicBatch {
-    pub(crate) fn new(db: DB) -> Self {
+impl<'a> AtomicBatch<'a> {
+    pub(crate) fn new(inner: &'a mut DBInner) -> Self {
         Self {
-            db,
+            inner,
             operations: Vec::new(),
         }
     }
@@ -54,9 +54,7 @@ impl AtomicBatch {
     }
 
     pub(crate) fn commit(self) -> Result<()> {
-        let mut inner = self.db.write()?;
-
-        if inner.closed {
+        if self.inner.closed {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }
 
@@ -68,13 +66,13 @@ impl AtomicBatch {
                 BatchOperation::Insert { key, value, opts } => {
                     let item = crate::config::DbItem::from_options(value.clone(), opts.as_ref());
                     let created_at = item.created_at;
-                    inner.insert_item(key.clone(), item);
+                    self.inner.insert_item(key.clone(), item);
 
                     // Collect for batch AOF write
                     aof_ops.push((key, value, opts, created_at, false));
                 }
                 BatchOperation::Delete { key } => {
-                    inner.remove_item(&key);
+                    self.inner.remove_item(&key);
 
                     // Collect for batch AOF write (using dummy values for delete)
                     aof_ops.push((key, Bytes::new(), None, std::time::SystemTime::now(), true));
@@ -83,7 +81,7 @@ impl AtomicBatch {
         }
 
         // Second pass: Write all operations to AOF in one batch
-        inner.write_batch_to_aof(&aof_ops)?;
+        self.inner.write_batch_to_aof(&aof_ops)?;
 
         Ok(())
     }

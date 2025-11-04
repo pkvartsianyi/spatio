@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default()
             .with_sync_policy(SyncPolicy::Always)
             .with_sync_batch_size(1);
-        let db = Spatio::memory_with_config(config)?;
+        let mut db = Spatio::memory_with_config(config)?;
 
         let start = Instant::now();
         db.atomic(|batch| {
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("=== With Never Sync (Memory-only) ===");
     let config = Config::default().with_sync_policy(SyncPolicy::Never);
-    let db = Spatio::memory_with_config(config)?;
+    let mut db = Spatio::memory_with_config(config)?;
 
     let batch_size = 10_000;
     let start = Instant::now();

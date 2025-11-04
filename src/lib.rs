@@ -3,7 +3,7 @@
 //! ```rust
 //! use spatio::{Point, Spatio};
 //!
-//! let db = Spatio::memory()?;
+//! let mut db = Spatio::memory()?;
 //! db.insert("key", b"value", None)?;
 //!
 //! let point = Point::new(-74.0060, 40.7128);
@@ -23,6 +23,9 @@ pub mod storage;
 pub use builder::DBBuilder;
 pub use db::DB;
 pub use error::{Result, SpatioError};
+
+#[cfg(feature = "sync")]
+pub use db::SyncDB;
 
 pub type Spatio = DB;
 
@@ -56,6 +59,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod prelude {
 
     pub use crate::{DBBuilder, Result, Spatio, SpatioError};
+
+    #[cfg(feature = "sync")]
+    pub use crate::SyncDB;
 
     pub use geo::{Point, Polygon, Rect};
 

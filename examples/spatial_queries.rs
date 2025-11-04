@@ -3,7 +3,7 @@ use spatio::{Point, Spatio};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Spatial Queries ===\n");
 
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === SETUP: Insert World Cities ===
@@ -186,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // === SUMMARY ===
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("=== Query Summary ===");
     println!("Database statistics:");
     println!("  Total keys: {}", stats.key_count);

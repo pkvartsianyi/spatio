@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Advanced Spatial Operations Demo ===\n");
 
     // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
 
     // ========================================
     // 1. Distance Calculations

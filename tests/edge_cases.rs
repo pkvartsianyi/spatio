@@ -1,12 +1,11 @@
 use spatio::{Config, Point, Spatio};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 /// Test 1: Large dataset stress test
 #[test]
 fn test_large_dataset_insertion() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Insert 10K points (keeping it reasonable for CI)
     for i in 0..10_000 {
@@ -27,42 +26,21 @@ fn test_large_dataset_insertion() {
 }
 
 /// Test 2: Concurrent write contention
+/// DISABLED: DB is now !Send + !Sync by design. Use SyncDB wrapper or actor pattern for concurrency.
 #[test]
+#[ignore]
 fn test_concurrent_write_contention() {
-    let db = Arc::new(Spatio::memory().expect("Failed to create database"));
-    let mut handles = vec![];
-
-    // Spawn 10 threads all writing to same keys
-    for thread_id in 0..10 {
-        let db_clone = Arc::clone(&db);
-        let handle = thread::spawn(move || {
-            for i in 0..100 {
-                let key = format!("shared_key_{}", i % 10); // Only 10 unique keys
-                let value = format!("thread_{}_value_{}", thread_id, i);
-                db_clone
-                    .insert(&key, value.as_bytes(), None)
-                    .expect("Insert failed");
-            }
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all threads
-    for handle in handles {
-        handle.join().expect("Thread panicked");
-    }
-
-    // Verify database is still consistent
-    for i in 0..10 {
-        let key = format!("shared_key_{}", i);
-        assert!(db.get(&key).expect("Get failed").is_some());
-    }
+    // This test is incompatible with the new single-threaded DB design.
+    // For multi-threaded usage, use:
+    // 1. SyncDB wrapper (with 'sync' feature)
+    // 2. Actor pattern (recommended for async usage)
+    // 3. Manual Arc<RwLock<DB>> wrapper
 }
 
 /// Test 3: Extreme coordinate values
 #[test]
 fn test_extreme_coordinates() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Valid edge cases
     let north_pole = Point::new(0.0, 90.0);
@@ -89,7 +67,7 @@ fn test_extreme_coordinates() {
 /// Test 4: Very long keys
 #[test]
 fn test_very_long_keys() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // 1KB key
     let long_key = "x".repeat(1_000);
@@ -136,7 +114,7 @@ fn test_empty_namespace_queries() {
 /// Test 6: Binary keys with special characters
 #[test]
 fn test_binary_keys_with_special_chars() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Keys with various special bytes
     let keys = [
@@ -159,7 +137,7 @@ fn test_binary_keys_with_special_chars() {
 /// Test 7: Massive TTL cleanup
 #[test]
 fn test_massive_ttl_cleanup() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Insert many keys with very short TTL
     let opts = spatio::SetOptions::with_ttl(Duration::from_millis(50));
@@ -180,7 +158,7 @@ fn test_massive_ttl_cleanup() {
 /// Test 8: Spatial queries at edge boundaries
 #[test]
 fn test_spatial_queries_at_boundaries() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Insert points along the equator
     for lon in -180..180 {
@@ -215,7 +193,7 @@ fn test_database_reopen_consistency() {
 
     // First session: write data
     {
-        let db = Spatio::open(path).expect("Failed to open database");
+        let mut db = Spatio::open(path).expect("Failed to open database");
         db.insert("persistent_key", b"persistent_value", None)
             .expect("Insert failed");
 
@@ -244,57 +222,21 @@ fn test_database_reopen_consistency() {
 }
 
 /// Test 10: Concurrent reads while writing
+/// DISABLED: DB is now !Send + !Sync by design. Use SyncDB wrapper or actor pattern for concurrency.
 #[test]
+#[ignore]
 fn test_concurrent_reads_during_writes() {
-    let db = Arc::new(Spatio::memory().expect("Failed to create database"));
-
-    // Pre-populate some data
-    for i in 0..100 {
-        let key = format!("key_{}", i);
-        db.insert(&key, format!("value_{}", i).as_bytes(), None)
-            .expect("Insert failed");
-    }
-
-    let mut handles = vec![];
-
-    // Spawn writer threads
-    for thread_id in 0..3 {
-        let db_clone = Arc::clone(&db);
-        let handle = thread::spawn(move || {
-            for i in 0..50 {
-                let key = format!("writer_{}_{}", thread_id, i);
-                db_clone.insert(&key, b"value", None).expect("Write failed");
-            }
-        });
-        handles.push(handle);
-    }
-
-    // Spawn reader threads
-    for _ in 0..5 {
-        let db_clone = Arc::clone(&db);
-        let handle = thread::spawn(move || {
-            for i in 0..100 {
-                let key = format!("key_{}", i % 100);
-                let _ = db_clone.get(&key).expect("Read failed");
-            }
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all threads
-    for handle in handles {
-        handle.join().expect("Thread panicked");
-    }
-
-    // Database should still be consistent
-    let value = db.get("key_0").expect("Get failed").expect("Key not found");
-    assert_eq!(value.as_ref(), b"value_0");
+    // This test is incompatible with the new single-threaded DB design.
+    // For multi-threaded usage, use:
+    // 1. SyncDB wrapper (with 'sync' feature)
+    // 2. Actor pattern (recommended for async usage)
+    // 3. Manual Arc<RwLock<DB>> wrapper
 }
 
 /// Test 11: Zero-radius spatial query
 #[test]
 fn test_zero_radius_spatial_query() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     let point = Point::new(-74.0, 40.7);
     db.insert_point("test", &point, b"data", None)
@@ -312,7 +254,7 @@ fn test_zero_radius_spatial_query() {
 /// Test 12: Very large radius spatial query
 #[test]
 fn test_very_large_radius_query() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Insert points around the world
     let points = [
@@ -340,7 +282,7 @@ fn test_very_large_radius_query() {
 /// Test 13: Atomic batch with many operations
 #[test]
 fn test_large_atomic_batch() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Large atomic batch
     db.atomic(|batch| {
@@ -364,7 +306,7 @@ fn test_large_atomic_batch() {
 /// Test 14: Delete non-existent keys
 #[test]
 fn test_delete_non_existent_keys() {
-    let db = Spatio::memory().expect("Failed to create database");
+    let mut db = Spatio::memory().expect("Failed to create database");
 
     // Deleting non-existent key should return None, not error
     let result = db
@@ -386,11 +328,11 @@ fn test_delete_non_existent_keys() {
 fn test_config_edge_cases() {
     // Very high precision should work
     let config = Config::with_geohash_precision(12);
-    let db = Spatio::memory_with_config(config).expect("Failed to create db");
+    let mut db = Spatio::memory_with_config(config).expect("Failed to create db");
     db.insert("test", b"value", None).expect("Insert failed");
 
     // Very low precision should also work
     let config = Config::with_geohash_precision(1);
-    let db = Spatio::memory_with_config(config).expect("Failed to create db");
+    let mut db = Spatio::memory_with_config(config).expect("Failed to create db");
     db.insert("test", b"value", None).expect("Insert failed");
 }

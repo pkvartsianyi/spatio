@@ -6,7 +6,7 @@ use tempfile::NamedTempFile;
 
 #[test]
 fn test_basic_operations() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Basic key-value operations
     db.insert("test_key", b"test_value", None).unwrap();
@@ -21,7 +21,7 @@ fn test_basic_operations() {
 
 #[test]
 fn test_ttl_operations() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Insert with TTL
     let ttl_opts = SetOptions::with_ttl(Duration::from_millis(100));
@@ -39,7 +39,7 @@ fn test_ttl_operations() {
 
 #[test]
 fn test_atomic_operations() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Atomic batch
     db.atomic(|batch| {
@@ -58,7 +58,7 @@ fn test_atomic_operations() {
 
 #[test]
 fn test_spatial_operations() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Insert points
     let nyc = Point::new(-74.0060, 40.7128);
@@ -82,7 +82,7 @@ fn test_spatial_operations() {
 
 #[test]
 fn test_trajectory_operations() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Create trajectory
     let trajectory = vec![
@@ -136,7 +136,7 @@ fn test_points_sharing_geohash_are_preserved() {
         ..Config::default()
     };
 
-    let db = Spatio::memory_with_config(config).unwrap();
+    let mut db = Spatio::memory_with_config(config).unwrap();
 
     let point_a = Point::new(-74.0060, 40.7128);
     let point_b = Point::new(-74.0062, 40.7130); // Nearby point likely in same geohash
@@ -171,7 +171,7 @@ fn test_persistence() {
 
     // Create database with data
     {
-        let db = Spatio::open(db_path).unwrap();
+        let mut db = Spatio::open(db_path).unwrap();
         db.insert("persistent_key", b"persistent_value", None)
             .unwrap();
 
@@ -230,10 +230,10 @@ fn test_persistence() {
 
 #[test]
 fn test_database_stats() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Initially empty
-    let stats = db.stats().unwrap();
+    let stats = db.stats();
     assert_eq!(stats.key_count, 0);
 
     // Add some data
@@ -243,13 +243,13 @@ fn test_database_stats() {
     let point = Point::new(-74.0060, 40.7128);
     db.insert_point("cities", &point, b"NYC", None).unwrap();
 
-    let stats = db.stats().unwrap();
+    let stats = db.stats();
     assert!(stats.key_count > 0);
 }
 
 #[test]
 fn test_multiple_namespaces() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     let nyc = Point::new(-74.0060, 40.7128);
     let london = Point::new(-0.1278, 51.5074);
@@ -274,7 +274,7 @@ fn test_multiple_namespaces() {
 
 #[test]
 fn test_spatial_query_methods() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     // Insert test points
     let nyc = Point::new(-74.0060, 40.7128);
@@ -347,7 +347,7 @@ fn test_spatial_query_methods() {
 
 #[test]
 fn test_point_spatial_methods() {
-    let db = Spatio::memory().unwrap();
+    let mut db = Spatio::memory().unwrap();
 
     let nyc = Point::new(-74.0060, 40.7128);
     let brooklyn = Point::new(-73.9442, 40.6782);
@@ -422,8 +422,8 @@ fn test_geohash_precision_configuration() {
     assert_eq!(default_config.geohash_precision, 8);
 
     // Create databases with different configurations
-    let custom_db = Spatio::memory_with_config(custom_config).unwrap();
-    let default_db = Spatio::memory_with_config(default_config).unwrap();
+    let mut custom_db = Spatio::memory_with_config(custom_config).unwrap();
+    let mut default_db = Spatio::memory_with_config(default_config).unwrap();
 
     // Test that both configurations work with spatial operations
     let point = Point::new(-74.0060, 40.7128);
@@ -485,7 +485,7 @@ fn test_coordinate_order_roundtrip() {
 
     // Insert point into database and sync to AOF
     {
-        let db = Spatio::open(db_path).unwrap();
+        let mut db = Spatio::open(db_path).unwrap();
         db.insert_point("test", &original_point, b"NYC", None)
             .unwrap();
         db.sync().unwrap();
