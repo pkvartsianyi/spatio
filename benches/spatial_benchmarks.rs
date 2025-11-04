@@ -246,6 +246,86 @@ fn benchmark_large_datasets(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_3d_spatial_operations(c: &mut Criterion) {
+    use spatio::Point3d;
+
+    let mut group = c.benchmark_group("3d_spatial_operations");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(20));
+
+    for dataset_size in [1000, 10000, 50000].iter() {
+        let mut db = Spatio::memory().unwrap();
+
+        // Pre-populate with 3D spatial data (aircraft/drone positions)
+        for i in 0..*dataset_size {
+            let lat = 40.0 + (i as f64 * 0.00001);
+            let lon = -74.0 + (i as f64 * 0.00001);
+            let alt = 1000.0 + ((i % 10000) as f64 * 0.5);
+            let point = Point3d::new(lon, lat, alt);
+            let data = format!("aircraft:{}", i);
+            db.insert_point_3d("aircraft", &point, data.as_bytes(), None)
+                .unwrap();
+        }
+
+        // Benchmark spherical query (3D radius search)
+        group.bench_with_input(
+            BenchmarkId::new("3d_sphere_query", dataset_size),
+            dataset_size,
+            |b, &_size| {
+                let center = Point3d::new(-74.0, 40.0, 3000.0);
+                b.iter(|| {
+                    db.query_within_sphere_3d(
+                        black_box("aircraft"),
+                        black_box(&center),
+                        black_box(5000.0),
+                        black_box(100),
+                    )
+                    .unwrap()
+                })
+            },
+        );
+
+        // Benchmark cylindrical query (altitude-constrained radius)
+        group.bench_with_input(
+            BenchmarkId::new("3d_cylinder_query", dataset_size),
+            dataset_size,
+            |b, &_size| {
+                let center = Point3d::new(-74.0, 40.0, 0.0);
+                b.iter(|| {
+                    db.query_within_cylinder_3d(
+                        black_box("aircraft"),
+                        black_box(&center),
+                        black_box(10000.0),
+                        black_box(2000.0),
+                        black_box(4000.0),
+                        black_box(100),
+                    )
+                    .unwrap()
+                })
+            },
+        );
+
+        // Benchmark 3D KNN
+        group.bench_with_input(
+            BenchmarkId::new("3d_knn", dataset_size),
+            dataset_size,
+            |b, &_size| {
+                let query_point = Point3d::new(-74.0, 40.0, 3000.0);
+                b.iter(|| {
+                    db.knn_3d(
+                        black_box("aircraft"),
+                        black_box(&query_point),
+                        black_box(10),
+                    )
+                    .unwrap()
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
 fn benchmark_persistence(c: &mut Criterion) {
     let mut group = c.benchmark_group("persistence");
 
@@ -333,6 +413,7 @@ criterion_group!(
     benchmark_concurrent_operations,
     benchmark_ttl_operations,
     benchmark_large_datasets,
+    benchmark_3d_spatial_operations,
     benchmark_persistence
 );
 
