@@ -73,24 +73,15 @@ fn main() -> Result<()> {
 
 ## Features
 
-**Spatial queries:** Radius search, bounding box, K-nearest-neighbors, polygon containment
-**3D support:** Full altitude-aware indexing and queries
-**Trajectories:** Track movement over time
-**Distance metrics:** Haversine, Geodesic, Rhumb, Euclidean
-**TTL:** Auto-expire old data
-**Persistence:** Snapshots (default) or append-only file (AOF)
-**Namespaces:** Logical data separation in one database
-
-## Coordinate Order
-
-**Important:** Spatio uses `(longitude, latitude)` order everywhere - same as GeoJSON and most GIS tools.
-
-```rust
-// Correct: lon, lat
-let point = Point::new(-74.0060, 40.7128);  // NYC
-```
-
-This matches the mathematical (x, y) convention and makes GeoJSON interop trivial.
+- **Spatial queries:** Radius search, bounding box, K-nearest neighbours, polygon containment
+- **3D support:** Altitude-aware indexing and 3D spatial queries (sphere, cylinder)
+- **Trajectories:** Insert and query movement paths over time
+- **Distance metrics:** Haversine, Geodesic, Rhumb line, and Euclidean calculations
+- **Persistence:** Choose between snapshots (default) or append-only file (AOF)
+- **Namespaces:** Logical separation of datasets within a single database instance
+- **Lightweight:** No SQL parser, no external dependencies, no setup required
+- **Cross-language:** Native Python bindings via PyO3
+- **Edge-optimised:** Runs entirely in-process with low memory and zero network latency
 
 ## Examples
 
