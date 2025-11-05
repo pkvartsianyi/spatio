@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "spatio"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bincode",
  "bytes",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-types"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "geo",
  "serde",

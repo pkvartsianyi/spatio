@@ -1,6 +1,6 @@
 [package]
 name = "spatio-types"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.90.0"
 description = "Core spatial and temporal data types for the Spatio database"
