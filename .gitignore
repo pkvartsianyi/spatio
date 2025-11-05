@@ -52,6 +52,8 @@ Thumbs.db
 /benches/results/
 criterion/
 /target/criterion/
+bench_output.txt
+benchmark_results.txt
 
 # Code coverage
 tarpaulin-report.html

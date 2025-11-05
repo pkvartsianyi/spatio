@@ -14,119 +14,63 @@ pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
 pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
 pub use spatio_types::trajectory::{Trajectory, Trajectory3D};
 
-/// Synchronization policy for persistence
+/// Synchronization policy for persistence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncPolicy {
-    /// Never sync to disk (fastest, least safe)
     Never,
-    /// Sync every second (recommended default)
     #[default]
     EverySecond,
-    /// Sync after every write (slowest, safest)
     Always,
 }
 
-/// File synchronization strategy.
+/// File synchronization strategy (fsync vs fdatasync).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
-    /// Call `fsync` / `File::sync_all` to persist metadata + data.
     #[default]
     All,
-    /// Call `fdatasync` / `File::sync_data` to persist data only.
     Data,
 }
 
-/// Simplified database configuration
-///
-/// This configuration is designed to be easily serializable and loadable
-/// from JSON, TOML, or other formats while keeping complexity minimal.
-///
-/// # Example
-///
-/// ```rust
-/// use spatio::{Config, SyncPolicy};
-/// use std::time::Duration;
-///
-/// // Create default config
-/// let config = Config::default();
-///
-/// // Load from JSON
-/// let json = r#"{
-///     "sync_policy": "always",
-///     "default_ttl_seconds": 3600,
-///     "geohash_precision": 10
-/// }"#;
-/// let config: Config = serde_json::from_str(json).unwrap();
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Database configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
-    /// How often data is synced to disk
-    #[serde(default)]
+    #[serde(default = "Config::default_sync_policy")]
     pub sync_policy: SyncPolicy,
 
-    /// Default TTL for items in seconds (None means no default TTL)
     #[serde(default)]
     pub default_ttl_seconds: Option<f64>,
 
-    /// Geohash precision for spatial indexing (1-12, default: 8)
-    /// Higher values = more precision but more memory usage
-    #[serde(default = "Config::default_geohash_precision")]
-    pub geohash_precision: usize,
-
-    /// Controls whether the database issues `fsync` or `fdatasync`.
     #[serde(default)]
     pub sync_mode: SyncMode,
 
-    /// Number of writes to batch before forcing a sync when `SyncPolicy::Always`.
     #[serde(default = "Config::default_sync_batch_size")]
     pub sync_batch_size: usize,
 
-    /// Optional history capacity per key (number of events to retain)
     #[cfg(feature = "time-index")]
     #[serde(default)]
     pub history_capacity: Option<usize>,
 
-    /// Batch size for amortized cleanup
-    #[serde(default = "Config::default_amortized_cleanup_batch_size")]
-    pub amortized_cleanup_batch: usize,
+    #[cfg(feature = "snapshot")]
+    #[serde(default)]
+    pub snapshot_auto_ops: Option<usize>,
 }
 
 impl Config {
-    const fn default_geohash_precision() -> usize {
-        8
-    }
-
     const fn default_sync_batch_size() -> usize {
         1
     }
 
-    const fn default_amortized_cleanup_batch_size() -> usize {
-        0
+    const fn default_sync_policy() -> SyncPolicy {
+        SyncPolicy::EverySecond
     }
 
-    pub fn with_amortized_cleanup(mut self, batch_size: usize) -> Self {
-        self.amortized_cleanup_batch = batch_size;
+    #[cfg(feature = "snapshot")]
+    pub fn with_snapshot_auto_ops(mut self, ops: usize) -> Self {
+        self.snapshot_auto_ops = Some(ops);
         self
-    }
-
-    pub fn with_geohash_precision(precision: usize) -> Self {
-        assert!(
-            (1..=12).contains(&precision),
-            "Geohash precision must be between 1 and 12"
-        );
-
-        Self {
-            sync_policy: SyncPolicy::default(),
-            default_ttl_seconds: None,
-            geohash_precision: precision,
-            sync_mode: SyncMode::default(),
-            sync_batch_size: Self::default_sync_batch_size(),
-            #[cfg(feature = "time-index")]
-            history_capacity: None,
-            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
-        }
     }
 
     pub fn with_default_ttl(mut self, ttl: Duration) -> Self {
@@ -144,14 +88,12 @@ impl Config {
         self
     }
 
-    /// Adjust the number of writes to batch before syncing when `SyncPolicy::Always`.
     pub fn with_sync_batch_size(mut self, batch_size: usize) -> Self {
         assert!(batch_size > 0, "Sync batch size must be greater than zero");
         self.sync_batch_size = batch_size;
         self
     }
 
-    /// Enable update history with a maximum number of entries per key.
     #[cfg(feature = "time-index")]
     pub fn with_history_capacity(mut self, capacity: usize) -> Self {
         assert!(capacity > 0, "History capacity must be greater than zero");
@@ -159,7 +101,6 @@ impl Config {
         self
     }
 
-    /// Get default TTL as Duration
     pub fn default_ttl(&self) -> Option<Duration> {
         self.default_ttl_seconds.and_then(|ttl| {
             if ttl.is_finite() && ttl > 0.0 && ttl <= u64::MAX as f64 {
@@ -170,12 +111,7 @@ impl Config {
         })
     }
 
-    /// Validate configuration values
     pub fn validate(&self) -> Result<(), String> {
-        if self.geohash_precision < 1 || self.geohash_precision > 12 {
-            return Err("Geohash precision must be between 1 and 12".to_string());
-        }
-
         if let Some(ttl) = self.default_ttl_seconds {
             if !ttl.is_finite() {
                 return Err("Default TTL must be finite (not NaN or infinity)".to_string());
@@ -202,7 +138,6 @@ impl Config {
         Ok(())
     }
 
-    /// Load configuration from JSON string
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let config: Config = serde_json::from_str(json)?;
         if let Err(e) = config.validate() {
@@ -211,12 +146,10 @@ impl Config {
         Ok(config)
     }
 
-    /// Save configuration as JSON string
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }
 
-    /// Load configuration from TOML string (requires toml feature)
     #[cfg(feature = "toml")]
     pub fn from_toml(toml_str: &str) -> Result<Self, toml::de::Error> {
         let config: Config = toml::from_str(toml_str)?;
@@ -226,7 +159,6 @@ impl Config {
         Ok(config)
     }
 
-    /// Save configuration as TOML string (requires toml feature)
     #[cfg(feature = "toml")]
     pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)
@@ -238,17 +170,21 @@ impl Default for Config {
         Self {
             sync_policy: SyncPolicy::default(),
             default_ttl_seconds: None,
-            geohash_precision: Self::default_geohash_precision(),
             sync_mode: SyncMode::default(),
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
-            amortized_cleanup_batch: Self::default_amortized_cleanup_batch_size(),
+            #[cfg(feature = "snapshot")]
+            snapshot_auto_ops: None,
         }
     }
 }
 
-/// Options for setting values with optional TTL
+/// Options for setting values with TTL.
+///
+/// TTL is **lazy/passive**: expired items are filtered on read operations
+/// (`get()`, spatial queries) but remain in storage until manually cleaned up
+/// with `cleanup_expired()` or overwritten.
 #[derive(Debug, Clone, Default)]
 pub struct SetOptions {
     /// Time-to-live for this item
@@ -258,7 +194,19 @@ pub struct SetOptions {
 }
 
 impl SetOptions {
-    /// Create options with TTL
+    /// Create options with TTL (time-to-live).
+    ///
+    /// # Important: Manual Cleanup Required
+    ///
+    /// Expired items are treated as non-existent on reads (passive expiration),
+    /// but they remain in memory and storage until either:
+    ///
+    /// 1. Overwritten by a new value with the same key
+    /// 2. Manually cleaned with `db.cleanup_expired()`
+    /// 3. Database is restarted (snapshot won't restore expired items)
+    ///
+    /// **For production systems with TTL**, you MUST periodically call `cleanup_expired()`
+    /// to prevent unbounded memory growth.
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             ttl: Some(ttl),
@@ -266,7 +214,12 @@ impl SetOptions {
         }
     }
 
-    /// Create options with absolute expiration time
+    /// Create options with absolute expiration time.
+    ///
+    /// # Important: Manual Cleanup Required
+    ///
+    /// Like `with_ttl()`, expired items remain in storage until manually cleaned.
+    /// See `with_ttl()` documentation for cleanup requirements.
     pub fn with_expiration(expires_at: SystemTime) -> Self {
         Self {
             ttl: None,
@@ -281,13 +234,16 @@ impl SetOptions {
     }
 }
 
-/// Internal representation of a database item
+/// Internal representation of a database item.
+///
+/// Note: Items with expired `expires_at` are not automatically deleted.
+/// They are filtered out during reads and can be removed with `cleanup_expired()`.
 #[derive(Debug, Clone)]
 pub struct DbItem {
     /// The value bytes
     pub value: Bytes,
     pub created_at: SystemTime,
-    /// Expiration time (if any)
+    /// Expiration time (if any). Item is considered expired when SystemTime::now() >= expires_at.
     pub expires_at: Option<SystemTime>,
 }
 
@@ -349,7 +305,6 @@ impl DbItem {
         }
     }
 
-    /// Check if this item has expired
     pub fn is_expired(&self) -> bool {
         self.is_expired_at(SystemTime::now())
     }
@@ -433,27 +388,14 @@ mod tests {
         assert_eq!(config.sync_policy, SyncPolicy::EverySecond);
         assert_eq!(config.sync_mode, SyncMode::All);
         assert_eq!(config.sync_batch_size, 1);
-        assert_eq!(config.geohash_precision, 8);
         assert!(config.default_ttl_seconds.is_none());
         #[cfg(feature = "time-index")]
         assert!(config.history_capacity.is_none());
     }
 
     #[test]
-    fn test_config_with_geohash_precision() {
-        let config = Config::with_geohash_precision(10);
-        assert_eq!(config.geohash_precision, 10);
-    }
-
-    #[test]
-    #[should_panic(expected = "Geohash precision must be between 1 and 12")]
-    fn test_config_invalid_precision() {
-        Config::with_geohash_precision(15);
-    }
-
-    #[test]
     fn test_config_serialization() {
-        let config = Config::with_geohash_precision(10)
+        let config = Config::default()
             .with_default_ttl(Duration::from_secs(3600))
             .with_sync_policy(SyncPolicy::Always)
             .with_sync_mode(SyncMode::Data)
@@ -462,7 +404,6 @@ mod tests {
         let json = config.to_json().unwrap();
         let deserialized: Config = Config::from_json(&json).unwrap();
 
-        assert_eq!(deserialized.geohash_precision, 10);
         assert_eq!(deserialized.sync_policy, SyncPolicy::Always);
         assert_eq!(deserialized.sync_mode, SyncMode::Data);
         assert_eq!(deserialized.sync_batch_size, 8);
@@ -539,14 +480,13 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = Config::default();
+        let config = Config::default();
         assert!(config.validate().is_ok());
 
-        config.geohash_precision = 15;
-        assert!(config.validate().is_err());
-
-        config.geohash_precision = 8;
-        config.default_ttl_seconds = Some(-1.0);
+        let config = Config {
+            default_ttl_seconds: Some(-1.0),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

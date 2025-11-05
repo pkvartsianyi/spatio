@@ -12,12 +12,16 @@ use std::time::SystemTime;
 pub mod backends;
 #[cfg(feature = "aof")]
 mod persistence;
+#[cfg(feature = "snapshot")]
+mod snapshot;
 
 #[cfg(feature = "aof")]
 pub use backends::AOFBackend;
 pub use backends::MemoryBackend;
 #[cfg(feature = "aof")]
 pub use persistence::{AOFCommand, AOFConfig, AOFFile};
+#[cfg(feature = "snapshot")]
+pub use snapshot::{SnapshotConfig, SnapshotFile};
 
 /// Trait for storage backend implementations
 ///

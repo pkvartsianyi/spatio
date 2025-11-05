@@ -1,6 +1,6 @@
 //! 3D spatial operations for altitude-aware geographic queries.
 
-use super::{BBoxQuery, CylinderQuery};
+use crate::compute::spatial::rtree::{BBoxQuery, CylinderQuery};
 use crate::config::{BoundingBox3D, Point3d, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::Result;
@@ -25,7 +25,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Track a drone at 100 meters altitude
     /// let drone_pos = Point3d::new(-74.0060, 40.7128, 100.0);
@@ -38,15 +38,13 @@ impl DB {
     /// # }
     /// ```
     pub fn insert_point_3d(
-        &self,
+        &mut self,
         prefix: &str,
         point: &Point3d,
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
         let data_ref = Bytes::copy_from_slice(value);
-
-        let mut inner = self.write()?;
 
         let item = match opts {
             Some(SetOptions { ttl: Some(ttl), .. }) => {
@@ -65,9 +63,9 @@ impl DB {
             DBInner::generate_spatial_key(prefix, point.x(), point.y(), point.z(), created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
-        inner.insert_item(key_bytes.clone(), item);
+        self.inner.insert_item(key_bytes.clone(), item);
 
-        inner.spatial_index.insert_point(
+        self.inner.spatial_index.insert_point(
             prefix,
             point.x(),
             point.y(),
@@ -76,7 +74,8 @@ impl DB {
             data_ref.clone(),
         );
 
-        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
         Ok(())
     }
 
@@ -102,7 +101,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let drone1 = Point3d::new(-74.0060, 40.7128, 100.0);
     /// let drone2 = Point3d::new(-74.0070, 40.7138, 150.0);
@@ -127,9 +126,7 @@ impl DB {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(Point3d, Bytes, f64)>> {
-        let inner = self.read()?;
-
-        let results = inner.spatial_index.query_within_sphere(
+        let results = self.inner.spatial_index.query_within_sphere(
             prefix,
             center.x(),
             center.y(),
@@ -139,7 +136,9 @@ impl DB {
         );
 
         Ok(Self::results_to_point3d_with_distance(
-            &inner, prefix, results,
+            &self.inner,
+            prefix,
+            results,
         ))
     }
 
@@ -157,7 +156,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d, BoundingBox3D};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let drone = Point3d::new(-74.0060, 40.7128, 100.0);
     /// db.insert_point_3d("drones", &drone, b"Drone-1", None)?;
@@ -174,9 +173,7 @@ impl DB {
         bbox: &BoundingBox3D,
         limit: usize,
     ) -> Result<Vec<(Point3d, Bytes)>> {
-        let inner = self.read()?;
-
-        let results = inner.spatial_index.query_within_bbox(
+        let results = self.inner.spatial_index.query_within_bbox(
             prefix,
             BBoxQuery {
                 min_x: bbox.min_x,
@@ -189,7 +186,11 @@ impl DB {
         );
 
         let limited_results: Vec<(String, Bytes)> = results.into_iter().take(limit).collect();
-        Ok(Self::results_to_point3d(&inner, prefix, limited_results))
+        Ok(Self::results_to_point3d(
+            &self.inner,
+            prefix,
+            limited_results,
+        ))
     }
 
     /// Query points within a cylindrical volume.
@@ -212,7 +213,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let aircraft1 = Point3d::new(-74.0060, 40.7128, 5000.0);
     /// let aircraft2 = Point3d::new(-74.0070, 40.7138, 10000.0);
@@ -242,9 +243,7 @@ impl DB {
         horizontal_radius: f64,
         limit: usize,
     ) -> Result<Vec<(Point3d, Bytes, f64)>> {
-        let inner = self.read()?;
-
-        let results = inner.spatial_index.query_within_cylinder(
+        let results = self.inner.spatial_index.query_within_cylinder(
             prefix,
             CylinderQuery {
                 center_x: center.x(),
@@ -257,7 +256,9 @@ impl DB {
         );
 
         Ok(Self::results_to_point3d_with_distance(
-            &inner, prefix, results,
+            &self.inner,
+            prefix,
+            results,
         ))
     }
 
@@ -275,7 +276,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// db.insert_point_3d("drones", &Point3d::new(-74.00, 40.71, 100.0), b"D1", None)?;
     /// db.insert_point_3d("drones", &Point3d::new(-74.01, 40.72, 200.0), b"D2", None)?;
@@ -293,14 +294,15 @@ impl DB {
         point: &Point3d,
         k: usize,
     ) -> Result<Vec<(Point3d, Bytes, f64)>> {
-        let inner = self.read()?;
-
-        let results = inner
+        let results = self
+            .inner
             .spatial_index
             .knn_3d(prefix, point.x(), point.y(), point.z(), k);
 
         Ok(Self::results_to_point3d_with_distance(
-            &inner, prefix, results,
+            &self.inner,
+            prefix,
+            results,
         ))
     }
 
@@ -319,7 +321,7 @@ impl DB {
     /// use spatio::{Spatio, Point3d};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let p1 = Point3d::new(-74.0060, 40.7128, 0.0);
     /// let p2 = Point3d::new(-74.0070, 40.7138, 100.0);

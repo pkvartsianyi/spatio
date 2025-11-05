@@ -4,7 +4,7 @@ use std::time::{Duration, UNIX_EPOCH};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Comprehensive Demo ===\n");
 
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === 1. BASIC KEY-VALUE OPERATIONS ===
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_name = db.get("app:name")?.unwrap();
     println!("   Stored: {}", String::from_utf8_lossy(&app_name));
 
-    let count = db.stats()?.key_count;
+    let count = db.stats().key_count;
     println!("   Total keys: {}\n", count);
 
     // === 2. TTL (TIME-TO-LIVE) ===
@@ -174,25 +174,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("9. Database Statistics");
     println!("----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 
-    // === 10. TTL EXPIRATION DEMO ===
-    println!("10. TTL Expiration (waiting 11 seconds...)");
-    println!("------------------------------------------");
+    // === 10. TTL EXPIRATION DEMO (LAZY) ===
+    println!("10. TTL Expiration (lazy deletion)");
+    println!("-----------------------------------");
 
     std::thread::sleep(Duration::from_secs(11));
 
     match db.get("session:temp")? {
         Some(_) => println!("   Session still active (unexpected)"),
-        None => println!("   ✓ Session expired as expected\n"),
+        None => println!("   ✓ Session expired (lazy check on read)\n"),
     }
+
+    // === 11. MANUAL CLEANUP ===
+    println!("11. Manual Cleanup");
+    println!("------------------");
+    let removed = db.cleanup_expired()?;
+    println!("   Removed {} expired keys from storage\n", removed);
 
     println!("=== Comprehensive Demo Complete! ===");
     println!("\nFeatures Demonstrated:");
     println!("  • Key-value storage");
-    println!("  • TTL (time-to-live)");
+    println!("  • TTL (lazy expiration + manual cleanup)");
     println!("  • Atomic batch operations");
     println!("  • Spatial point indexing");
     println!("  • Radius queries");
@@ -200,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  • Multiple namespaces");
     println!("  • Trajectory tracking");
     println!("  • Updates and deletes");
-    println!("  • Automatic expiration");
+    println!("  • Manual expired key cleanup");
 
     Ok(())
 }

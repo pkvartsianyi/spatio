@@ -20,11 +20,6 @@ import spatio
 MICROSECOND_THRESHOLD = 0.001
 MILLISECOND_THRESHOLD = 1
 
-# Constants for geohash precision accuracies
-GEOHASH_PRECISION_HIGH = 10
-GEOHASH_PRECISION_MEDIUM = 6
-GEOHASH_PRECISION_HIGH_MEDIUM = 8
-
 
 def format_number(num: float) -> str:
     """Format large numbers with commas."""
@@ -179,7 +174,7 @@ def benchmark_spatial_operations():
     )
 
     # Distance calculation benchmark
-    center = spatio.Point(40.7128, -74.0060)
+    center = spatio.Point(-74.0060, 40.7128)
 
     def distance_calc():
         point = random.choice(points)
@@ -291,45 +286,34 @@ def benchmark_trajectory_operations():
 
 
 def benchmark_configuration_impact():
-    """Benchmark different configuration settings."""
+    """Benchmark the impact of different database configurations."""
     print("[CONFIG] Configuration Impact Benchmark")
     print("=" * 50)
 
-    precisions = [6, 8, 10, 12]
+    # Test with default configuration
+    config = spatio.Config()
+    db = spatio.Spatio.memory_with_config(config)
 
-    for precision in precisions:
-        config = spatio.Config.with_geohash_precision(precision)
-        db = spatio.Spatio.memory_with_config(config)
+    # Insert some spatial data
+    for i in range(100):
+        lat = 40.7 + random.uniform(-0.01, 0.01)
+        lon = -74.0 + random.uniform(-0.01, 0.01)
+        point = spatio.Point(lat, lon)
+        db.insert_point("test_locations", point, f"loc_{i}".encode())
 
-        # Insert some spatial data
-        for i in range(100):
-            lat = 40.7 + random.uniform(-0.01, 0.01)
-            lon = -74.0 + random.uniform(-0.01, 0.01)
-            point = spatio.Point(lat, lon)
-            db.insert_point("test_locations", point, f"loc_{i}".encode())
+    # Benchmark spatial queries
+    center = spatio.Point(-74.0060, 40.7128)
 
-        # Benchmark spatial queries
-        center = spatio.Point(40.7128, -74.0060)
+    def spatial_query_test(test_db=db, query_center=center):
+        return test_db.query_within_radius("test_locations", query_center, 1000.0, 20)
 
-        def spatial_query_precision(test_db=db, query_center=center):
-            return test_db.query_within_radius(
-                "test_locations", query_center, 1000.0, 20
-            )
+    stats = benchmark_operation(spatial_query_test, iterations=100)
 
-        precision_stats = benchmark_operation(spatial_query_precision, iterations=100)
-        accuracy = (
-            "~61cm"
-            if precision == GEOHASH_PRECISION_HIGH
-            else "~610m"
-            if precision == GEOHASH_PRECISION_MEDIUM
-            else "~39m"
-            if precision == GEOHASH_PRECISION_HIGH_MEDIUM
-            else "~5cm"
-        )
-
-        print(
-            f"Precision {precision:2d} ({accuracy:>6}): {format_time(precision_stats['mean'])} avg query time"
-        )
+    print(
+        f"  Default config: "
+        f"Avg: {format_time(stats['avg_time'])}, "
+        f"Median: {format_time(stats['median_time'])}"
+    )
 
     print()
 
@@ -428,7 +412,7 @@ def performance_comparison():
 
         # Query every 10 inserts
         if i % 10 == 0:
-            center = spatio.Point(40.7128, -74.0060)
+            center = spatio.Point(-74.0060, 40.7128)
             db3.query_within_radius("mixed", center, 5000.0, 10)
 
     mixed_ops_time = time.perf_counter() - start_time
@@ -460,9 +444,7 @@ def main():
         print()
         print("Key Takeaways:")
         print("- Spatio provides excellent performance for spatial operations")
-        print(
-            "- Higher geohash precision increases accuracy but may impact query speed"
-        )
+        print("- Spatial queries use R*-tree indexing for efficient lookups")
         print("- Bulk operations show good scalability characteristics")
         print("- Memory usage grows linearly with data size")
         print("- Mixed workloads maintain consistent performance")

@@ -1,11 +1,12 @@
 //! 2D spatial operations for geographic queries.
 
-use super::{DistanceMetric, distance_between, point_in_polygon};
+use crate::compute::spatial::{DistanceMetric, distance_between, point_in_polygon};
 use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use geo::Point;
+use std::cmp::Ordering;
 
 impl DB {
     /// Insert a geographic point with automatic spatial indexing.
@@ -26,7 +27,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     /// let nyc = Point::new(-74.0060, 40.7128);
     ///
     /// db.insert_point("cities", &nyc, b"New York City", None)?;
@@ -34,15 +35,13 @@ impl DB {
     /// # }
     /// ```
     pub fn insert_point(
-        &self,
+        &mut self,
         prefix: &str,
         point: &Point,
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
         let data_ref = Bytes::copy_from_slice(value);
-
-        let mut inner = self.write()?;
 
         let item = match opts {
             Some(SetOptions { ttl: Some(ttl), .. }) => {
@@ -60,9 +59,9 @@ impl DB {
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
-        inner.insert_item(key_bytes.clone(), item);
+        self.inner.insert_item(key_bytes.clone(), item);
 
-        inner.spatial_index.insert_point_2d(
+        self.inner.spatial_index.insert_point_2d(
             prefix,
             point.x(),
             point.y(),
@@ -70,8 +69,125 @@ impl DB {
             data_ref.clone(),
         );
 
-        inner.write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
         Ok(())
+    }
+
+    /// Insert or update a geographic point with automatic spatial indexing.
+    ///
+    /// Unlike `insert_point` which creates a new entry each time, `upsert_point`
+    /// uses a deterministic key based on the object_id, allowing updates to
+    /// replace previous positions. This is ideal for real-time tracking where
+    /// you only need the current position of each object.
+    ///
+    /// # Use Cases
+    ///
+    /// - Real-time vehicle/drone tracking (current position only)
+    /// - IoT sensor networks (latest reading)
+    /// - User location services (where is user now)
+    ///
+    /// # Memory Impact
+    ///
+    /// With `upsert_point`, each object_id has exactly ONE entry in memory:
+    /// - 10,000 drones = 10,000 points = ~4 MB
+    ///
+    /// With `insert_point`, each update creates a NEW entry:
+    /// - 10,000 drones × 100 updates = 1,000,000 points = ~400 MB
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Namespace for the point (e.g., "drones", "vehicles")
+    /// * `object_id` - Stable identifier for the tracked object
+    /// * `point` - Current geographic coordinates
+    /// * `value` - Associated data to store
+    /// * `opts` - Optional settings like TTL
+    ///
+    /// # Returns
+    ///
+    /// Returns the previous position data if the object existed, None otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use spatio::{Spatio, Point};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut db = Spatio::memory()?;
+    ///
+    /// // Update drone position (replaces old position)
+    /// let drone_pos = Point::new(-74.0060, 40.7128);
+    /// db.upsert_point("drones", "drone_123", &drone_pos, b"active", None)?;
+    ///
+    /// // Later update - overwrites previous position
+    /// let new_pos = Point::new(-74.0070, 40.7138);
+    /// let old_data = db.upsert_point("drones", "drone_123", &new_pos, b"active", None)?;
+    /// assert!(old_data.is_some()); // Returns previous data
+    ///
+    /// // Query still works with current positions
+    /// let nearby = db.query_within_radius("drones", &drone_pos, 1000.0, 10)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// - First insert: Same as insert_point
+    /// - Updates: Removes old spatial entry, inserts new one
+    /// - Spatial queries: Same performance as insert_point
+    pub fn upsert_point(
+        &mut self,
+        prefix: &str,
+        object_id: &str,
+        point: &Point,
+        value: &[u8],
+        opts: Option<SetOptions>,
+    ) -> Result<Option<Bytes>> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let data_ref = Bytes::copy_from_slice(value);
+
+        let item = match opts {
+            Some(SetOptions { ttl: Some(ttl), .. }) => {
+                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
+            }
+            Some(SetOptions {
+                expires_at: Some(expires_at),
+                ..
+            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
+            _ => crate::config::DbItem::new(data_ref.clone()),
+        };
+        let created_at = item.created_at;
+
+        DBInner::validate_timestamp(created_at)?;
+
+        // Use deterministic key: prefix:obj:object_id
+        let key = format!("{}:obj:{}", prefix, object_id);
+        let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
+        // Remove old spatial index entry if exists
+        if self.inner.keys.contains_key(&key_bytes) {
+            let _ = self.inner.spatial_index.remove_entry(prefix, &key);
+        }
+
+        // Insert/update main storage
+        let old_value = self.inner.insert_item(key_bytes.clone(), item);
+
+        // Insert into spatial index
+        self.inner.spatial_index.insert_point_2d(
+            prefix,
+            point.x(),
+            point.y(),
+            key.clone(),
+            data_ref.clone(),
+        );
+
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value, opts.as_ref(), created_at)?;
+
+        Ok(old_value.map(|item| item.value))
     }
 
     /// Find nearby points within a radius.
@@ -92,7 +208,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Find up to 10 points within 1km
@@ -107,9 +223,7 @@ impl DB {
         radius_meters: f64,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
-        let inner = self.read()?;
-
-        let results = inner.spatial_index.query_within_radius_2d(
+        let results = self.inner.spatial_index.query_within_radius_2d(
             prefix,
             center.x(),
             center.y(),
@@ -142,7 +256,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Check if there are any cities within 50km
@@ -151,10 +265,12 @@ impl DB {
     /// # }
     /// ```
     pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
-        let inner = self.read()?;
-        Ok(inner
-            .spatial_index
-            .contains_point_2d(prefix, center.x(), center.y(), radius_meters))
+        Ok(self.inner.spatial_index.contains_point_2d(
+            prefix,
+            center.x(),
+            center.y(),
+            radius_meters,
+        ))
     }
 
     /// Check if there are any points within a bounding box.
@@ -176,7 +292,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Check if there are any points in Manhattan area
     /// let has_points = db.intersects_bounds("sensors", 40.7, -74.1, 40.8, -73.9)?;
@@ -191,8 +307,8 @@ impl DB {
         max_lat: f64,
         max_lon: f64,
     ) -> Result<bool> {
-        let inner = self.read()?;
-        let results = inner
+        let results = self
+            .inner
             .spatial_index
             .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
         Ok(!results.is_empty())
@@ -216,7 +332,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
     ///
     /// // Count how many sensors are within 1km
@@ -231,8 +347,7 @@ impl DB {
         center: &Point,
         radius_meters: f64,
     ) -> Result<usize> {
-        let inner = self.read()?;
-        Ok(inner.spatial_index.count_within_radius_2d(
+        Ok(self.inner.spatial_index.count_within_radius_2d(
             prefix,
             center.x(),
             center.y(),
@@ -260,7 +375,7 @@ impl DB {
     /// use spatio::{Spatio, Point};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Find all sensors in Manhattan area
     /// let points = db.find_within_bounds("sensors", 40.7, -74.1, 40.8, -73.9, 100)?;
@@ -277,14 +392,14 @@ impl DB {
         max_lon: f64,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
-        let inner = self.read()?;
-        let results = inner
+        let results = self
+            .inner
             .spatial_index
             .query_within_bbox_2d(prefix, min_lon, min_lat, max_lon, max_lat);
 
         let mut points = Vec::new();
         for (key, data) in results.into_iter().take(limit) {
-            if let Some(tree) = inner.spatial_index.indexes.get(prefix)
+            if let Some(tree) = self.inner.spatial_index.indexes.get(prefix)
                 && let Some(indexed_point) = tree.iter().find(|p| p.key == key)
             {
                 let point = Point::new(indexed_point.x, indexed_point.y);
@@ -315,7 +430,7 @@ impl DB {
     /// use spatio::{Spatio, Point, DistanceMetric};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let nyc = Point::new(-74.0060, 40.7128);
     /// let la = Point::new(-118.2437, 34.0522);
@@ -357,7 +472,7 @@ impl DB {
     /// use spatio::{Spatio, Point, DistanceMetric};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let nyc = Point::new(-74.0060, 40.7128);
     /// db.insert_point("cities", &nyc, b"New York", None)?;
@@ -379,30 +494,26 @@ impl DB {
         max_radius: f64,
         metric: DistanceMetric,
     ) -> Result<Vec<(Point, Bytes, f64)>> {
-        let inner = self.read()?;
-
-        let results = inner.spatial_index.knn_2d_with_max_distance(
+        let results = self.inner.spatial_index.knn_2d_with_max_distance(
             prefix,
             center.x(),
             center.y(),
-            k,
+            k * 2,
             Some(max_radius),
         );
 
-        let mut filtered: Vec<(Point, Bytes, f64)> = results
+        let mut candidates: Vec<_> = results
             .into_iter()
-            .map(|(x, y, _key, data, dist)| (Point::new(x, y), data, dist))
+            .map(|(x, y, _key, data, _)| {
+                let point = Point::new(x, y);
+                let dist = distance_between(center, &point, metric);
+                (point, data, dist)
+            })
             .collect();
 
-        if metric != DistanceMetric::Haversine {
-            for (point, _, dist) in &mut filtered {
-                *dist = distance_between(center, point, metric);
-            }
-            filtered.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
-            filtered.truncate(k);
-        }
-
-        Ok(filtered)
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(Ordering::Equal));
+        candidates.truncate(k);
+        Ok(candidates)
     }
 
     /// Query points within a polygon boundary.
@@ -428,7 +539,7 @@ impl DB {
     /// use geo::{polygon, Polygon};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let poly: Polygon = polygon![
     ///     (x: -74.0, y: 40.7),
@@ -493,7 +604,7 @@ impl DB {
     /// use spatio::{Spatio, Point, BoundingBox2D};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Store some points
     /// db.insert_point("poi", &Point::new(-73.9855, 40.7580), b"times_square", None)?;
@@ -553,7 +664,7 @@ impl DB {
     /// use spatio::{Spatio, BoundingBox2D};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
     /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
@@ -562,7 +673,7 @@ impl DB {
     /// # }
     /// ```
     pub fn insert_bbox(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         bbox: &BoundingBox2D,
         opts: Option<SetOptions>,
@@ -587,7 +698,7 @@ impl DB {
     /// use spatio::{Spatio, BoundingBox2D};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
     /// db.insert_bbox("zones:manhattan", &manhattan, None)?;
@@ -625,7 +736,7 @@ impl DB {
     /// use spatio::{Spatio, BoundingBox2D};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// db.insert_bbox("zones:manhattan", &BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820), None)?;
     /// db.insert_bbox("zones:brooklyn", &BoundingBox2D::new(-74.0421, 40.5707, -73.8333, 40.7395), None)?;
@@ -642,11 +753,10 @@ impl DB {
         prefix: &str,
         bbox: &BoundingBox2D,
     ) -> Result<Vec<(String, BoundingBox2D)>> {
-        let inner = self.read()?;
         let prefix_bytes = Bytes::from(prefix.to_owned());
         let mut results = Vec::new();
 
-        for (key, item) in inner.keys.range(prefix_bytes.clone()..) {
+        for (key, item) in self.inner.keys.range(prefix_bytes.clone()..) {
             if !key.starts_with(prefix.as_bytes()) {
                 break;
             }

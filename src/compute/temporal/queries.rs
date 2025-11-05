@@ -10,23 +10,37 @@ use std::time::{Duration, SystemTime};
 use crate::config::HistoryEntry;
 
 impl DB {
-    /// Remove all expired keys and compact indexes.
-    pub fn cleanup_expired(&self) -> Result<usize> {
-        let mut inner = self.write_checked()?;
-
+    pub fn count_expired(&self) -> usize {
         let now = SystemTime::now();
-        let expired_times: Vec<SystemTime> =
-            inner.expirations.range(..=now).map(|(&ts, _)| ts).collect();
+        self.inner
+            .keys
+            .values()
+            .filter(|item| item.is_expired_at(now))
+            .count()
+    }
+
+    pub fn cleanup_expired(&mut self) -> Result<usize> {
+        let now = SystemTime::now();
+
+        // Collect all expired keys
+        let expired_keys: Vec<Bytes> = self
+            .inner
+            .keys
+            .iter()
+            .filter_map(|(key, item)| {
+                if item.is_expired_at(now) {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         let mut removed = 0;
-        for ts in expired_times {
-            if let Some(keys) = inner.expirations.remove(&ts) {
-                for key in keys {
-                    if let Some(_item) = inner.remove_item(&key) {
-                        inner.write_delete_to_aof_if_needed(&key)?;
-                        removed += 1;
-                    }
-                }
+        for key in expired_keys {
+            if self.inner.remove_item(&key).is_some() {
+                self.inner.write_delete_to_aof_if_needed(&key)?;
+                removed += 1;
             }
         }
 
@@ -36,33 +50,27 @@ impl DB {
     #[cfg(feature = "time-index")]
     /// Return keys whose last update occurred within the given duration.
     pub fn keys_created_since(&self, duration: Duration) -> Result<Vec<Bytes>> {
-        let inner = self.read_checked()?;
-
         let end = SystemTime::now();
         let start = end.checked_sub(duration).unwrap_or(SystemTime::UNIX_EPOCH);
 
-        Ok(inner.collect_keys_created_between(start, end))
+        Ok(self.inner.collect_keys_created_between(start, end))
     }
 
     #[cfg(feature = "time-index")]
     /// Return keys whose last update timestamp falls within the specified interval.
     pub fn keys_created_between(&self, start: SystemTime, end: SystemTime) -> Result<Vec<Bytes>> {
-        let inner = self.read_checked()?;
-
         let (start, end) = if start <= end {
             (start, end)
         } else {
             (end, start)
         };
-        Ok(inner.collect_keys_created_between(start, end))
+        Ok(self.inner.collect_keys_created_between(start, end))
     }
 
     #[cfg(feature = "time-index")]
     /// Retrieve the recent history of mutations for a specific key.
     pub fn history(&self, key: impl AsRef<[u8]>) -> Result<Vec<HistoryEntry>> {
-        let inner = self.read_checked()?;
-
-        if let Some(ref tracker) = inner.history {
+        if let Some(ref tracker) = self.inner.history {
             let key_bytes = Bytes::copy_from_slice(key.as_ref());
             Ok(tracker.history_for(&key_bytes).unwrap_or_default())
         } else {
@@ -88,7 +96,7 @@ impl DB {
     /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// let trajectory = vec![
     ///     TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) }, // Start
@@ -101,7 +109,7 @@ impl DB {
     /// # }
     /// ```
     pub fn insert_trajectory(
-        &self,
+        &mut self,
         object_id: &str,
         trajectory: &[TemporalPoint],
         opts: Option<SetOptions>,
@@ -147,7 +155,7 @@ impl DB {
     /// use std::time::{Duration, SystemTime, UNIX_EPOCH};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
+    /// let mut db = Spatio::memory()?;
     ///
     /// // Query trajectory for first hour
     /// let path = db.query_trajectory("vehicle:truck001", 1640995200, 1640998800)?;
@@ -166,9 +174,8 @@ impl DB {
         let start_key = format!("traj:{}:{:010}:000000", object_id, start_time);
         let end_key = format!("traj:{}:{:010}:999999", object_id, end_time);
 
-        let inner = self.read()?;
-
-        for (key, item) in inner
+        for (key, item) in self
+            .inner
             .keys
             .range(Bytes::from(start_key)..=Bytes::from(end_key))
         {

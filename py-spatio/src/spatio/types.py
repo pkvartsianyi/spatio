@@ -83,7 +83,6 @@ def validate_coordinates(lat: float, lon: float) -> None:
 
 # Constants for common operations
 DEFAULT_QUERY_LIMIT = 100
-DEFAULT_GEOHASH_PRECISION = 8
 DEFAULT_SEARCH_RADIUS_METERS = 1000.0
 
 # Earth radius in meters (for distance calculations)

@@ -32,12 +32,13 @@ def _create_and_test_database():
     print(f"[OK] Missing user: {missing}")
     return db
 
+
 def _demonstrate_geographic_operations(db):
     print("\n3. Geographic point operations...")
-    nyc = spatio.Point(40.7128, -74.0060)
-    london = spatio.Point(51.5074, -0.1278)
-    tokyo = spatio.Point(35.6762, 139.6503)
-    paris = spatio.Point(48.8566, 2.3522)
+    nyc = spatio.Point(-74.0060, 40.7128)
+    london = spatio.Point(-0.1278, 51.5074)
+    tokyo = spatio.Point(139.6503, 35.6762)
+    paris = spatio.Point(2.3522, 48.8566)
 
     print(f"[OK] Created points: NYC {nyc}, London {london}")
 
@@ -68,6 +69,7 @@ def _demonstrate_geographic_operations(db):
         print(f"  - {city_name.decode()} at ({point.lat:.2f}, {point.lon:.2f})")
     return nyc, london, paris
 
+
 def _demonstrate_ttl_functionality(db):
     print("\n5. TTL (Time-To-Live) functionality...")
     ttl_options = spatio.SetOptions.with_ttl(2.0)
@@ -83,6 +85,7 @@ def _demonstrate_ttl_functionality(db):
     print(
         f"[OK] After TTL: {expired_data.decode() if expired_data else 'Expired/None'}"
     )
+
 
 def _demonstrate_sequential_operations(db):
     print("\n6. Multiple sequential operations...")
@@ -101,6 +104,7 @@ def _demonstrate_sequential_operations(db):
     print(f"[OK] Sequential value: {batch_value.decode()}")
     print(f"[OK] SF area cities: {len(sf_cities)}")
 
+
 def _demonstrate_database_statistics(db):
     print("\n7. Database statistics...")
     stats = db.stats()
@@ -108,6 +112,7 @@ def _demonstrate_database_statistics(db):
     print(f"  - Key count: {stats['key_count']}")
     print(f"  - Operations count: {stats['operations_count']}")
     print(f"  - Expired count: {stats['expired_count']}")
+
 
 def _demonstrate_distance_calculations(nyc, london, paris):
     print("\n8. Distance calculations...")
@@ -117,6 +122,7 @@ def _demonstrate_distance_calculations(nyc, london, paris):
     print(f"[OK] NYC to London: {distance_ny_london / 1000:.0f}km")
     print(f"[OK] London to Paris: {distance_london_paris / 1000:.0f}km")
 
+
 def _demonstrate_3d_point_operations(db):
     print("\n9. 3D Point Operations...")
     everest = spatio.Point(27.9881, 86.9250, 8848.86)
@@ -124,6 +130,7 @@ def _demonstrate_3d_point_operations(db):
     results = db.query_within_radius("mountains", everest, 1000.0, 1)
     for point, name, _ in results:
         print(f"[OK] Found 3D point: {name.decode()} at {point}")
+
 
 def main():
     print("=== Spatio-Py Basic Usage Example ===\n")

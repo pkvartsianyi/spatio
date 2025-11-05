@@ -9,8 +9,6 @@ pub enum SpatioError {
     DatabaseClosed,
     /// Lock acquisition failed
     LockError,
-    /// Invalid geohash
-    InvalidGeohash,
     /// Serialization/deserialization error
     SerializationError,
     /// Serialization error with context
@@ -29,8 +27,6 @@ pub enum SpatioError {
     Io(std::io::Error),
     /// Generic error with message
     Other(String),
-    /// Geohash error
-    GeohashError(geohash::GeohashError),
 }
 
 impl fmt::Display for SpatioError {
@@ -38,7 +34,6 @@ impl fmt::Display for SpatioError {
         match self {
             SpatioError::DatabaseClosed => write!(f, "Database is closed"),
             SpatioError::LockError => write!(f, "Failed to acquire lock"),
-            SpatioError::InvalidGeohash => write!(f, "Invalid geohash"),
             SpatioError::SerializationError => write!(f, "Serialization error"),
             SpatioError::SerializationErrorWithContext(context) => {
                 write!(f, "Serialization error: {}", context)
@@ -50,7 +45,6 @@ impl fmt::Display for SpatioError {
             SpatioError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),
-            SpatioError::GeohashError(err) => write!(f, "Geohash error: {}", err),
         }
     }
 }
@@ -67,12 +61,6 @@ impl std::error::Error for SpatioError {
 impl From<std::io::Error> for SpatioError {
     fn from(err: std::io::Error) -> Self {
         SpatioError::Io(err)
-    }
-}
-
-impl From<geohash::GeohashError> for SpatioError {
-    fn from(err: geohash::GeohashError) -> Self {
-        SpatioError::GeohashError(err)
     }
 }
 

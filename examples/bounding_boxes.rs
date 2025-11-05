@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("=== Spatio - Bounding Box Examples ===\n");
 
     // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // ========================================

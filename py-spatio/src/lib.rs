@@ -11,8 +11,8 @@ use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::Point as RustPoint;
 use spatio::{
+    SyncDB as RustDB,
     config::{Config as RustConfig, SetOptions as RustSetOptions},
-    db::DB as RustDB,
     error::Result as RustResult,
 };
 use std::time::{Duration, UNIX_EPOCH};
@@ -38,9 +38,13 @@ impl PyPoint {
     /// API compatibility but will be ignored, as the underlying geo::Point is 2D.
     ///
     /// # Args
-    ///     lat: Latitude in degrees (-90 to 90)
-    ///     lon: Longitude in degrees (-180 to 180)
+    ///     lon: Longitude in degrees (-180 to 180) - x-coordinate
+    ///     lat: Latitude in degrees (-90 to 90) - y-coordinate
     ///     alt: Optional altitude (currently ignored - see note above)
+    ///
+    /// # Note
+    ///     Uses (longitude, latitude) order to match GeoJSON standard and the Rust API.
+    ///     This is the mathematical (x, y) convention used by most GIS libraries.
     ///
     /// # Returns
     ///     A new Point instance
@@ -48,8 +52,8 @@ impl PyPoint {
     /// # Raises
     ///     ValueError: If latitude or longitude are out of valid range
     #[new]
-    #[pyo3(signature = (lat, lon, alt=None))]
-    fn new(lat: f64, lon: f64, alt: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (lon, lat, alt=None))]
+    fn new(lon: f64, lat: f64, alt: Option<f64>) -> PyResult<Self> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
         }
@@ -88,9 +92,9 @@ impl PyPoint {
 
     fn __repr__(&self) -> String {
         if let Some(alt) = self.alt() {
-            format!("Point(lat={}, lon={}, alt={})", self.lat(), self.lon(), alt)
+            format!("Point(lon={}, lat={}, alt={})", self.lon(), self.lat(), alt)
         } else {
-            format!("Point(lat={}, lon={})", self.lat(), self.lon())
+            format!("Point(lon={}, lat={})", self.lon(), self.lat())
         }
     }
 
@@ -216,36 +220,6 @@ impl PyConfig {
         PyConfig {
             inner: RustConfig::default(),
         }
-    }
-
-    /// Create config with custom geohash precision (1-12)
-    #[staticmethod]
-    fn with_geohash_precision(precision: usize) -> PyResult<Self> {
-        if !(1..=12).contains(&precision) {
-            return Err(PyValueError::new_err(
-                "Geohash precision must be between 1 and 12",
-            ));
-        }
-
-        Ok(PyConfig {
-            inner: RustConfig::with_geohash_precision(precision),
-        })
-    }
-
-    #[getter]
-    fn geohash_precision(&self) -> usize {
-        self.inner.geohash_precision
-    }
-
-    #[setter]
-    fn set_geohash_precision(&mut self, precision: usize) -> PyResult<()> {
-        if !(1..=12).contains(&precision) {
-            return Err(PyValueError::new_err(
-                "Geohash precision must be between 1 and 12",
-            ));
-        }
-        self.inner.geohash_precision = precision;
-        Ok(())
     }
 }
 
@@ -583,7 +557,7 @@ impl PySpatio {
 
     /// Get database statistics
     fn stats(&self) -> PyResult<PyObject> {
-        let stats = handle_error(self.db.stats())?;
+        let stats = self.db.stats();
 
         Python::with_gil(|py| {
             let dict = pyo3::types::PyDict::new(py);

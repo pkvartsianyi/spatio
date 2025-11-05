@@ -1,13 +1,13 @@
 //! Atomic batch operations.
 
-use super::DB;
+use super::DBInner;
 use crate::config::SetOptions;
 use crate::error::Result;
 use bytes::Bytes;
 
 /// Atomic batch. All operations succeed or all fail.
-pub struct AtomicBatch {
-    db: DB,
+pub struct AtomicBatch<'a> {
+    inner: &'a mut DBInner,
     operations: Vec<BatchOperation>,
 }
 
@@ -23,10 +23,10 @@ enum BatchOperation {
     },
 }
 
-impl AtomicBatch {
-    pub(crate) fn new(db: DB) -> Self {
+impl<'a> AtomicBatch<'a> {
+    pub(crate) fn new(inner: &'a mut DBInner) -> Self {
         Self {
-            db,
+            inner,
             operations: Vec::new(),
         }
     }
@@ -54,31 +54,34 @@ impl AtomicBatch {
     }
 
     pub(crate) fn commit(self) -> Result<()> {
-        let mut inner = self.db.write()?;
-
-        if inner.closed {
+        if self.inner.closed {
             return Err(crate::error::SpatioError::DatabaseClosed);
         }
+
+        // First pass: Apply all in-memory operations and collect AOF data
+        let mut aof_ops = Vec::with_capacity(self.operations.len());
 
         for operation in self.operations {
             match operation {
                 BatchOperation::Insert { key, value, opts } => {
                     let item = crate::config::DbItem::from_options(value.clone(), opts.as_ref());
                     let created_at = item.created_at;
-                    inner.insert_item(key.clone(), item);
-                    inner.write_to_aof_if_needed(
-                        &key,
-                        value.as_ref(),
-                        opts.as_ref(),
-                        created_at,
-                    )?;
+                    self.inner.insert_item(key.clone(), item);
+
+                    // Collect for batch AOF write
+                    aof_ops.push((key, value, opts, created_at, false));
                 }
                 BatchOperation::Delete { key } => {
-                    inner.remove_item(&key);
-                    inner.write_delete_to_aof_if_needed(&key)?;
+                    self.inner.remove_item(&key);
+
+                    // Collect for batch AOF write (using dummy values for delete)
+                    aof_ops.push((key, Bytes::new(), None, std::time::SystemTime::now(), true));
                 }
             }
         }
+
+        // Second pass: Write all operations to AOF in one batch
+        self.inner.write_batch_to_aof(&aof_ops)?;
 
         Ok(())
     }

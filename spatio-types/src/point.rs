@@ -1,4 +1,4 @@
-use geo::Point;
+use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
@@ -90,8 +90,6 @@ impl Point3d {
     /// Calculate the 3D Euclidean distance to another 3D point.
     ///
     /// This calculates the straight-line distance in 3D space using the Pythagorean theorem.
-    /// Note: For geographic coordinates, this treats lat/lon as Cartesian coordinates,
-    /// which is only accurate for small distances. For large distances, use `haversine_3d`.
     ///
     /// # Examples
     ///
@@ -129,21 +127,9 @@ impl Point3d {
     /// let (h_dist, alt_diff, dist_3d) = p1.haversine_distances(&p2);
     /// ```
     pub fn haversine_distances(&self, other: &Point3d) -> (f64, f64, f64) {
-        const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
-
-        let lat1 = self.y().to_radians();
-        let lat2 = other.y().to_radians();
-        let delta_lat = (other.y() - self.y()).to_radians();
-        let delta_lon = (other.x() - self.x()).to_radians();
-
-        let a = (delta_lat / 2.0).sin().powi(2)
-            + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
-        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-        let horizontal_distance = EARTH_RADIUS_METERS * c;
+        let horizontal_distance = Haversine.distance(self.point, other.point);
         let altitude_diff = (self.z - other.z).abs();
-        let distance_3d =
-            (horizontal_distance * horizontal_distance + altitude_diff * altitude_diff).sqrt();
+        let distance_3d = (horizontal_distance.powi(2) + altitude_diff.powi(2)).sqrt();
 
         (horizontal_distance, altitude_diff, distance_3d)
     }
@@ -179,18 +165,7 @@ impl Point3d {
     /// Distance in meters.
     #[inline]
     pub fn haversine_2d(&self, other: &Point3d) -> f64 {
-        const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
-
-        let lat1 = self.y().to_radians();
-        let lat2 = other.y().to_radians();
-        let delta_lat = (other.y() - self.y()).to_radians();
-        let delta_lon = (other.x() - self.x()).to_radians();
-
-        let a = (delta_lat / 2.0).sin().powi(2)
-            + lat1.cos() * lat2.cos() * (delta_lon / 2.0).sin().powi(2);
-        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-        EARTH_RADIUS_METERS * c
+        Haversine.distance(self.point, other.point)
     }
 
     /// Get the altitude difference to another point.

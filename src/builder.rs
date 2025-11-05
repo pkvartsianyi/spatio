@@ -1,252 +1,112 @@
 //! Database builder for flexible configuration
 //!
 //! This module provides a builder pattern for creating databases with
-//! advanced configuration options including custom AOF paths.
+//! advanced configuration options including custom persistence paths.
 
 use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
+#[cfg(feature = "aof")]
 use crate::storage::AOFFile;
-use parking_lot::RwLock;
+#[cfg(feature = "snapshot")]
+use crate::storage::SnapshotConfig;
+#[cfg(feature = "snapshot")]
+use crate::storage::SnapshotFile;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-/// Builder for creating database instances with custom configuration.
-///
-/// The `DBBuilder` provides a flexible way to configure databases with
-/// options for:
-/// - Custom AOF (Append-Only File) paths separate from the logical database path
-/// - In-memory databases
-/// - Full configuration control
-/// - Automatic startup replay
-///
-/// # Examples
-///
-/// ## Basic usage with custom AOF path
-/// ```rust
-/// use spatio::DBBuilder;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let temp_path = std::env::temp_dir().join("test_db.aof");
-/// let db = DBBuilder::new()
-///     .aof_path(&temp_path)
-///     .build()?;
-///
-/// db.insert("key", b"value", None)?;
-/// # let _ = std::fs::remove_file(&temp_path);
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## In-memory database
-/// ```rust
-/// use spatio::DBBuilder;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let db = DBBuilder::new()
-///     .in_memory()
-///     .build()?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Full configuration
-/// ```rust
-/// use spatio::{DBBuilder, Config, SyncPolicy};
-/// use std::time::Duration;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = Config::with_geohash_precision(10)
-///     .with_sync_policy(SyncPolicy::Always)
-///     .with_default_ttl(Duration::from_secs(3600));
-///
-/// let temp_path = std::env::temp_dir().join("high_precision.aof");
-/// let db = DBBuilder::new()
-///     .aof_path(&temp_path)
-///     .config(config)
-///     .build()?;
-/// # let _ = std::fs::remove_file(&temp_path);
-/// # Ok(())
-/// # }
-/// ```
+/// Builder for database configuration with custom persistence paths and settings.
 #[derive(Debug)]
 pub struct DBBuilder {
+    #[cfg(feature = "aof")]
     aof_path: Option<PathBuf>,
+    #[cfg(feature = "snapshot")]
+    snapshot_path: Option<PathBuf>,
     config: Config,
     in_memory: bool,
 }
 
 impl DBBuilder {
-    /// Create a new database builder with default configuration.
-    ///
-    /// By default, creates an in-memory database. Use `aof_path()` to
-    /// enable persistence.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// let builder = DBBuilder::new();
-    /// ```
+    /// Create a new builder with default in-memory configuration.
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "aof")]
             aof_path: None,
+            #[cfg(feature = "snapshot")]
+            snapshot_path: None,
             config: Config::default(),
             in_memory: true,
         }
     }
 
-    /// Set the AOF (Append-Only File) path for persistence.
-    ///
-    /// When an AOF path is set:
-    /// - The database will persist all writes to this file
-    /// - On startup, the AOF will be replayed to restore state
-    /// - The database is durable across restarts
-    ///
-    /// If the file doesn't exist, it will be created. If it exists,
-    /// it will be opened and replayed to restore previous state.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File system path for the AOF file
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let temp_path = std::env::temp_dir().join("myapp_data.aof");
-    /// let db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Set the AOF path for persistence. File is created if needed and replayed on startup.
+    #[cfg(feature = "aof")]
     pub fn aof_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.aof_path = Some(path.into());
         self.in_memory = false;
         self
     }
 
-    /// Create an in-memory database with no persistence.
-    ///
-    /// In-memory databases:
-    /// - Are extremely fast (no disk I/O)
-    /// - Do not persist data across restarts
-    /// - Are ideal for caching, testing, and ephemeral data
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = DBBuilder::new()
-    ///     .in_memory()
-    ///     .build()?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn in_memory(mut self) -> Self {
-        self.in_memory = true;
-        self.aof_path = None;
+    /// Set the snapshot path for persistence. File is created if needed and loaded on startup.
+    #[cfg(feature = "snapshot")]
+    pub fn snapshot_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.snapshot_path = Some(path.into());
+        self.in_memory = false;
         self
     }
 
-    /// Set the database configuration.
-    ///
-    /// The configuration controls:
-    /// - Geohash precision for spatial indexing
-    /// - Sync policy (durability vs performance tradeoff)
-    /// - Default TTL for automatic expiration
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Database configuration
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{DBBuilder, Config, SyncPolicy};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let config = Config::with_geohash_precision(10)
-    ///     .with_sync_policy(SyncPolicy::Always)
-    ///     .with_default_ttl(Duration::from_secs(3600));
-    ///
-    /// let temp_path = std::env::temp_dir().join("high_precision.aof");
-    /// let db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .config(config)
-    ///     .build()?;
-    /// # let _ = std::fs::remove_file(&temp_path);
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Configure for in-memory storage with no persistence.
+    pub fn in_memory(mut self) -> Self {
+        self.in_memory = true;
+        #[cfg(feature = "aof")]
+        {
+            self.aof_path = None;
+        }
+        #[cfg(feature = "snapshot")]
+        {
+            self.snapshot_path = None;
+        }
+        self
+    }
+
+    /// Set the database configuration (sync policy, TTL, etc.).
     pub fn config(mut self, config: Config) -> Self {
         self.config = config;
         self
     }
-    /// Enable update history tracking with a fixed per-key capacity.
-    ///
-    /// Each key retains at most `capacity` recent operations (set/delete).
+    /// Enable history tracking with a fixed per-key capacity.
     #[cfg(feature = "time-index")]
     pub fn history_capacity(mut self, capacity: usize) -> Self {
         self.config = self.config.clone().with_history_capacity(capacity);
         self
     }
 
-    /// Build the database with the configured options.
-    ///
-    /// This method:
-    /// 1. Creates the database instance
-    /// 2. Opens the AOF file (if persistence is enabled)
-    /// 3. Replays the AOF to restore previous state (startup replay)
-    /// 4. Rebuilds spatial indexes
-    /// 5. Returns a ready-to-use database
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The AOF file cannot be opened or created
-    /// - The AOF file is corrupted and cannot be replayed
-    /// - File system permissions prevent access
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::DBBuilder;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let temp_path = std::env::temp_dir().join("my_data.aof");
-    /// let db = DBBuilder::new()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    ///
-    /// db.insert("key", b"value", None)?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Build the database. Opens persistence file if configured and loads state.
     pub fn build(self) -> Result<DB> {
         let mut inner = DBInner::new_with_config(&self.config);
 
-        // Initialize persistence if AOF path is specified
-        if !self.in_memory
-            && let Some(aof_path) = self.aof_path
-        {
-            let mut aof_file = AOFFile::open(&aof_path)?;
-            // Automatic startup replay to restore previous state
-            inner.load_from_aof(&mut aof_file)?;
-            inner.aof_file = Some(aof_file);
+        if !self.in_memory {
+            #[cfg(feature = "aof")]
+            if let Some(aof_path) = self.aof_path {
+                let mut aof_file = AOFFile::open(&aof_path)?;
+                inner.load_from_aof(&mut aof_file)?;
+                inner.aof_file = Some(aof_file);
+            }
+
+            #[cfg(feature = "snapshot")]
+            if let Some(snapshot_path) = self.snapshot_path {
+                let snapshot_config = SnapshotConfig {
+                    auto_snapshot_ops: self.config.snapshot_auto_ops,
+                };
+                let snapshot_file = SnapshotFile::new(&snapshot_path, snapshot_config);
+                inner.load_from_snapshot(&snapshot_file)?;
+                inner.snapshot_file = Some(snapshot_file);
+            }
         }
 
         Ok(DB {
-            inner: Arc::new(RwLock::new(inner)),
+            inner,
+            #[cfg(not(feature = "sync"))]
+            _not_send_sync: std::marker::PhantomData,
         })
     }
 }
@@ -269,30 +129,29 @@ mod tests {
     fn test_builder_default() {
         let builder = DBBuilder::new();
         assert!(builder.in_memory);
-        assert!(builder.aof_path.is_none());
     }
 
     #[test]
     fn test_builder_in_memory() {
-        let db = DBBuilder::new().in_memory().build().unwrap();
+        let mut db = DBBuilder::new().in_memory().build().unwrap();
         db.insert("test", b"value", None).unwrap();
         assert_eq!(db.get("test").unwrap().unwrap().as_ref(), b"value");
     }
 
     #[test]
     fn test_builder_with_config() {
-        let config = Config::with_geohash_precision(10)
+        let config = Config::default()
             .with_sync_policy(SyncPolicy::Always)
             .with_default_ttl(Duration::from_secs(3600));
 
-        let db = DBBuilder::new().config(config).build().unwrap();
+        let mut db = DBBuilder::new().config(config).build().unwrap();
         db.insert("test", b"value", None).unwrap();
     }
 
     #[cfg(feature = "time-index")]
     #[test]
     fn test_builder_history_capacity() {
-        let db = DBBuilder::new().history_capacity(2).build().unwrap();
+        let mut db = DBBuilder::new().history_capacity(2).build().unwrap();
 
         db.insert("key", b"v1", None).unwrap();
         db.insert("key", b"v2", None).unwrap();
@@ -304,6 +163,7 @@ mod tests {
         assert_eq!(history[1].kind, HistoryEventKind::Delete);
     }
 
+    #[cfg(feature = "aof")]
     #[test]
     fn test_builder_aof_path() {
         let temp_dir = std::env::temp_dir();
@@ -312,7 +172,7 @@ mod tests {
         // Clean up any existing file
         let _ = std::fs::remove_file(&aof_path);
 
-        let db = DBBuilder::new().aof_path(&aof_path).build().unwrap();
+        let mut db = DBBuilder::new().aof_path(&aof_path).build().unwrap();
 
         db.insert("persistent", b"data", None).unwrap();
         drop(db);
@@ -326,6 +186,7 @@ mod tests {
         let _ = std::fs::remove_file(aof_path);
     }
 
+    #[cfg(feature = "aof")]
     #[test]
     fn test_builder_aof_path_disables_in_memory() {
         let temp_dir = std::env::temp_dir();
@@ -341,6 +202,7 @@ mod tests {
         let _ = std::fs::remove_file(aof_path);
     }
 
+    #[cfg(feature = "aof")]
     #[test]
     fn test_builder_in_memory_clears_aof_path() {
         let temp_dir = std::env::temp_dir();

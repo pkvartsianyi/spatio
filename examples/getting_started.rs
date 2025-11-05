@@ -8,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Getting Started ===\n");
 
     // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === BASIC KEY-VALUE STORAGE ===
@@ -114,20 +114,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("6. Database Statistics");
     println!("----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys stored: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 
-    // === TTL DEMONSTRATION ===
-    println!("7. TTL Expiration");
-    println!("-----------------");
+    // === TTL DEMONSTRATION (LAZY) ===
+    println!("7. TTL Expiration (Lazy Deletion)");
+    println!("----------------------------------");
     println!("   Waiting 6 seconds for TTL expiration...");
     std::thread::sleep(Duration::from_secs(6));
 
     match db.get("session:abc")? {
         Some(_) => println!("   Session still active (unexpected)"),
-        None => println!("   ✓ Session expired as expected\n"),
+        None => println!("   ✓ Session expired (lazy check on read)"),
     }
+
+    // Manual cleanup
+    let removed = db.cleanup_expired()?;
+    println!("   Cleaned up {} expired keys from storage\n", removed);
 
     println!("=== Getting Started Complete! ===");
     println!("\nKey Features Demonstrated:");
@@ -136,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  • Radius-based queries");
     println!("  • Bounding box queries");
     println!("  • Trajectory tracking");
-    println!("  • TTL support");
+    println!("  • TTL support (lazy expiration + manual cleanup)");
     println!("  • Atomic operations");
     println!("\nNext: Try 'spatial_queries' example for more advanced queries");
 

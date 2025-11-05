@@ -233,7 +233,10 @@ impl fmt::Display for Namespace {
 
 impl Default for Namespace {
     fn default() -> Self {
-        Self::new("default").unwrap()
+        Self {
+            name: NamespaceName("default".to_string()),
+            separator: Self::DEFAULT_SEPARATOR.to_string(),
+        }
     }
 }
 
@@ -249,7 +252,8 @@ pub struct NamespaceManager {
 impl NamespaceManager {
     /// Create a new namespace manager with the default separator
     pub fn new() -> Self {
-        Self::with_separator(Namespace::DEFAULT_SEPARATOR).unwrap()
+        Self::with_separator(Namespace::DEFAULT_SEPARATOR)
+            .expect("DEFAULT_SEPARATOR is a valid constant and cannot fail")
     }
 
     /// Create a new namespace manager with a custom separator

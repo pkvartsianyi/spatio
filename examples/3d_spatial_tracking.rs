@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("=== 3D Spatial Tracking with Spatio ===\n");
 
     // Create an in-memory database
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
 
     // === Example 1: Drone Fleet Tracking ===
     println!("1. Drone Fleet Tracking");

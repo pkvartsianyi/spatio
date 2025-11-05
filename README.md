@@ -37,16 +37,15 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Self-contained** — Runs without external services or dependencies
 - **Minimal API surface** — Open, insert, and query
 - **Low memory footprint** — Suitable for IoT, edge, and embedded environments
-- **Single-Writer Thread Safety** — Uses a shared Arc<RwLock> (without lock upgrades) to allow concurrent readers and a single writer
+- **Single-Writer Thread Safety** — Uses a shared RwLock (without lock upgrades) to allow concurrent readers and a single writer
 
 ### Performance Scope
-- **Concurrent read access** — Multiple readers operate without blocking; writes are serialized under a global lock
-- **Spatio-temporal queries** — Use a geohash + R-tree hybrid to balance lookup precision and performance for moderate datasets
-- **Configurable persistence** — Append-Only File (AOF) with sync policies
-- **Startup and Shutdown** — AOF logs are replayed automatically on startup
+- **Spatio-temporal queries** — Use 3D R*-tree indexing for efficient 2D and 3D spatial operations
+- **Configurable persistence** — Snapshot-based (default) or AOF with sync policies
+- **Startup and Shutdown** — Persistence files are loaded automatically on startup
 
 ### Spatio-Temporal Indexing and Querying
-- **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
+- **Unified Spatial Indexing** — Native 3D R*-tree indexing for all spatial operations with optional history tracking
 - **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **3D Spatial Support** — Full 3D point indexing with altitude-aware queries (spherical, cylindrical, bounding box)
@@ -55,19 +54,34 @@ No SQL parser, no external dependencies, and requires no setup.
 
 ### Data Management
 - **Namespaces** — Isolate data logically within the same instance
-- **TTL Support** — Automatically removes expired data
+- **TTL Support** — Lazy expiration on read with manual cleanup
 - **Temporal Queries** — Filter keys by recent activity with optional history tracking
-- **Atomic Batches** — Supports grouped write operations with atomic semantics.
+- **Atomic Batches** — Supports grouped write operations with atomic semantics
 - **Custom Configs** — JSON/TOML serializable configuration
 
 ### Language Support
 - **Rust** — Native
 - **Python** — Provides bindings implemented via PyO3 (`pip install spatio`)
-- **C / C++** — Provides an extern "C" ABI for interoperability (see [C ABI](#c-abi))
-
 
 ### Compile-Time Feature Flags
-- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="aof,geojson"`.
+- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="snapshot,geojson"`.
+- `snapshot` *(default)* — enables snapshot-based persistence (point-in-time saves)
+- `aof` — enables append-only file persistence (write-ahead log style)
+
+### Persistence Configuration
+
+**Snapshot Mode (Default)**
+- Point-in-time saves of entire database state
+- Configure auto-save threshold: `DBBuilder::new().snapshot_auto_ops(100)` saves every 100 operations
+- Without auto-save configuration, snapshots only occur on manual `db.sync()` or `db.close()`
+- Data loss window: all writes since last snapshot are lost on crash
+- Recommended for edge devices with infrequent updates or when using actor supervision with message replay
+
+**AOF Mode (Optional)**
+- Enable with `--features aof` in Cargo.toml
+- Write-ahead log provides durability guarantees with configurable sync policies
+- Recommended for cloud deployments requiring zero data loss
+- Use `DBBuilder::new().aof_path("data.aof")` with `SyncPolicy::Always` for maximum durability
 
 ### Sync Strategy Configuration
 - `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
@@ -79,6 +93,13 @@ No SQL parser, no external dependencies, and requires no setup.
   `Config::with_sync_batch_size` to reduce syscall frequency.
 
 ## Installation
+
+### Supported Platforms
+
+- **Linux**: x86_64, aarch64
+- **macOS**: x86_64 (Intel), arm64 (Apple Silicon)
+
+**Note**: Windows is not supported. Spatio is designed for Unix-like systems.
 
 ### Python
 
@@ -113,7 +134,7 @@ use std::time::Duration;
 
 fn main() -> Result<()> {
     // Configure the database
-    let config = Config::with_geohash_precision(9)
+    let config = Config::default()
         .with_default_ttl(Duration::from_secs(3600));
 
     // Create an in-memory database with configuration
@@ -146,67 +167,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 ```
-
-### C ABI
-
-Note: The C ABI is experimental and is not actively developed.
-
-The crate ships with a C-compatible ABI for embedding. Build the shared
-library once:
-
-```bash
-cargo build --release --lib
-# target/release/libspatio.so    (Linux)
-# target/release/libspatio.dylib (macOS)
-# target/release/spatio.dll      (Windows)
-```
-
-Link the resulting library and declare the externs you need (or generate them
-with `bindgen`). Minimal usage example:
-
-```c
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
-typedef struct SpatioHandle SpatioHandle;
-typedef struct {
-    unsigned char *data;
-    size_t len;
-} SpatioBuffer;
-
-extern SpatioHandle *spatio_open(const char *path);
-extern void spatio_close(SpatioHandle *handle);
-extern int spatio_insert(SpatioHandle *handle, const char *key,
-                         const unsigned char *value, size_t value_len);
-extern int spatio_get(SpatioHandle *handle, const char *key, SpatioBuffer *out);
-extern void spatio_free_buffer(SpatioBuffer buffer);
-
-int main(void) {
-    SpatioHandle *db = spatio_open("example.aof");
-    if (!db) {
-        fprintf(stderr, "failed to open database\n");
-        return 1;
-    }
-
-    const char *key = "greeting";
-    const char *value = "hello";
-    spatio_insert(db, key, (const unsigned char *)value, strlen(value));
-
-    SpatioBuffer buf = {0};
-    if (spatio_get(db, key, &buf) == 0) {
-        printf("value = %.*s\n", (int)buf.len, buf.data);
-        spatio_free_buffer(buf);
-    }
-
-    spatio_close(db);
-    return 0;
-}
-```
-
-> **Safety note:**
-> Callers must pass valid, null-terminated strings and free any buffers produced by `spatio_get` using `spatio_free_buffer`.
-> Structured error reporting is under development; `spatio_last_error_message` currently returns `NULL`.
 
 For runnable demos and extended use-case walkthroughs, check
 `examples/README.md`.
@@ -341,12 +301,6 @@ RUST_LOG=warn cargo run
 RUST_LOG=spatio=debug cargo run
 ```
 
-Spatio logs important events such as:
-- Database lock errors (poisoned locks)
-- AOF replay warnings (invalid coordinates, corrupted entries)
-- Performance warnings (large expiration clusters)
-- Spatial index warnings (invalid query parameters)
-
 ### Trajectory Tracking
 ```rust
 // Store movement over time
@@ -369,22 +323,64 @@ db.atomic(|batch| {
     batch.delete("old_key")?;
     Ok(())
 })?;
+
+### Persistence Modes
+
+Spatio supports two persistence strategies:
+
+**Snapshot (default)**: Point-in-time saves, fast recovery, predictable overhead
+```rust
+use spatio::{DBBuilder, Config};
+
+// Manual snapshot
+let mut db = DBBuilder::new()
+    .snapshot_path("data.snapshot")
+    .build()?;
+db.insert("key", b"value", None)?;
+db.snapshot()?; // Explicit save
+
+// Auto-snapshot every N operations
+let config = Config::default().with_snapshot_auto_ops(1000);
+let mut db = DBBuilder::new()
+    .snapshot_path("data.snapshot")
+    .config(config)
+    .build()?;
+// Automatically snapshots every 1000 operations
+```
+
+**AOF (optional)**: Append-only log, durable per-write, replay on startup
+```rust
+use spatio::DBBuilder;
+
+let mut db = DBBuilder::new()
+    .aof_path("data.aof")
+    .build()?;
+// Requires `aof` feature: cargo add spatio --features aof
 ```
 
 ### Time-to-Live (TTL)
+
+TTL support is **passive/lazy** - expired items are filtered on read and can be manually cleaned up:
+
 ```rust
 // Data expires in 1 hour
 let opts = SetOptions::with_ttl(Duration::from_secs(3600));
 db.insert("temp_key", b"temp_value", Some(opts))?;
+
+// Expired items return None on get()
+let value = db.get("temp_key")?; // None if expired
+
+// Manual cleanup: removes all expired keys and writes deletions to AOF
+let removed = db.cleanup_expired()?;
 ```
 
 ## Architecture Overview
 
 Spatio is organized in layered modules:
 
-- **Storage** – Pluggable backends (in-memory by default, AOF for durability) with a common trait surface.
-- **Indexing** – Geohash-based point index with configurable precision and smart fallback during searches.
-- **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared index and TTL cleanup workers.
+- **Storage** – Pluggable backends (in-memory by default, snapshot or AOF for durability) with a common trait surface.
+- **Indexing** – R*-tree-based spatial index with efficient 2D and 3D query support.
+- **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
 - **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.
 
 See the [docs site](https://pkvartsianyi.github.io/spatio/) for deeper architectural notes.

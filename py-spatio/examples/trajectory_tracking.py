@@ -59,15 +59,15 @@ def generate_realistic_trajectory(start_point, num_points=20, time_interval=60):
 def simulate_delivery_route():
     """Simulate a delivery truck route through a city"""
     # Starting point (warehouse)
-    warehouse = spatio.Point(40.7128, -74.0060)  # NYC
+    warehouse = spatio.Point(-74.0060, 40.7128)  # NYC
 
     # Delivery stops
     stops = [
-        spatio.Point(40.7505, -73.9934),  # Times Square
-        spatio.Point(40.7614, -73.9776),  # Central Park
-        spatio.Point(40.7282, -73.7949),  # Queens
-        spatio.Point(40.6892, -74.0445),  # Brooklyn
-        spatio.Point(40.7128, -74.0060),  # Back to warehouse
+        spatio.Point(-73.9934, 40.7505),  # Times Square
+        spatio.Point(-73.9776, 40.7614),  # Central Park
+        spatio.Point(-73.7949, 40.7282),  # Queens
+        spatio.Point(-74.0445, 40.6892),  # Brooklyn
+        spatio.Point(-74.0060, 40.7128),  # Back to warehouse
     ]
 
     trajectory = []
@@ -124,9 +124,9 @@ def _setup_database():
 def _generate_and_store_trajectories(db):
     print("\n2. Generating vehicle trajectories...")
     vehicles = [
-        ("truck_001", spatio.Point(40.7128, -74.0060)),  # NYC
-        ("truck_002", spatio.Point(40.7505, -73.9934)),  # Times Square
-        ("car_001", spatio.Point(40.6782, -73.9442)),  # Brooklyn
+        ("truck_001", spatio.Point(-74.0060, 40.7128)),  # NYC
+        ("truck_002", spatio.Point(-73.9934, 40.7505)),  # Times Square
+        ("car_001", spatio.Point(-73.9442, 40.6782)),  # Brooklyn
     ]
     all_trajectories = {}
     for vehicle_id, start_point in vehicles:
@@ -220,7 +220,7 @@ def _simulate_realtime_updates(db, all_trajectories):
 
 def _spatial_queries_on_trajectories(all_trajectories):
     print("\n6. Spatial queries on trajectory data...")
-    times_square = spatio.Point(40.7505, -73.9934)
+    times_square = spatio.Point(-73.9934, 40.7505)
     vehicles_near_times_square = []
     for vehicle_id in all_trajectories:
         trajectory = all_trajectories[vehicle_id]

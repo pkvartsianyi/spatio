@@ -3,97 +3,62 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::compute::spatial::SpatialIndexManager;
+use crate::compute::spatial::rtree::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 #[cfg(feature = "time-index")]
 use crate::config::{HistoryEntry, HistoryEventKind};
 use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
 use crate::storage::AOFFile;
+#[cfg(feature = "snapshot")]
+use crate::storage::SnapshotFile;
 use bytes::Bytes;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
 use std::collections::{BTreeSet, HashMap, VecDeque};
+#[cfg(not(feature = "sync"))]
+use std::marker::PhantomData;
 use std::path::Path;
-use std::sync::Arc;
+
 use std::time::SystemTime;
 
 mod batch;
 mod internal;
 mod namespace;
 
+#[cfg(feature = "sync")]
+mod sync;
+
 pub use batch::AtomicBatch;
 pub use namespace::{Namespace, NamespaceManager};
 
-/// Main Spatio database structure providing spatio-temporal data storage.
+#[cfg(feature = "sync")]
+pub use sync::SyncDB;
+
+/// Embedded spatio-temporal database.
 ///
-/// The `DB` struct is the core of Spatio, offering:
-/// - Key-value storage with spatio-temporal indexing
-/// - Geographic point operations with automatic spatial indexing
-/// - Trajectory tracking for moving objects
-/// - Time-to-live (TTL) support for temporal data
-/// - Atomic batch operations
-/// - Optional persistence with append-only file (AOF) format
-///
-/// # Examples
-///
-/// ## Basic Usage
-/// ```rust
-/// use spatio::{Spatio, Point, SetOptions};
-/// use std::time::Duration;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Create an in-memory database
-/// let db = Spatio::memory()?;
-///
-/// // Store a simple key-value pair
-/// db.insert("key1", b"value1", None)?;
-///
-/// // Store data with TTL
-/// let opts = SetOptions::with_ttl(Duration::from_secs(300));
-/// db.insert("temp_key", b"expires_in_5_minutes", Some(opts))?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Spatial Operations
-/// ```rust
-/// use spatio::{Spatio, Point};
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let db = Spatio::memory()?;
-///
-/// // Store geographic points (automatically indexed)
-/// let nyc = Point::new(-74.0060, 40.7128);
-/// let london = Point::new(-0.1278, 51.5074);
-///
-/// db.insert_point("cities", &nyc, b"New York", None)?;
-/// db.insert_point("cities", &london, b"London", None)?;
-///
-/// // Find nearby cities within 100km
-/// let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
-/// println!("Found {} cities within 100km", nearby.len());
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Clone)]
+/// Provides key-value storage with spatial indexing, TTL support, and optional persistence.
+/// Single-threaded by default. Use the `sync` feature for thread-safe access via `SyncDB`.
 pub struct DB {
-    pub(crate) inner: Arc<RwLock<DBInner>>,
+    pub(crate) inner: DBInner,
+    #[cfg(not(feature = "sync"))]
+    pub(crate) _not_send_sync: PhantomData<*const ()>,
 }
 
 pub(crate) struct DBInner {
     /// Main key-value storage (B-tree for ordered access)
     pub keys: BTreeMap<Bytes, DbItem>,
-    /// Items ordered by expiration time
-    pub expirations: BTreeMap<SystemTime, Vec<Bytes>>,
     #[cfg(feature = "time-index")]
     /// Items indexed by creation time for time-range queries
     pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
-    /// Spatial index manager for 2D and 3D spatial operations (R-tree based)
+    /// Spatial index manager for 2D and 3D spatial operations (R*-tree based)
     pub spatial_index: SpatialIndexManager,
     /// Append-only file for persistence
+    #[cfg(feature = "aof")]
     pub aof_file: Option<AOFFile>,
+    #[cfg(feature = "snapshot")]
+    /// Snapshot file for persistence
+    pub snapshot_file: Option<SnapshotFile>,
     #[cfg(feature = "time-index")]
     /// Optional per-key history tracker
     pub history: Option<HistoryTracker>,
@@ -102,179 +67,79 @@ pub(crate) struct DBInner {
     /// Database statistics
     pub stats: DbStats,
     /// Configuration
+    #[allow(dead_code)]
     pub config: Config,
     /// Number of writes since last forced sync (SyncPolicy::Always only)
+    #[cfg(feature = "aof")]
     sync_ops_since_flush: usize,
 }
 
 impl DB {
-    /// Opens a Spatio database from a file path or creates a new one.
-    ///
-    /// When opening an existing database, this method automatically replays the
-    /// append-only file (AOF) to restore all data and spatial indexes to their
-    /// previous state. This ensures durability across restarts.
-    ///
-    /// # Startup Replay
-    ///
-    /// The database performs the following steps on startup:
-    /// 1. Opens the AOF file at the specified path (creates if doesn't exist)
-    /// 2. Replays all commands from the AOF to restore state
-    /// 3. Rebuilds spatial indexes for all geographic data
-    /// 4. Ready for new operations
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File system path or ":memory:" for in-memory storage
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let _ = std::fs::remove_file("my_data.db");
-    /// // Create persistent database with automatic AOF replay on open
-    /// let persistent_db = Spatio::open("my_data.db")?;
-    ///
-    /// // Create in-memory database (no persistence)
-    /// let mem_db = Spatio::open(":memory:")?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Open or create a database at the given path. Use ":memory:" for in-memory storage.
+    /// Existing persistence files are automatically loaded on startup.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::open_with_config(path, Config::default())
     }
 
-    /// Creates a new Spatio database with custom configuration.
-    ///
-    /// This method provides full control over database behavior including:
-    /// - Geohash precision for spatial indexing
-    /// - Sync policy for durability vs performance tradeoff
-    /// - Default TTL for automatic expiration
-    ///
-    /// Like `open()`, this method automatically replays the AOF on startup
-    /// to restore previous state.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - File path for the database (use ":memory:" for in-memory)
-    /// * `config` - Database configuration including geohash precision settings
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{Spatio, Config, SyncPolicy};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // High-precision config for dense urban areas
-    /// let config = Config::with_geohash_precision(10)
-    ///     .with_sync_policy(SyncPolicy::Always)
-    ///     .with_default_ttl(Duration::from_secs(3600));
-    /// # let _ = std::fs::remove_file("my_database.db");
-    ///
-    /// let db = Spatio::open_with_config("my_database.db", config)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
+    /// Open or create a database with custom configuration.
+    pub fn open_with_config<P: AsRef<Path>>(
+        #[cfg_attr(not(feature = "aof"), allow(unused_variables))] path: P,
+        config: Config,
+    ) -> Result<Self> {
+        #[cfg(feature = "aof")]
         let path = path.as_ref();
-        let is_memory = path.to_str() == Some(":memory:");
 
+        #[cfg(feature = "aof")]
         let mut inner = DBInner::new_with_config(&config);
+        #[cfg(not(feature = "aof"))]
+        let inner = DBInner::new_with_config(&config);
 
-        if !is_memory {
-            let mut aof_file = AOFFile::open(path)?;
-            inner.load_from_aof(&mut aof_file)?;
-            inner.aof_file = Some(aof_file);
+        #[cfg(feature = "aof")]
+        {
+            let is_memory = path.to_str() == Some(":memory:");
+            if !is_memory {
+                let mut aof_file = AOFFile::open(path)?;
+                inner.load_from_aof(&mut aof_file)?;
+                inner.aof_file = Some(aof_file);
+            }
         }
 
         Ok(DB {
-            inner: Arc::new(RwLock::new(inner)),
+            inner,
+            #[cfg(not(feature = "sync"))]
+            _not_send_sync: PhantomData,
         })
     }
 
-    /// Creates a new in-memory Spatio database.
+    /// Create an in-memory database with default configuration.
     pub fn memory() -> Result<Self> {
         Self::open(":memory:")
     }
 
-    /// Create an in-memory database with custom configuration
+    /// Create an in-memory database with custom configuration.
     pub fn memory_with_config(config: Config) -> Result<Self> {
         Self::open_with_config(":memory:", config)
     }
 
-    /// Create a database builder for advanced configuration.
-    ///
-    /// The builder provides full control over database configuration including:
-    /// - Custom AOF (Append-Only File) paths
-    /// - In-memory vs persistent storage
-    /// - Full configuration options
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Create database with custom AOF path
-    /// let temp_path = std::env::temp_dir().join("builder_demo.aof");
-    /// let db = Spatio::builder()
-    ///     .aof_path(&temp_path)
-    ///     .build()?;
-    ///
-    /// db.insert("key", b"value", None)?;
-    /// # std::fs::remove_file(temp_path)?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Create a builder for advanced configuration options.
     pub fn builder() -> crate::builder::DBBuilder {
         crate::builder::DBBuilder::new()
     }
 
-    /// Get database statistics
-    pub fn stats(&self) -> Result<DbStats> {
-        let inner = self.read()?;
-        Ok(inner.stats.clone())
+    /// Get database statistics.
+    pub fn stats(&self) -> DbStats {
+        self.inner.stats.clone()
     }
 
-    /// Inserts a key-value pair into the database.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to store
-    /// * `value` - The value to associate with the key
-    /// * `opts` - Optional settings like TTL
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::{Spatio, SetOptions};
-    /// use std::time::Duration;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::memory()?;
-    ///
-    /// // Simple insert
-    /// db.insert("user:123", b"John Doe", None)?;
-    ///
-    /// // Insert with TTL
-    /// let opts = SetOptions::with_ttl(Duration::from_secs(300));
-    /// db.insert("session:abc", b"user_data", Some(opts))?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Insert a key-value pair, optionally with TTL settings.
     pub fn insert(
-        &self,
+        &mut self,
         key: impl AsRef<[u8]>,
         value: impl AsRef<[u8]>,
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        let mut inner = self.write_checked()?;
-
-        let cleanup_batch = inner.config.amortized_cleanup_batch;
-        if cleanup_batch > 0 {
-            let _ = inner.amortized_cleanup(cleanup_batch)?;
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
         }
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
@@ -290,39 +155,32 @@ impl DB {
         };
         let created_at = item.created_at;
 
-        let old = inner.insert_item(key_bytes.clone(), item);
-        inner.write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
+        let old = self.inner.insert_item(key_bytes.clone(), item);
+        self.inner
+            .write_to_aof_if_needed(&key_bytes, value.as_ref(), opts.as_ref(), created_at)?;
+
+        #[cfg(feature = "snapshot")]
+        self.inner.maybe_auto_snapshot()?;
+
         Ok(old.map(|item| item.value))
     }
 
-    /// Get a value by key
+    /// Get a value by key.
+    ///
+    /// Returns `None` if the key doesn't exist or has expired.
+    /// **Note**: Expired items are not physically deleted here (get() is immutable).
+    /// They remain in storage until overwritten or manually cleaned with `cleanup_expired()`.
     pub fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let key_bytes = Bytes::copy_from_slice(key.as_ref());
-
-        {
-            let inner = self.read_checked()?;
-
-            if let Some(item) = inner.get_item(&key_bytes) {
-                if !item.is_expired() {
-                    return Ok(Some(item.value.clone()));
-                }
-            } else {
-                return Ok(None);
-            }
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
         }
 
-        let mut inner = self.write_checked()?;
+        let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = inner.get_item(&key_bytes) {
+        if let Some(item) = self.inner.get_item(&key_bytes) {
             if item.is_expired() {
-                if let Some(_old) = inner.remove_item(&key_bytes) {
-                    inner.write_delete_to_aof_if_needed(&key_bytes)?;
-
-                    let cleanup_batch = inner.config.amortized_cleanup_batch;
-                    if cleanup_batch > 0 {
-                        let _ = inner.amortized_cleanup(cleanup_batch)?;
-                    }
-                }
+                // Lazy expiration: treat as non-existent without physically deleting
+                // (get() is immutable, cannot modify storage)
                 return Ok(None);
             }
             return Ok(Some(item.value.clone()));
@@ -331,127 +189,84 @@ impl DB {
         Ok(None)
     }
 
-    /// Delete a key atomically
-    pub fn delete(&self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
-        let mut inner = self.write_checked()?;
+    /// Delete a key.
+    pub fn delete(&mut self, key: impl AsRef<[u8]>) -> Result<Option<Bytes>> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = inner.remove_item(&key_bytes) {
-            inner.write_delete_to_aof_if_needed(&key_bytes)?;
+        if let Some(item) = self.inner.remove_item(&key_bytes) {
+            self.inner.write_delete_to_aof_if_needed(&key_bytes)?;
+
+            #[cfg(feature = "snapshot")]
+            self.inner.maybe_auto_snapshot()?;
+
             Ok(Some(item.value))
         } else {
             Ok(None)
         }
     }
 
-    /// Execute multiple operations atomically
-    pub fn atomic<F, R>(&self, f: F) -> Result<R>
+    /// Execute multiple operations atomically.
+    pub fn atomic<F, R>(&mut self, f: F) -> Result<R>
     where
         F: FnOnce(&mut AtomicBatch) -> Result<R>,
     {
-        let mut batch = AtomicBatch::new(self.clone());
+        let mut batch = AtomicBatch::new(&mut self.inner);
         let result = f(&mut batch)?;
         batch.commit()?;
         Ok(result)
     }
 
-    /// Force sync all pending writes to disk.
-    ///
-    /// This method flushes the AOF buffer and calls fsync to ensure all data
-    /// is durably written to disk. Useful before critical operations or when
-    /// you need to guarantee data persistence.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = Spatio::open("my_data.db")?;
-    /// db.insert("critical_key", b"important_data", None)?;
-    ///
-    /// // Ensure data is on disk before continuing
-    /// db.sync()?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn sync(&self) -> Result<()> {
-        let mut inner = self.write()?;
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file {
-            aof_file.sync_with_mode(sync_mode)?;
-            inner.sync_ops_since_flush = 0;
+    /// Force fsync of all pending writes to disk.
+    pub fn sync(&mut self) -> Result<()> {
+        #[cfg(feature = "aof")]
+        {
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file {
+                aof_file.sync_with_mode(sync_mode)?;
+                self.inner.sync_ops_since_flush = 0;
+            }
         }
         Ok(())
     }
 
-    /// Gracefully close the database.
-    ///
-    /// This method performs a clean shutdown by:
-    /// 1. Marking the database as closed (rejecting new operations)
-    /// 2. Flushing any pending writes to the AOF
-    /// 3. Syncing the AOF to disk (fsync)
-    /// 4. Releasing resources
-    ///
-    /// After calling `close()`, any further operations on this database
-    /// instance will return `DatabaseClosed` errors.
-    ///
-    /// **Note:** The database is also automatically closed when dropped,
-    /// so explicitly calling `close()` is optional but recommended for
-    /// explicit error handling.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use spatio::Spatio;
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let _ = std::fs::remove_file("my_data.db");
-    /// let mut db = Spatio::open("my_data.db")?;
-    /// db.insert("key", b"value", None)?;
-    ///
-    /// // Explicitly close and handle errors
-    /// db.close()?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Manually trigger a snapshot write.
+    /// Writes the current database state to the snapshot file.
+    #[cfg(feature = "snapshot")]
+    pub fn snapshot(&mut self) -> Result<()> {
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.inner.save_snapshot()
+    }
+
+    /// Close the database and sync all pending writes.
+    /// Subsequent operations will return errors.
     pub fn close(&mut self) -> Result<()> {
-        let mut inner = self.write_checked()?;
-
-        inner.closed = true;
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file {
-            aof_file.sync_with_mode(sync_mode)?;
-            inner.sync_ops_since_flush = 0;
+        if self.inner.closed {
+            return Err(SpatioError::DatabaseClosed);
         }
+
+        self.inner.closed = true;
+
+        #[cfg(feature = "aof")]
+        {
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file {
+                aof_file.sync_with_mode(sync_mode)?;
+                self.inner.sync_ops_since_flush = 0;
+            }
+        }
+
+        #[cfg(feature = "snapshot")]
+        if let Some(ref mut snapshot_file) = self.inner.snapshot_file {
+            snapshot_file.save(&self.inner.keys)?;
+        }
+
         Ok(())
-    }
-
-    pub(crate) fn read(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        Ok(self.inner.read())
-    }
-
-    pub(crate) fn write(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        Ok(self.inner.write())
-    }
-
-    /// Acquire a read lock and verify the database is not closed
-    pub(crate) fn read_checked(&self) -> Result<RwLockReadGuard<'_, DBInner>> {
-        let guard = self.read()?;
-        if guard.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-        Ok(guard)
-    }
-
-    /// Acquire a write lock and verify the database is not closed
-    pub(crate) fn write_checked(&self) -> Result<RwLockWriteGuard<'_, DBInner>> {
-        let guard = self.write()?;
-        if guard.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-        Ok(guard)
     }
 }
 
@@ -512,32 +327,26 @@ impl HistoryTracker {
     }
 }
 
-/// Automatic graceful shutdown on drop.
-///
-/// When the last reference to the database is dropped, it automatically performs a graceful shutdown:
-/// - Flushes pending writes
-/// - Syncs to disk (best effort, errors are silently ignored)
-/// - Releases resources
-///
-/// Note: Since DB uses Arc internally, this syncs only when the last clone is dropped.
-/// The database is NOT marked as closed here to allow other clones to continue operating.
-/// Use `close()` explicitly if you need to prevent further operations.
+/// Sync pending writes on drop (best effort, errors ignored).
 impl Drop for DB {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) != 1 {
+        if self.inner.closed {
             return;
         }
 
-        let mut inner = self.inner.write();
-        if inner.closed {
-            return;
-        }
-
-        let sync_mode = inner.config.sync_mode;
-        if let Some(ref mut aof_file) = inner.aof_file
-            && aof_file.sync_with_mode(sync_mode).is_ok()
+        #[cfg(feature = "aof")]
         {
-            inner.sync_ops_since_flush = 0;
+            let sync_mode = self.inner.config.sync_mode;
+            if let Some(ref mut aof_file) = self.inner.aof_file
+                && aof_file.sync_with_mode(sync_mode).is_ok()
+            {
+                self.inner.sync_ops_since_flush = 0;
+            }
+        }
+
+        #[cfg(feature = "snapshot")]
+        if let Some(ref mut snapshot_file) = self.inner.snapshot_file {
+            let _ = snapshot_file.save(&self.inner.keys);
         }
     }
 }
@@ -549,32 +358,21 @@ mod tests {
     use super::*;
     #[cfg(feature = "time-index")]
     use bytes::Bytes;
-    use std::sync::Arc;
     use std::thread::sleep;
     use std::time::Duration;
 
     #[test]
-    fn test_drop_only_syncs_on_last_reference() {
+    #[cfg(feature = "aof")]
+    fn test_drop_syncs_to_disk() {
         use std::fs;
         let temp_path = std::env::temp_dir().join("test_drop_sync.aof");
         let _ = fs::remove_file(&temp_path);
 
-        let db = DB::open(&temp_path).unwrap();
-        db.insert("key1", b"value1", None).unwrap();
-
-        // Create clones
-        let db2 = db.clone();
-        let db3 = db.clone();
-
-        assert_eq!(Arc::strong_count(&db.inner), 3);
-
-        drop(db2);
-        assert_eq!(Arc::strong_count(&db.inner), 2);
-
-        drop(db3);
-        assert_eq!(Arc::strong_count(&db.inner), 1);
-
-        drop(db);
+        {
+            let mut db = DB::open(&temp_path).unwrap();
+            db.insert("key1", b"value1", None).unwrap();
+            // DB dropped here, should sync
+        }
 
         let db = DB::open(&temp_path).unwrap();
         assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
@@ -595,22 +393,8 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_shares_state() {
-        let db = DB::memory().unwrap();
-        let db2 = db.clone();
-
-        db.insert("key1", b"value1", None).unwrap();
-        db2.insert("key2", b"value2", None).unwrap();
-
-        assert_eq!(db.get("key1").unwrap().unwrap().as_ref(), b"value1");
-        assert_eq!(db.get("key2").unwrap().unwrap().as_ref(), b"value2");
-        assert_eq!(db2.get("key1").unwrap().unwrap().as_ref(), b"value1");
-        assert_eq!(db2.get("key2").unwrap().unwrap().as_ref(), b"value2");
-    }
-
-    #[test]
     fn test_cleanup_expired_removes_keys() {
-        let db = DB::memory().unwrap();
+        let mut db = DB::memory().unwrap();
         db.insert(
             "ttl",
             b"value",
@@ -629,7 +413,7 @@ mod tests {
     #[cfg(feature = "time-index")]
     #[test]
     fn test_keys_created_time_filters() {
-        let db = DB::memory().unwrap();
+        let mut db = DB::memory().unwrap();
         db.insert("old", b"1", None).unwrap();
         sleep(Duration::from_millis(30));
         db.insert("recent", b"2", None).unwrap();
@@ -640,10 +424,8 @@ mod tests {
 
         let old_key = Bytes::copy_from_slice(b"old");
         let new_key = Bytes::copy_from_slice(b"recent");
-        let inner = db.read().unwrap();
-        let old_created = inner.get_item(&old_key).unwrap().created_at;
-        let new_created = inner.get_item(&new_key).unwrap().created_at;
-        drop(inner);
+        let old_created = db.inner.get_item(&old_key).unwrap().created_at;
+        let new_created = db.inner.get_item(&new_key).unwrap().created_at;
 
         let between = db.keys_created_between(old_created, new_created).unwrap();
         assert!(between.iter().any(|k| k.as_ref() == b"old"));
@@ -654,7 +436,7 @@ mod tests {
     #[test]
     fn test_history_tracking_with_capacity() {
         let config = Config::default().with_history_capacity(2);
-        let db = DB::open_with_config(":memory:", config).unwrap();
+        let mut db = DB::open_with_config(":memory:", config).unwrap();
 
         db.insert("key", b"v1", None).unwrap();
         db.insert("key", b"v2", None).unwrap();

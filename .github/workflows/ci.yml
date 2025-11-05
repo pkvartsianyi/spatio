@@ -57,9 +57,6 @@ jobs:
       - name: Build Rust crate
         run: cargo build --verbose
 
-      - name: Build C ABI (release)
-        run: cargo build --release --lib
-
       - name: Run Rust tests
         run: cargo test --verbose
 

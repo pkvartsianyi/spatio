@@ -4,7 +4,7 @@ use std::time::{Duration, UNIX_EPOCH};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Trajectory Tracking ===\n");
 
-    let db = Spatio::memory()?;
+    let mut db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === 1. BASIC TRAJECTORY STORAGE ===
@@ -210,7 +210,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("8. Database Statistics");
     println!("----------------------");
 
-    let stats = db.stats()?;
+    let stats = db.stats();
     println!("   Total keys in database: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 

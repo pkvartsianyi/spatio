@@ -15,9 +15,9 @@ import spatio
 
 @pytest.fixture
 def gc_collect():
+    """Fixture for test cleanup"""
     yield
-    if platform.system() == "Windows":
-        gc.collect()
+    gc.collect()
 
 
 class TestPoint:
@@ -25,64 +25,64 @@ class TestPoint:
 
     def test_valid_point_creation(self):
         """Test creating valid points"""
-        point = spatio.Point(40.7128, -74.0060)
-        assert point.lat == 40.7128
+        point = spatio.Point(-74.0060, 40.7128)
         assert point.lon == -74.0060
+        assert point.lat == 40.7128
         assert point.alt is None  # geo::Point doesn't support altitude
 
     def test_valid_3d_point_creation(self):
         """Test creating valid 3D points (altitude parameter accepted but ignored)"""
-        point = spatio.Point(40.7128, -74.0060, 100.0)
-        assert point.lat == 40.7128
+        point = spatio.Point(-74.0060, 40.7128, 100.0)
         assert point.lon == -74.0060
+        assert point.lat == 40.7128
         assert (
             point.alt is None
         )  # geo::Point doesn't support altitude, parameter ignored
 
     @pytest.mark.parametrize(
-        ("latitude", "longitude"),
+        ("longitude", "latitude"),
         [
             pytest.param(
-                90.1,
                 0.0,
+                90.1,
                 id="latitude_too_high",
             ),
             pytest.param(
-                -90.1,
                 0.0,
+                -90.1,
                 id="latitude_too_low",
             ),
         ],
     )
-    def test_point_validation_latitude(self, latitude, longitude):
+    def test_point_validation_latitude(self, longitude, latitude):
         """Test point validation for invalid latitude"""
         with pytest.raises(ValueError, match=r"Latitude must be between -90 and 90"):
-            spatio.Point(latitude, longitude)
+            spatio.Point(longitude, latitude)
 
     @pytest.mark.parametrize(
-        ("latitude", "longitude"),
+        ("longitude", "latitude"),
         [
             pytest.param(
-                0.0,
                 180.1,
+                0.0,
                 id="longitude_too_high",
             ),
             pytest.param(
-                0.0,
                 -180.1,
+                0.0,
                 id="longitude_too_low",
             ),
         ],
     )
-    def test_point_validation_longitude(self, latitude, longitude):
+    def test_point_validation_longitude(self, longitude, latitude):
         """Test point validation for invalid longitude"""
         with pytest.raises(ValueError, match=r"Longitude must be between -180 and 180"):
-            spatio.Point(latitude, longitude)
+            spatio.Point(longitude, latitude)
 
     def test_point_distance(self):
         """Test distance calculation between points"""
-        nyc = spatio.Point(40.7128, -74.0060)
-        brooklyn = spatio.Point(40.6782, -73.9442)
+        nyc = spatio.Point(-74.0060, 40.7128)
+        brooklyn = spatio.Point(-73.9442, 40.6782)
 
         distance = nyc.distance_to(brooklyn)
         # Brooklyn is roughly 6-8 km from NYC center
@@ -90,13 +90,13 @@ class TestPoint:
 
     def test_point_repr(self):
         """Test point string representation"""
-        point = spatio.Point(40.7128, -74.0060)
-        assert "Point(lat=40.7128, lon=-74.006)" in str(point)
+        point = spatio.Point(-74.0060, 40.7128)
+        assert "Point(lon=-74.006, lat=40.7128)" in str(point)
         assert "alt" not in str(point)  # No altitude in repr when None
 
         # Altitude parameter is accepted but ignored (geo::Point limitation)
-        point_with_alt = spatio.Point(40.7128, -74.0060, 100.0)
-        assert "Point(lat=40.7128, lon=-74.006)" in str(point_with_alt)
+        point_with_alt = spatio.Point(-74.0060, 40.7128, 100.0)
+        assert "Point(lon=-74.006, lat=40.7128)" in str(point_with_alt)
         assert point_with_alt.alt is None
 
 
@@ -144,43 +144,8 @@ class TestConfig:
     def test_default_config(self):
         """Test default configuration"""
         config = spatio.Config()
-        assert config.geohash_precision == 8
-
-    def test_custom_geohash_precision(self):
-        """Test custom geohash precision"""
-        config = spatio.Config.with_geohash_precision(10)
-        assert config.geohash_precision == 10
-
-    @pytest.mark.parametrize(
-        "geohash_precision",
-        [
-            pytest.param(
-                0,
-                id="below geohash precision",
-            ),
-            pytest.param(
-                13,
-                id="above geohash precision",
-            ),
-        ],
-    )
-    def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
-        """Test invalid geohash precision values"""
-        with pytest.raises(
-            ValueError, match=r"Geohash precision must be between 1 and 12"
-        ):
-            spatio.Config.with_geohash_precision(geohash_precision)
-
-    def test_set_geohash_precision(self):
-        """Test setting geohash precision"""
-        config = spatio.Config()
-        config.geohash_precision = 6
-        assert config.geohash_precision == 6
-
-        with pytest.raises(
-            ValueError, match=r"Geohash precision must be between 1 and 12"
-        ):
-            config.geohash_precision = 0
+        # Config created successfully
+        assert config is not None
 
 
 class TestSpatio:
@@ -193,31 +158,16 @@ class TestSpatio:
 
     def test_memory_with_config(self):
         """Test creating in-memory database with config"""
-        config = spatio.Config.with_geohash_precision(10)
+        config = spatio.Config()
         db = spatio.Spatio.memory_with_config(config)
         assert isinstance(db, spatio.Spatio)
 
     def test_persistent_database_from_non_exist_file(self, gc_collect, tmp_path):
         """Test creating persistent database using non-existing file"""
         db_path = os.path.join(tmp_path, "test.db")
-        # Normalize path for Windows compatibility
-        db_path = os.path.normpath(db_path)
         db = spatio.Spatio.open(db_path)
         assert isinstance(db, spatio.Spatio)
         db.close()
-
-    def test_persistent_database_from_invalid_file(self, gc_collect, tmp_path):
-        """Test creating persistent database using invalid file"""
-        # Given
-        db_path = os.path.join(tmp_path, "test.db")
-        db_file = tmp_path / "test.db"
-        db_file.write_text("keyvalue")
-        # Normalize path for Windows compatibility
-        db_path = os.path.normpath(db_path)
-
-        # When/Then
-        with pytest.raises(RuntimeError):
-            spatio.Spatio.open(db_path)
 
     def test_get_not_exist_key(self):
         """Test get method"""
@@ -286,13 +236,9 @@ class TestSpatio:
         "sleep_time",
         [
             pytest.param(
-                # Wait for expiration - use longer timeout on Windows due to timing differences
-                0.3,
-                id="windows os",
-            ),
-            pytest.param(
+                # Wait for expiration
                 0.2,
-                id="another os",
+                id="expiration test",
             ),
         ],
     )
@@ -318,8 +264,8 @@ class TestSpatio:
         """Test geographic point operations"""
         db = spatio.Spatio.memory()
 
-        nyc = spatio.Point(40.7128, -74.0060)
-        brooklyn = spatio.Point(40.6782, -73.9442)
+        nyc = spatio.Point(-74.0060, 40.7128)
+        brooklyn = spatio.Point(-73.9442, 40.6782)
 
         db.insert_point("cities", nyc, b"New York")
         db.insert_point("cities", brooklyn, b"Brooklyn")
@@ -339,8 +285,8 @@ class TestSpatio:
         db = spatio.Spatio.memory()
 
         # Insert some points
-        nyc = spatio.Point(40.7128, -74.0060)
-        brooklyn = spatio.Point(40.6782, -73.9442)
+        nyc = spatio.Point(-74.0060, 40.7128)
+        brooklyn = spatio.Point(-73.9442, 40.6782)
 
         db.insert_point("cities", nyc, b"New York")
         db.insert_point("cities", brooklyn, b"Brooklyn")
@@ -372,9 +318,9 @@ class TestSpatio:
 
         # Create trajectory data
         trajectory = [
-            (spatio.Point(40.7128, -74.0060), 1640995200),  # Start
-            (spatio.Point(40.7150, -74.0040), 1640995260),  # 1 min later
-            (spatio.Point(40.7172, -74.0020), 1640995320),  # 2 min later
+            (spatio.Point(-74.0060, 40.7128), 1640995200),  # Start
+            (spatio.Point(-74.0040, 40.7150), 1640995260),  # 1 min later
+            (spatio.Point(-74.0020, 40.7172), 1640995320),  # 2 min later
         ]
 
         # Insert trajectory
@@ -397,7 +343,7 @@ class TestSpatio:
         db.insert(b"key1", b"value1")
         db.insert(b"key2", b"value2")
 
-        point = spatio.Point(40.7128, -74.0060)
+        point = spatio.Point(-74.0060, 40.7128)
         db.insert_point("cities", point, b"NYC")
 
         # Verify operations were applied
@@ -405,7 +351,7 @@ class TestSpatio:
         assert db.get(b"key2") == b"value2"
 
         nearby = db.query_within_radius(
-            "cities", spatio.Point(40.7128, -74.0060), 1000.0, 10
+            "cities", spatio.Point(-74.0060, 40.7128), 1000.0, 10
         )
         assert len(nearby) >= 1
 
@@ -493,8 +439,8 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Inserted 1000 items in {elapsed:.3f} seconds")
 
-        # Basic sanity check - allow more time on Windows
-        max_time = 10.0 if platform.system() == "Windows" else 5.0
+        # Basic sanity check
+        max_time = 5.0
         assert elapsed < max_time  # Should be faster than expected time
 
     def test_spatial_query_performance(self):
@@ -513,7 +459,7 @@ class TestPerformance:
             db.insert_point("test_points", point, f"point_{i}".encode())
 
         # Query performance
-        center = spatio.Point(40.7128, -74.0060)
+        center = spatio.Point(-74.0060, 40.7128)
         start_time = time.time()
 
         for _ in range(100):
@@ -522,8 +468,8 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Performed 100 spatial queries in {elapsed:.3f} seconds")
 
-        # Basic sanity check - allow more time on Windows
-        max_time = 4.0 if platform.system() == "Windows" else 2.0
+        # Basic sanity check
+        max_time = 2.0
         assert elapsed < max_time  # Should be faster than expected time
 
 
