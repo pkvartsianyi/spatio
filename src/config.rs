@@ -194,7 +194,19 @@ pub struct SetOptions {
 }
 
 impl SetOptions {
-    /// Create options with TTL
+    /// Create options with TTL (time-to-live).
+    ///
+    /// # Important: Manual Cleanup Required
+    ///
+    /// Expired items are treated as non-existent on reads (passive expiration),
+    /// but they remain in memory and storage until either:
+    ///
+    /// 1. Overwritten by a new value with the same key
+    /// 2. Manually cleaned with `db.cleanup_expired()`
+    /// 3. Database is restarted (snapshot won't restore expired items)
+    ///
+    /// **For production systems with TTL**, you MUST periodically call `cleanup_expired()`
+    /// to prevent unbounded memory growth.
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             ttl: Some(ttl),
@@ -202,7 +214,12 @@ impl SetOptions {
         }
     }
 
-    /// Create options with absolute expiration time
+    /// Create options with absolute expiration time.
+    ///
+    /// # Important: Manual Cleanup Required
+    ///
+    /// Like `with_ttl()`, expired items remain in storage until manually cleaned.
+    /// See `with_ttl()` documentation for cleanup requirements.
     pub fn with_expiration(expires_at: SystemTime) -> Self {
         Self {
             ttl: None,

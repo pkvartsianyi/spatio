@@ -31,6 +31,12 @@ All notable changes since the last release are documented below.
 
 - Improved 3D spatial query performance
 - Simplified index management without precision configuration
+- **TTL cleanup helpers and documentation**:
+  - `DB::count_expired()` - Monitor expired items without removing them
+  - `SyncDB::count_expired()` - Thread-safe expired item count
+  - Enhanced documentation with cleanup patterns and warnings
+  - Production-ready examples for periodic cleanup
+  - **⚠️ IMPORTANT**: TTL items require manual cleanup via `cleanup_expired()` to prevent memory leaks
 
 ### Python Bindings
 

@@ -383,8 +383,10 @@ impl SyncDB {
     }
 
     // ===== Maintenance Operations =====
+    pub fn count_expired(&self) -> usize {
+        self.inner.read().count_expired()
+    }
 
-    /// Removes expired keys from the database.
     pub fn cleanup_expired(&self) -> Result<usize> {
         self.inner.write().cleanup_expired()
     }

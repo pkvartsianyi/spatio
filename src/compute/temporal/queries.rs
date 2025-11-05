@@ -10,8 +10,15 @@ use std::time::{Duration, SystemTime};
 use crate::config::HistoryEntry;
 
 impl DB {
-    /// Remove all expired keys and compact indexes.
-    /// This is a manual cleanup operation that scans all keys.
+    pub fn count_expired(&self) -> usize {
+        let now = SystemTime::now();
+        self.inner
+            .keys
+            .values()
+            .filter(|item| item.is_expired_at(now))
+            .count()
+    }
+
     pub fn cleanup_expired(&mut self) -> Result<usize> {
         let now = SystemTime::now();
 
