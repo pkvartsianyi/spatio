@@ -2,6 +2,8 @@ use bytes::Bytes;
 use spatio::compute::spatial::DistanceMetric;
 use spatio::{Config, Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, UNIX_EPOCH};
+
+#[cfg(feature = "aof")]
 use tempfile::NamedTempFile;
 
 #[test]

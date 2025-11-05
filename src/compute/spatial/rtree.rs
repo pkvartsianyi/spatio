@@ -1,8 +1,9 @@
-//! 3D spatial index using R-tree with envelope-based pruning.
+//! Unified spatial index using R-tree for 2D and 3D queries.
 //!
-//! This module implements efficient 3D spatial queries using R-tree data structures
-//! with axis-aligned bounding box (AABB) envelope pruning. This approach provides
-//! O(log n) query performance instead of O(n) linear iteration.
+//! This module provides the single spatial indexing solution for Spatio, using R-tree
+//! data structures with axis-aligned bounding box (AABB) envelope pruning. It handles
+//! both 2D points (stored with z=0) and native 3D points, providing O(log n) query
+//! performance for all spatial operations.
 //!
 //! ## Envelope-Based Pruning
 //!
@@ -132,7 +133,11 @@ impl RstarPoint for IndexedPoint3D {
     }
 }
 
-/// Spatial index manager using R-tree for 2D and 3D queries.
+/// Unified spatial index manager for all spatial queries.
+///
+/// Maintains per-prefix 3D R-Trees that handle both 2D and 3D points efficiently.
+/// 2D points are stored with z=0 coordinate in the 3D structure, allowing a single
+/// index implementation to serve all spatial query types.
 pub struct SpatialIndexManager {
     pub(crate) indexes: FxHashMap<String, RTree<IndexedPoint3D>>,
 }

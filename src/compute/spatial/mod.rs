@@ -8,6 +8,3 @@ pub mod queries;
 
 pub mod rtree;
 pub use rtree::{BBoxQuery, CylinderQuery, SpatialIndexManager};
-
-pub mod hybrid;
-pub use hybrid::{GeohashRTreeIndex, ObjectType, SpatialObject};
