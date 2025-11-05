@@ -1,204 +1,74 @@
-# Version Management Scripts
+# Scripts
 
-This directory contains scripts for managing versions and releases in the Spatio project.
+Helper scripts for version management.
 
-## Scripts
+## bump-version.sh
 
-### `bump-version.sh`
+Update package versions.
 
-Main script for updating package versions.
-
-**Usage:**
 ```bash
-./scripts/bump-version.sh <package> <new_version> [options]
+./scripts/bump-version.sh <package> <version>
 ```
 
-**Arguments:**
-- `<package>`: Which package to bump (`rust`, `python`, `types`, or `all`)
-- `<new_version>`: The new version (e.g., `0.1.1`, `0.2.0-alpha.1`)
+**Packages:**
+- `rust` - Main Rust crate
+- `python` - Python bindings
+- `types` - Spatio-types crate
+- `all` - Bump everything to same version
 
 **Options:**
-- `--dry-run`: Show what would change without making changes
-- `--no-commit`: Update files but don't commit
-- `--help`: Show help message
+- `--dry-run` - Preview changes
+- `--no-commit` - Update files without committing
 
 **Examples:**
 ```bash
-# Bump Rust crate version
+# Bump Rust to 0.2.1
 ./scripts/bump-version.sh rust 0.2.1
 
-# Bump Python package version
-./scripts/bump-version.sh python 0.1.5
+# Preview Python bump
+./scripts/bump-version.sh python 0.1.5 --dry-run
 
-# Bump spatio-types version
-./scripts/bump-version.sh types 0.1.1
-
-# Bump all packages to same version
+# Bump everything to 1.0.0
 ./scripts/bump-version.sh all 1.0.0
-
-# Preview changes without making them
-./scripts/bump-version.sh rust 0.3.0 --dry-run
 ```
 
-### `check-version.sh`
+## check-version.sh
 
-Script for checking current version status.
+Check current versions and release status.
 
-**Usage:**
 ```bash
 ./scripts/check-version.sh
 ```
 
-Shows:
-- Current Rust crate version
-- Current Python package version
-- Latest release tags for each package
-- Version status and readiness for release
-
-## Justfile Integration
-
-For convenience, these scripts are also available as `just` commands:
+## Using with just
 
 ```bash
-# Check versions
 just check-version
-
-# Bump versions
 just bump-rust 0.2.1
 just bump-python 0.1.5
-just bump-types 0.1.1
 just bump-all 1.0.0
-
-# Dry run (preview changes)
-just bump-rust-dry 0.2.1
-just bump-python-dry 0.1.5
-just bump-types-dry 0.1.1
-just bump-all-dry 1.0.0
-
-# Update without committing
-just bump-rust-no-commit 0.2.1
 ```
 
-## Automatic Releases
+## Auto-Release
 
-When you bump a version and push to `main`, GitHub Actions automatically:
-
-1. **Detects version changes** in `Cargo.toml` files
-2. **Runs tests** for changed packages
-3. **Creates releases** with appropriate tags
-4. **Publishes packages** to registries
-
-**Tag Format:**
-- Rust changes: `rust-v1.2.3`
-- Python changes: `python-v0.5.1`
-- Types changes: `types-v0.1.0`
+When you bump a version and push to `main`, GitHub Actions:
+1. Detects version changes
+2. Runs tests
+3. Creates release with tag (`rust-v1.2.3` or `python-v0.5.1`)
+4. Publishes to crates.io/PyPI
 
 ## Version Format
 
-Both packages follow [Semantic Versioning](https://semver.org/):
-
-- `MAJOR.MINOR.PATCH` (e.g., `1.0.0`)
-- `MAJOR.MINOR.PATCH-prerelease` (e.g., `1.0.0-alpha.1`)
-
-**Supported prerelease identifiers:**
-- `alpha` - Early development
-- `beta` - Feature complete, testing
-- `rc` - Release candidate
-
-## Workflow
-
-### Basic Version Update
-
-1. **Check current status:**
-   ```bash
-   just check-version
-   ```
-
-2. **Update version:**
-   ```bash
-   just bump-rust 0.2.1  # or bump-python, bump-types, bump-all
-   ```
-
-3. **Push to trigger release:**
-   ```bash
-   git push origin main
-   ```
-
-### Independent Versioning
-
-Rust, Python, and Types packages can have different versions:
+Use semantic versioning: `MAJOR.MINOR.PATCH`
 
 ```bash
-# Rust at v0.3.0, Python at v0.1.2, Types at v0.1.0
-just bump-rust 0.3.1      # Only Rust updated
-just bump-python 0.1.3    # Only Python updated
-just bump-types 0.1.1     # Only Types updated
-```
-
-### Synchronized Versioning
-
-For major releases, use same version:
-
-```bash
-just bump-all 1.0.0       # All packages updated to same version
-```
-
-## Files Updated
-
-The scripts automatically update:
-
-- **Rust package**: `Cargo.toml`, `Cargo.lock`
-- **Python package**: `py-spatio/Cargo.toml`, `py-spatio/Cargo.lock`
-- **Types package**: `spatio-types/Cargo.toml`
-- **Git**: Commit with version change message
-
-## Requirements
-
-- **Git**: For version control operations
-- **Rust/Cargo**: For updating lock files
-- **Bash**: Scripts are written in Bash
-
-## Troubleshooting
-
-### Version Format Errors
-
-Ensure versions follow semantic versioning:
-```bash
-# Valid formats
+# Valid
 0.1.0
 1.2.3
 2.0.0-alpha.1
-1.0.0-beta.2
 1.0.0-rc.1
 
-# Invalid formats
+# Invalid
 v0.1.0        # No 'v' prefix
-0.1           # Missing patch version
-1.0.0-ALPHA   # Uppercase prerelease
-```
-
-### Uncommitted Changes
-
-Scripts require a clean working directory:
-```bash
-# Commit or stash changes first
-git add .
-git commit -m "your changes"
-
-# Then run version script
-just bump-rust 0.2.1
-```
-
-### Missing Dependencies
-
-If scripts fail, ensure you have:
-```bash
-# Check git
-git --version
-
-# Check cargo
-cargo --version
-
-# Make scripts executable
-chmod +x scripts/*.sh
+0.1           # Need patch version
 ```

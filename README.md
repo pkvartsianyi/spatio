@@ -29,420 +29,241 @@ It's designed for **real-time 2D and 3D location data**, with **low memory usage
 
 No SQL parser, no external dependencies, and requires no setup.
 
----
-
-## Features
-
-### Embedded and Lightweight
-- **Self-contained** — Runs without external services or dependencies
-- **Minimal API surface** — Open, insert, and query
-- **Low memory footprint** — Suitable for IoT, edge, and embedded environments
-- **Single-Writer Thread Safety** — Uses a shared RwLock (without lock upgrades) to allow concurrent readers and a single writer
-
-### Performance Scope
-- **Spatio-temporal queries** — Use 3D R*-tree indexing for efficient 2D and 3D spatial operations
-- **Configurable persistence** — Snapshot-based (default) or AOF with sync policies
-- **Startup and Shutdown** — Persistence files are loaded automatically on startup
-
-### Spatio-Temporal Indexing and Querying
-- **Unified Spatial Indexing** — Native 3D R*-tree indexing for all spatial operations with optional history tracking
-- **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
-- **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
-- **3D Spatial Support** — Full 3D point indexing with altitude-aware queries (spherical, cylindrical, bounding box)
-- **Trajectory Support** — Store and query movement over time (2D and 3D)
-- **GeoJSON I/O** — Supports import and export of geometries in GeoJSON format
-
-### Data Management
-- **Namespaces** — Isolate data logically within the same instance
-- **TTL Support** — Lazy expiration on read with manual cleanup
-- **Temporal Queries** — Filter keys by recent activity with optional history tracking
-- **Atomic Batches** — Supports grouped write operations with atomic semantics
-- **Custom Configs** — JSON/TOML serializable configuration
-
-### Language Support
-- **Rust** — Native
-- **Python** — Provides bindings implemented via PyO3 (`pip install spatio`)
-
-### Compile-Time Feature Flags
-- `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="snapshot,geojson"`.
-- `snapshot` *(default)* — enables snapshot-based persistence (point-in-time saves)
-- `aof` — enables append-only file persistence (write-ahead log style)
-
-### Persistence Configuration
-
-**Snapshot Mode (Default)**
-- Point-in-time saves of entire database state
-- Configure auto-save threshold: `DBBuilder::new().snapshot_auto_ops(100)` saves every 100 operations
-- Without auto-save configuration, snapshots only occur on manual `db.sync()` or `db.close()`
-- Data loss window: all writes since last snapshot are lost on crash
-- Recommended for edge devices with infrequent updates or when using actor supervision with message replay
-
-**AOF Mode (Optional)**
-- Enable with `--features aof` in Cargo.toml
-- Write-ahead log provides durability guarantees with configurable sync policies
-- Recommended for cloud deployments requiring zero data loss
-- Use `DBBuilder::new().aof_path("data.aof")` with `SyncPolicy::Always` for maximum durability
-
-### Sync Strategy Configuration
-- `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
-  of writes (durable but slower).
-- `SyncMode::Data` — use `fdatasync`/`File::sync_data` when your platform
-  supports it (data-only durability).
-- `sync_batch_size` — number of write operations to batch before a sync when
-  `SyncPolicy::Always` is selected (default: 1). Tune via
-  `Config::with_sync_batch_size` to reduce syscall frequency.
-
-## Installation
-
-### Supported Platforms
-
-- **Linux**: x86_64, aarch64
-- **macOS**: x86_64 (Intel), arm64 (Apple Silicon)
-
-**Note**: Windows is not supported. Spatio is designed for Unix-like systems.
+## Quick Start
 
 ### Python
-
 ```bash
 pip install spatio
 ```
 
-📦 **PyPI**: https://pypi.org/project/spatio
+```python
+import spatio
+
+db = spatio.Spatio.memory()
+
+# Store a point (longitude, latitude)
+nyc = spatio.Point(-74.0060, 40.7128)
+db.insert_point("cities", nyc, b"New York")
+
+# Find nearby points
+nearby = db.query_within_radius("cities", nyc, 100000, 10)
+```
 
 ### Rust
-
-Add this to your `Cargo.toml`:
-
 ```toml
 [dependencies]
 spatio = "0.1"
 ```
 
-📦 **Crates.io**: https://crates.io/crates/spatio
-
-
-## Quick Start
-
-Python usage lives in the dedicated bindings package—see `py-spatio/README.md`
-for up-to-date installation notes and examples.
-
-### Rust
 ```rust
 use spatio::prelude::*;
-use spatio::Point3d;
-use std::time::Duration;
 
 fn main() -> Result<()> {
-    // Configure the database
-    let config = Config::default()
-        .with_default_ttl(Duration::from_secs(3600));
+    let mut db = Spatio::memory()?;
 
-    // Create an in-memory database with configuration
-    let db = Spatio::memory_with_config(config)?;
+    let nyc = Point::new(-74.0060, 40.7128);
+    db.insert_point("cities", &nyc, b"New York", None)?;
 
-    // Create a namespace for logical separation
-    let ns = db.namespace("vehicles");
-
-    // Insert a point (automatically indexed)
-    let truck = Point::new(-74.0060, 40.7128);
-    ns.insert_point("truck:001", &truck, b"Truck A", None)?;
-
-    // Query for nearby points
-    let results = ns.query_within_radius(&truck, 1000.0, 10)?;
-    println!("Found {} nearby objects", results.len());
-
-    // Check if a key exists
-    if let Some(data) = ns.get("truck:001")? {
-        println!("Data: {:?}", data);
-    }
-
-    // 3D spatial tracking (altitude-aware)
-    let drone = Point3d::new(-74.0060, 40.7128, 100.0); // lon, lat, altitude
-    db.insert_point_3d("drones", &drone, b"Drone Alpha", None)?;
-
-    // Query within 3D sphere
-    let nearby_3d = db.query_within_sphere_3d("drones", &drone, 200.0, 10)?;
-    println!("Found {} drones within 200m (3D)", nearby_3d.len());
+    let nearby = db.query_within_radius("cities", &nyc, 100_000.0, 10)?;
+    println!("Found {} cities", nearby.len());
 
     Ok(())
 }
 ```
 
-For runnable demos and extended use-case walkthroughs, check
-`examples/README.md`.
+## Features
 
-## API Overview
+**Spatial queries:** Radius search, bounding box, K-nearest-neighbors, polygon containment
+**3D support:** Full altitude-aware indexing and queries
+**Trajectories:** Track movement over time
+**Distance metrics:** Haversine, Geodesic, Rhumb, Euclidean
+**TTL:** Auto-expire old data
+**Persistence:** Snapshots (default) or append-only file (AOF)
+**Namespaces:** Logical data separation in one database
 
-### Core Operations
+## Coordinate Order
+
+**Important:** Spatio uses `(longitude, latitude)` order everywhere - same as GeoJSON and most GIS tools.
+
 ```rust
-// Basic key-value operations
-db.insert("key", b"value", None)?;
-let value = db.get("key")?;
-db.delete("key")?;
+// Correct: lon, lat
+let point = Point::new(-74.0060, 40.7128);  // NYC
 ```
 
-### Spatial Operations
+This matches the mathematical (x, y) convention and makes GeoJSON interop trivial.
+
+## Examples
+
+### 2D Spatial
 ```rust
-use spatio::{distance_between, DistanceMetric};
-use geo::polygon;
+// Insert points
+db.insert_point("pois", &Point::new(-74.0, 40.7), b"Restaurant", None)?;
 
-let point = Point::new(-74.0060, 40.7128);
+// Find nearby (within 1km)
+let nearby = db.query_within_radius("pois", &center, 1000.0, 10)?;
 
-// Insert point with automatic spatial indexing
-db.insert_point("namespace", &point, b"data", None)?;
+// Bounding box query
+let in_box = db.find_within_bounds("pois", 40.0, -75.0, 41.0, -73.0, 100)?;
 
-// Distance calculations with multiple metrics
-let nyc = Point::new(-74.0060, 40.7128);
-let la = Point::new(-118.2437, 34.0522);
-let dist = db.distance_between(&nyc, &la, DistanceMetric::Haversine)?;
-println!("Distance: {:.2} km", dist / 1000.0); // ~3,944 km
-
-// K-nearest-neighbors search
-let nearest = db.knn("namespace", &point, 5, 500_000.0, DistanceMetric::Haversine)?;
-for (pt, data, distance) in nearest {
-    println!("Found point at {:.2} km", distance / 1000.0);
-}
-
-// Polygon queries (using geo crate)
-let area = polygon![
-    (x: -74.0, y: 40.7),
-    (x: -73.9, y: 40.7),
-    (x: -73.9, y: 40.8),
-    (x: -74.0, y: 40.8),
-];
-let in_polygon = db.query_within_polygon("namespace", &area, 100)?;
-
-// Find nearby points
-let nearby = db.query_within_radius("namespace", &point, 1000.0, 10)?;
-
-// Check if points exist in region
-let exists = db.contains_point("namespace", &point, 1000.0)?;
-
-// Count points within distance
-let count = db.count_within_radius("namespace", &point, 1000.0)?;
-
-// Query bounding box
-let in_bounds = db.find_within_bounds("namespace", 40.0, -75.0, 41.0, -73.0, 10)?;
-let intersects = db.intersects_bounds("namespace", 40.0, -75.0, 41.0, -73.0)?;
+// K-nearest neighbors
+let nearest = db.knn("pois", &center, 5, 10_000.0, DistanceMetric::Haversine)?;
 ```
 
-**Note**: See [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md) for complete documentation on all spatial operations, including convex hull, polygon area calculations, and more.
-
-### 3D Spatial Operations
-
-Spatio provides comprehensive 3D spatial indexing for altitude-aware applications like drone tracking, aviation, and multi-floor building navigation:
-
+### 3D Spatial
 ```rust
-use spatio::{Point3d, BoundingBox3D, Spatio};
+use spatio::Point3d;
 
-let db = Spatio::memory()?;
+// Track drones with altitude
+let drone = Point3d::new(-74.0060, 40.7128, 100.0);
+db.insert_point_3d("drones", &drone, b"Alpha", None)?;
 
-// Insert 3D points (lon, lat, altitude)
-let drone = Point3d::new(-74.0060, 40.7128, 100.0); // 100m altitude
-db.insert_point_3d("drones", &drone, b"Drone Alpha", None)?;
+// 3D sphere query
+let nearby = db.query_within_sphere_3d("drones", &drone, 200.0, 10)?;
 
-// Spherical 3D query (true 3D distance)
-let control = Point3d::new(-74.0065, 40.7133, 100.0);
-let nearby = db.query_within_sphere_3d("drones", &control, 200.0, 10)?;
-
-// Cylindrical query (altitude range + horizontal radius)
-let results = db.query_within_cylinder_3d(
-    "drones",
-    &control,
-    50.0,   // min altitude
-    150.0,  // max altitude
-    1000.0, // horizontal radius
-    10
+// Cylindrical query (altitude range + radius)
+let in_cylinder = db.query_within_cylinder_3d(
+    "drones", &drone, 50.0, 150.0, 1000.0, 10
 )?;
-
-// 3D bounding box query
-let bbox = BoundingBox3D::new(
-    -74.0080, 40.7120, 40.0,  // min x, y, z
-    -74.0050, 40.7150, 110.0, // max x, y, z
-);
-let in_box = db.query_within_bbox_3d("drones", &bbox, 100)?;
-
-// K-nearest neighbors in 3D
-let nearest = db.knn_3d("drones", &control, 5)?;
-
-// 3D distance calculations
-let dist_3d = db.distance_between_3d(&point_a, &point_b)?;
 ```
 
-See [examples/3d_spatial_tracking.rs](examples/3d_spatial_tracking.rs) for a complete demonstration.
-
-### Logging
-
-Spatio uses the `log` crate for diagnostics and warnings. To see log output in your application:
-
+### Trajectories
 ```rust
-// Add to your Cargo.toml:
-[dependencies]
-spatio = "0.1"
-env_logger = "0.11"  // or any other log implementation
+use spatio::TemporalPoint;
 
-// Initialize logging in your main():
-fn main() {
-    env_logger::init();
-    // ... your code
-}
-```
-
-Control log verbosity with the `RUST_LOG` environment variable:
-
-```bash
-# See all debug logs
-RUST_LOG=debug cargo run
-
-# Only warnings and errors
-RUST_LOG=warn cargo run
-
-# Only Spatio logs
-RUST_LOG=spatio=debug cargo run
-```
-
-### Trajectory Tracking
-```rust
-// Store movement over time
-let trajectory = vec![
-    TemporalPoint { point: Point::new(-74.0060, 40.7128), timestamp: UNIX_EPOCH + Duration::from_secs(1640995200) },
-    TemporalPoint { point: Point::new(-74.0040, 40.7150), timestamp: UNIX_EPOCH + Duration::from_secs(1640995260) },
-    TemporalPoint { point: Point::new(-74.0020, 40.7172), timestamp: UNIX_EPOCH + Duration::from_secs(1640995320) },
+let path = vec![
+    TemporalPoint {
+        point: Point::new(-74.00, 40.71),
+        timestamp: UNIX_EPOCH + Duration::from_secs(100)
+    },
+    TemporalPoint {
+        point: Point::new(-74.01, 40.72),
+        timestamp: UNIX_EPOCH + Duration::from_secs(200)
+    },
 ];
-db.insert_trajectory("vehicle:truck001", &trajectory, None)?;
 
-// Query trajectory for time range
-let path = db.query_trajectory("vehicle:truck001", 1640995200, 1640995320)?;
+db.insert_trajectory("truck:001", &path, None)?;
+
+// Query movement history
+let history = db.query_trajectory("truck:001", 100, 300)?;
 ```
 
-### Atomic Operations
+### TTL (Time-To-Live)
 ```rust
-db.atomic(|batch| {
-    batch.insert("key1", b"value1", None)?;
-    batch.insert("key2", b"value2", None)?;
-    batch.delete("old_key")?;
-    Ok(())
-})?;
+use spatio::SetOptions;
 
-### Persistence Modes
-
-Spatio supports two persistence strategies:
-
-**Snapshot (default)**: Point-in-time saves, fast recovery, predictable overhead
-```rust
-use spatio::{DBBuilder, Config};
-
-// Manual snapshot
-let mut db = DBBuilder::new()
-    .snapshot_path("data.snapshot")
-    .build()?;
-db.insert("key", b"value", None)?;
-db.snapshot()?; // Explicit save
-
-// Auto-snapshot every N operations
-let config = Config::default().with_snapshot_auto_ops(1000);
-let mut db = DBBuilder::new()
-    .snapshot_path("data.snapshot")
-    .config(config)
-    .build()?;
-// Automatically snapshots every 1000 operations
-```
-
-**AOF (optional)**: Append-only log, durable per-write, replay on startup
-```rust
-use spatio::DBBuilder;
-
-let mut db = DBBuilder::new()
-    .aof_path("data.aof")
-    .build()?;
-// Requires `aof` feature: cargo add spatio --features aof
-```
-
-### Time-to-Live (TTL)
-
-TTL support is **passive/lazy** - expired items are filtered on read and can be manually cleaned up:
-
-```rust
 // Data expires in 1 hour
 let opts = SetOptions::with_ttl(Duration::from_secs(3600));
-db.insert("temp_key", b"temp_value", Some(opts))?;
+db.insert("session:123", b"data", Some(opts))?;
 
-// Expired items return None on get()
-let value = db.get("temp_key")?; // None if expired
+// Expired items return None
+let value = db.get("session:123")?;  // None if expired
 
-// Manual cleanup: removes all expired keys and writes deletions to AOF
+// Clean up expired items manually
 let removed = db.cleanup_expired()?;
 ```
 
-## Architecture Overview
+**Important:** TTL is lazy - expired items stick around in memory until you call `cleanup_expired()` or they get overwritten. For long-running apps, clean up periodically or you'll leak memory.
 
-Spatio is organized in layered modules:
+### Persistence
 
-- **Storage** – Pluggable backends (in-memory by default, snapshot or AOF for durability) with a common trait surface.
-- **Indexing** – R*-tree-based spatial index with efficient 2D and 3D query support.
-- **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
-- **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.
+**Snapshots (default):** Point-in-time saves, good for edge devices
+```rust
+let config = Config::default().with_snapshot_auto_ops(1000);
+let db = DBBuilder::new()
+    .snapshot_path("data.snapshot")
+    .config(config)
+    .build()?;
+// Auto-saves every 1000 operations
+```
 
-See the [docs site](https://pkvartsianyi.github.io/spatio/) for deeper architectural notes.
+**AOF (optional):** Write-ahead log, good for zero data loss
+```rust
+let db = DBBuilder::new()
+    .aof_path("data.aof")
+    .build()?;
+// Requires --features aof
+```
 
-## Project Status
+## Platforms
 
-- Current version: **0.1.X**
-- Active development: APIs may still change.
-- Follow [releases](https://github.com/pkvartsianyi/spatio/releases) for migration notes and roadmap updates.
+**Supported:**
+- Linux (x86_64, aarch64)
+- macOS (x86_64, arm64)
+
+**Not supported:**
+- Windows (use WSL2 or Docker)
+
+See [PLATFORMS.md](PLATFORMS.md) for details.
+
+## API Overview
+
+**Key-Value:**
+```rust
+db.insert(key, value, options)?;
+db.get(key)?;
+db.delete(key)?;
+```
+
+**Spatial:**
+```rust
+db.insert_point(namespace, &point, data, options)?;
+db.query_within_radius(namespace, &center, radius, limit)?;
+db.count_within_radius(namespace, &center, radius)?;
+db.contains_point(namespace, &center, radius)?;
+db.find_within_bounds(namespace, min_lat, min_lon, max_lat, max_lon, limit)?;
+db.knn(namespace, &center, k, max_radius, metric)?;
+db.query_within_polygon(namespace, &polygon, limit)?;
+db.distance_between(&p1, &p2, metric)?;
+```
+
+**3D Spatial:**
+```rust
+db.insert_point_3d(namespace, &point3d, data, options)?;
+db.query_within_sphere_3d(namespace, &center, radius, limit)?;
+db.query_within_cylinder_3d(namespace, &center, min_z, max_z, radius, limit)?;
+db.query_within_bbox_3d(namespace, &bbox, limit)?;
+db.knn_3d(namespace, &center, k)?;
+```
+
+**Trajectories:**
+```rust
+db.insert_trajectory(object_id, &points, options)?;
+db.query_trajectory(object_id, start_time, end_time)?;
+```
+
+**Utility:**
+```rust
+db.atomic(|batch| { /* multiple ops */ })?;
+db.cleanup_expired()?;
+db.count_expired();
+db.stats();
+```
+
+## Documentation
+
+- **Examples:** [examples/](examples/) directory
+- **Spatial features:** [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md)
+- **Platform support:** [PLATFORMS.md](PLATFORMS.md)
+- **API docs:** [docs.rs/spatio](https://docs.rs/spatio)
+- **Python docs:** [py-spatio/README.md](py-spatio/README.md)
+
+## Status
+
+Current version: **0.1.x** (active development)
+
+APIs may change. Check [CHANGELOG.md](CHANGELOG.md) before upgrading.
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting pull requests.
-
-### Development Setup
-```bash
-git clone https://github.com/pkvartsianyi/spatio
-cd spatio
-cargo test
-cargo clippy
-cargo fmt
-```
-
-## Links & Resources
-
-### Package Repositories
-- **PyPI**: https://pypi.org/project/spatio
-- **Crates.io**: https://crates.io/crates/spatio
-
-### Documentation & Source
-- **GitHub Repository**: https://github.com/pkvartsianyi/spatio
-- **Rust Documentation**: https://docs.rs/spatio
-- **Python Documentation**: https://github.com/pkvartsianyi/spatio/tree/main/py-spatio
-
-### Community
-- **Issues & Bug Reports**: https://github.com/pkvartsianyi/spatio/issues
-- **Releases & Changelog**: https://github.com/pkvartsianyi/spatio/releases
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT License ([LICENSE](LICENSE))
+MIT - see [LICENSE](LICENSE)
 
-## Spatial Features
+## Links
 
-Spatio provides comprehensive geospatial operations powered by the [georust/geo](https://github.com/georust/geo) crate:
-
-- **4 Distance Metrics**: Haversine (fast spherical), Geodesic (accurate ellipsoidal), Rhumb (constant bearing), Euclidean (planar)
-- **K-Nearest-Neighbors**: Find the K closest points efficiently using spatial index
-- **Polygon Queries**: Point-in-polygon tests, polygon area calculations
-- **Geometric Operations**: Convex hull, bounding boxes, bbox expansion and intersection
-- **Full geo Integration**: All operations leverage battle-tested geo crate implementations
-
-**Coordinate Convention**:
-- **Rust**: `Point::new(longitude, latitude)` - follows geo crate (x, y) convention
-- **Python**: `Point(latitude, longitude)` - user-friendly order, converted internally
-
-For complete documentation and examples, see:
-- [SPATIAL_FEATURES.md](SPATIAL_FEATURES.md) - Complete API reference
-- [examples/advanced_spatial.rs](examples/advanced_spatial.rs) - Comprehensive demo
-
-## Acknowledgments
-
-- Built with the Rust ecosystem's excellent geospatial libraries (especially [georust/geo](https://github.com/georust/geo))
-- Inspired by modern embedded databases and spatial indexing research
-- Thanks to the Rust community for feedback and contributions
+- **GitHub:** https://github.com/pkvartsianyi/spatio
+- **Crates.io:** https://crates.io/crates/spatio
+- **PyPI:** https://pypi.org/project/spatio
+- **Issues:** https://github.com/pkvartsianyi/spatio/issues
