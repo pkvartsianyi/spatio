@@ -68,7 +68,7 @@ impl DBBuilder {
         self
     }
 
-    /// Set the database configuration (geohash precision, sync policy, TTL).
+    /// Set the database configuration (sync policy, TTL, etc.).
     pub fn config(mut self, config: Config) -> Self {
         self.config = config;
         self
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_builder_with_config() {
-        let config = Config::with_geohash_precision(10)
+        let config = Config::default()
             .with_sync_policy(SyncPolicy::Always)
             .with_default_ttl(Duration::from_secs(3600));
 

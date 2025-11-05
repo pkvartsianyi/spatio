@@ -11,8 +11,8 @@ use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::Point as RustPoint;
 use spatio::{
-    config::{Config as RustConfig, SetOptions as RustSetOptions},
     SyncDB as RustDB,
+    config::{Config as RustConfig, SetOptions as RustSetOptions},
     error::Result as RustResult,
 };
 use std::time::{Duration, UNIX_EPOCH};
@@ -216,36 +216,6 @@ impl PyConfig {
         PyConfig {
             inner: RustConfig::default(),
         }
-    }
-
-    /// Create config with custom geohash precision (1-12)
-    #[staticmethod]
-    fn with_geohash_precision(precision: usize) -> PyResult<Self> {
-        if !(1..=12).contains(&precision) {
-            return Err(PyValueError::new_err(
-                "Geohash precision must be between 1 and 12",
-            ));
-        }
-
-        Ok(PyConfig {
-            inner: RustConfig::with_geohash_precision(precision),
-        })
-    }
-
-    #[getter]
-    fn geohash_precision(&self) -> usize {
-        self.inner.geohash_precision
-    }
-
-    #[setter]
-    fn set_geohash_precision(&mut self, precision: usize) -> PyResult<()> {
-        if !(1..=12).contains(&precision) {
-            return Err(PyValueError::new_err(
-                "Geohash precision must be between 1 and 12",
-            ));
-        }
-        self.inner.geohash_precision = precision;
-        Ok(())
     }
 }
 

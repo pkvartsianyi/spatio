@@ -33,26 +33,15 @@ pub enum SyncMode {
     Data,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum IndexType {
-    RTree,
-    Geohash,
-}
-
 /// Database configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "Config::default_sync_policy")]
     pub sync_policy: SyncPolicy,
-    #[serde(default = "Config::default_index_type")]
-    pub index_type: IndexType,
 
     #[serde(default)]
     pub default_ttl_seconds: Option<f64>,
-
-    #[serde(default = "Config::default_geohash_precision")]
-    pub geohash_precision: usize,
 
     #[serde(default)]
     pub sync_mode: SyncMode,
@@ -70,10 +59,6 @@ pub struct Config {
 }
 
 impl Config {
-    const fn default_geohash_precision() -> usize {
-        8
-    }
-
     const fn default_sync_batch_size() -> usize {
         1
     }
@@ -82,34 +67,10 @@ impl Config {
         SyncPolicy::EverySecond
     }
 
-    const fn default_index_type() -> IndexType {
-        IndexType::RTree
-    }
-
     #[cfg(feature = "snapshot")]
     pub fn with_snapshot_auto_ops(mut self, ops: usize) -> Self {
         self.snapshot_auto_ops = Some(ops);
         self
-    }
-
-    pub fn with_geohash_precision(precision: usize) -> Self {
-        assert!(
-            (1..=12).contains(&precision),
-            "Geohash precision must be between 1 and 12"
-        );
-
-        Self {
-            sync_policy: SyncPolicy::default(),
-            index_type: IndexType::Geohash,
-            default_ttl_seconds: None,
-            geohash_precision: precision,
-            sync_mode: SyncMode::default(),
-            sync_batch_size: Self::default_sync_batch_size(),
-            #[cfg(feature = "time-index")]
-            history_capacity: None,
-            #[cfg(feature = "snapshot")]
-            snapshot_auto_ops: None,
-        }
     }
 
     pub fn with_default_ttl(mut self, ttl: Duration) -> Self {
@@ -151,10 +112,6 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.geohash_precision < 1 || self.geohash_precision > 12 {
-            return Err("Geohash precision must be between 1 and 12".to_string());
-        }
-
         if let Some(ttl) = self.default_ttl_seconds {
             if !ttl.is_finite() {
                 return Err("Default TTL must be finite (not NaN or infinity)".to_string());
@@ -212,9 +169,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             sync_policy: SyncPolicy::default(),
-            index_type: IndexType::RTree,
             default_ttl_seconds: None,
-            geohash_precision: Self::default_geohash_precision(),
             sync_mode: SyncMode::default(),
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
@@ -419,27 +374,14 @@ mod tests {
         assert_eq!(config.sync_policy, SyncPolicy::EverySecond);
         assert_eq!(config.sync_mode, SyncMode::All);
         assert_eq!(config.sync_batch_size, 1);
-        assert_eq!(config.geohash_precision, 8);
         assert!(config.default_ttl_seconds.is_none());
         #[cfg(feature = "time-index")]
         assert!(config.history_capacity.is_none());
     }
 
     #[test]
-    fn test_config_with_geohash_precision() {
-        let config = Config::with_geohash_precision(10);
-        assert_eq!(config.geohash_precision, 10);
-    }
-
-    #[test]
-    #[should_panic(expected = "Geohash precision must be between 1 and 12")]
-    fn test_config_invalid_precision() {
-        Config::with_geohash_precision(15);
-    }
-
-    #[test]
     fn test_config_serialization() {
-        let config = Config::with_geohash_precision(10)
+        let config = Config::default()
             .with_default_ttl(Duration::from_secs(3600))
             .with_sync_policy(SyncPolicy::Always)
             .with_sync_mode(SyncMode::Data)
@@ -448,7 +390,6 @@ mod tests {
         let json = config.to_json().unwrap();
         let deserialized: Config = Config::from_json(&json).unwrap();
 
-        assert_eq!(deserialized.geohash_precision, 10);
         assert_eq!(deserialized.sync_policy, SyncPolicy::Always);
         assert_eq!(deserialized.sync_mode, SyncMode::Data);
         assert_eq!(deserialized.sync_batch_size, 8);
@@ -525,14 +466,13 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = Config::default();
+        let config = Config::default();
         assert!(config.validate().is_ok());
 
-        config.geohash_precision = 15;
-        assert!(config.validate().is_err());
-
-        config.geohash_precision = 8;
-        config.default_ttl_seconds = Some(-1.0);
+        let config = Config {
+            default_ttl_seconds: Some(-1.0),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

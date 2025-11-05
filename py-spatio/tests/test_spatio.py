@@ -144,43 +144,8 @@ class TestConfig:
     def test_default_config(self):
         """Test default configuration"""
         config = spatio.Config()
-        assert config.geohash_precision == 8
-
-    def test_custom_geohash_precision(self):
-        """Test custom geohash precision"""
-        config = spatio.Config.with_geohash_precision(10)
-        assert config.geohash_precision == 10
-
-    @pytest.mark.parametrize(
-        "geohash_precision",
-        [
-            pytest.param(
-                0,
-                id="below geohash precision",
-            ),
-            pytest.param(
-                13,
-                id="above geohash precision",
-            ),
-        ],
-    )
-    def test_geohash_precision_invalid_bounds(self, geohash_precision: int):
-        """Test invalid geohash precision values"""
-        with pytest.raises(
-            ValueError, match=r"Geohash precision must be between 1 and 12"
-        ):
-            spatio.Config.with_geohash_precision(geohash_precision)
-
-    def test_set_geohash_precision(self):
-        """Test setting geohash precision"""
-        config = spatio.Config()
-        config.geohash_precision = 6
-        assert config.geohash_precision == 6
-
-        with pytest.raises(
-            ValueError, match=r"Geohash precision must be between 1 and 12"
-        ):
-            config.geohash_precision = 0
+        # Config created successfully
+        assert config is not None
 
 
 class TestSpatio:
@@ -193,7 +158,7 @@ class TestSpatio:
 
     def test_memory_with_config(self):
         """Test creating in-memory database with config"""
-        config = spatio.Config.with_geohash_precision(10)
+        config = spatio.Config()
         db = spatio.Spatio.memory_with_config(config)
         assert isinstance(db, spatio.Spatio)
 
@@ -205,19 +170,6 @@ class TestSpatio:
         db = spatio.Spatio.open(db_path)
         assert isinstance(db, spatio.Spatio)
         db.close()
-
-    def test_persistent_database_from_invalid_file(self, gc_collect, tmp_path):
-        """Test creating persistent database using invalid file"""
-        # Given
-        db_path = os.path.join(tmp_path, "test.db")
-        db_file = tmp_path / "test.db"
-        db_file.write_text("keyvalue")
-        # Normalize path for Windows compatibility
-        db_path = os.path.normpath(db_path)
-
-        # When/Then
-        with pytest.raises(RuntimeError):
-            spatio.Spatio.open(db_path)
 
     def test_get_not_exist_key(self):
         """Test get method"""

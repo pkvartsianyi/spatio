@@ -40,12 +40,12 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Single-Writer Thread Safety** — Uses a shared RwLock (without lock upgrades) to allow concurrent readers and a single writer
 
 ### Performance Scope
-- **Spatio-temporal queries** — Use a geohash + R-tree hybrid to balance lookup precision and performance for moderate datasets
+- **Spatio-temporal queries** — Use 3D R-tree indexing for efficient 2D and 3D spatial operations
 - **Configurable persistence** — Snapshot-based (default) or AOF with sync policies
 - **Startup and Shutdown** — Persistence files are loaded automatically on startup
 
 ### Spatio-Temporal Indexing and Querying
-- **Spatio-Temporal Indexing** — R-Tree + geohash hybrid indexing with optional history tracking
+- **Unified Spatial Indexing** — Native 3D R-Tree indexing for all spatial operations with optional history tracking
 - **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **3D Spatial Support** — Full 3D point indexing with altitude-aware queries (spherical, cylindrical, bounding box)
@@ -67,6 +67,27 @@ No SQL parser, no external dependencies, and requires no setup.
 - `time-index` *(default)* — enables creation-time indexing and per-key history APIs. Disable it for the lightest build: `cargo add spatio --no-default-features --features="snapshot,geojson"`.
 - `snapshot` *(default)* — enables snapshot-based persistence (point-in-time saves)
 - `aof` — enables append-only file persistence (write-ahead log style)
+
+### Persistence Configuration
+
+**Snapshot Mode (Default)**
+- Point-in-time saves of entire database state
+- Configure auto-save threshold: `DBBuilder::new().snapshot_auto_ops(100)` saves every 100 operations
+- Without auto-save configuration, snapshots only occur on manual `db.sync()` or `db.close()`
+- Data loss window: all writes since last snapshot are lost on crash
+- Recommended for edge devices with infrequent updates or when using actor supervision with message replay
+
+**AOF Mode (Optional)**
+- Enable with `--features aof` in Cargo.toml
+- Write-ahead log provides durability guarantees with configurable sync policies
+- Recommended for cloud deployments requiring zero data loss
+- Use `DBBuilder::new().aof_path("data.aof")` with `SyncPolicy::Always` for maximum durability
+
+**Actor Model Deployment**
+- Each actor manages one Spatio instance per namespace
+- Configure snapshot auto-save per actor based on expected write volume
+- Edge actors: `snapshot_auto_ops(50-100)` for low-frequency vehicle updates
+- Cloud actors: enable AOF or use external message queue for replay on restart
 
 ### Sync Strategy Configuration
 - `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
@@ -112,7 +133,7 @@ use std::time::Duration;
 
 fn main() -> Result<()> {
     // Configure the database
-    let config = Config::with_geohash_precision(9)
+    let config = Config::default()
         .with_default_ttl(Duration::from_secs(3600));
 
     // Create an in-memory database with configuration
@@ -357,7 +378,7 @@ let removed = db.cleanup_expired()?;
 Spatio is organized in layered modules:
 
 - **Storage** – Pluggable backends (in-memory by default, snapshot or AOF for durability) with a common trait surface.
-- **Indexing** – Geohash-based point index with configurable precision and smart fallback during searches.
+- **Indexing** – R-tree-based spatial index with efficient 2D and 3D query support.
 - **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
 - **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.
 

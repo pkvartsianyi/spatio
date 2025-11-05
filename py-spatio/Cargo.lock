@@ -218,16 +218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "geohash"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb94b1a65401d6cbf22958a9040aa364812c26674f841bee538b12c135db1e6"
-dependencies = [
- "geo-types",
- "libm",
-]
-
-[[package]]
 name = "geojson"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -778,7 +768,6 @@ dependencies = [
  "bincode",
  "bytes",
  "geo",
- "geohash",
  "geojson",
  "geozero",
  "log",

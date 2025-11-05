@@ -144,13 +144,9 @@ opts = spatio.SetOptions.with_expiration(future)
 Database configuration.
 
 ```python
-# Custom geohash precision (1-12, default: 8)
-config = spatio.Config.with_geohash_precision(10)  # ~61cm accuracy
-db = spatio.Spatio.memory_with_config(config)
-
-# Manual configuration
+# Create a custom configuration
 config = spatio.Config()
-config.geohash_precision = 6  # ~610m accuracy
+db = spatio.Spatio.memory_with_config(config)
 ```
 
 ## Usage Examples
@@ -320,7 +316,7 @@ for point, name in european_cities:
 
 Spatio-Py is built for high performance:
 
-- **Fast spatial indexing** using geohash and R-tree algorithms
+- **Fast spatial indexing** using R-tree algorithms
 - **Memory efficient** storage with zero-copy operations where possible
 - **Concurrent access** with minimal locking overhead
 - **Optimized distance calculations** using efficient approximation algorithms

@@ -244,7 +244,7 @@ fn demo_config_based_persistence() -> Result<(), Box<dyn std::error::Error>> {
     // Balanced configuration (sync every second)
     {
         println!("Config 2: Sync every second (recommended)");
-        let config = Config::with_geohash_precision(10)
+        let config = Config::default()
             .with_sync_policy(SyncPolicy::EverySecond)
             .with_default_ttl(Duration::from_secs(3600));
 
@@ -254,7 +254,7 @@ fn demo_config_based_persistence() -> Result<(), Box<dyn std::error::Error>> {
             .build()?;
 
         db.insert("balanced:data", b"application_data", None)?;
-        println!("  ✓ High precision (10) with periodic sync");
+        println!("  ✓ Periodic sync with default configuration");
         println!("  ✓ Default TTL: 1 hour");
     }
 
