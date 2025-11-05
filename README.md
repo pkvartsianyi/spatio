@@ -94,6 +94,13 @@ No SQL parser, no external dependencies, and requires no setup.
 
 ## Installation
 
+### Supported Platforms
+
+- **Linux**: x86_64, aarch64
+- **macOS**: x86_64 (Intel), arm64 (Apple Silicon)
+
+**Note**: Windows is not supported. Spatio is designed for Unix-like systems.
+
 ### Python
 
 ```bash

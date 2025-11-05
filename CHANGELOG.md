@@ -6,6 +6,13 @@ All notable changes since the last release are documented below.
 
 ### Breaking Changes
 
+- **Dropped Windows support**
+  - Removed Windows from all CI/CD pipelines
+  - Removed Windows-specific code and workarounds
+  - Supported platforms: Linux (x86_64, aarch64) and macOS (x86_64, arm64)
+  - Focus on Unix-like systems for better maintenance and performance
+  - See [PLATFORMS.md](PLATFORMS.md) for details and migration options
+
 - **Standardized coordinate order to (longitude, latitude)** across all APIs
   - **Rust API**: Already used `Point::new(lon, lat)` - no change needed
   - **Python API**: Changed from `Point(lat, lon)` to `Point(lon, lat)` for consistency

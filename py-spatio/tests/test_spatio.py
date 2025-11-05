@@ -15,9 +15,9 @@ import spatio
 
 @pytest.fixture
 def gc_collect():
+    """Fixture for test cleanup"""
     yield
-    if platform.system() == "Windows":
-        gc.collect()
+    gc.collect()
 
 
 class TestPoint:
@@ -165,8 +165,6 @@ class TestSpatio:
     def test_persistent_database_from_non_exist_file(self, gc_collect, tmp_path):
         """Test creating persistent database using non-existing file"""
         db_path = os.path.join(tmp_path, "test.db")
-        # Normalize path for Windows compatibility
-        db_path = os.path.normpath(db_path)
         db = spatio.Spatio.open(db_path)
         assert isinstance(db, spatio.Spatio)
         db.close()
@@ -238,13 +236,9 @@ class TestSpatio:
         "sleep_time",
         [
             pytest.param(
-                # Wait for expiration - use longer timeout on Windows due to timing differences
-                0.3,
-                id="windows os",
-            ),
-            pytest.param(
+                # Wait for expiration
                 0.2,
-                id="another os",
+                id="expiration test",
             ),
         ],
     )
@@ -445,8 +439,8 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Inserted 1000 items in {elapsed:.3f} seconds")
 
-        # Basic sanity check - allow more time on Windows
-        max_time = 10.0 if platform.system() == "Windows" else 5.0
+        # Basic sanity check
+        max_time = 5.0
         assert elapsed < max_time  # Should be faster than expected time
 
     def test_spatial_query_performance(self):
@@ -474,8 +468,8 @@ class TestPerformance:
         elapsed = time.time() - start_time
         print(f"Performed 100 spatial queries in {elapsed:.3f} seconds")
 
-        # Basic sanity check - allow more time on Windows
-        max_time = 4.0 if platform.system() == "Windows" else 2.0
+        # Basic sanity check
+        max_time = 2.0
         assert elapsed < max_time  # Should be faster than expected time
 
 

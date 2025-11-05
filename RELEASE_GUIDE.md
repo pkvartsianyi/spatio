@@ -42,7 +42,7 @@ git push origin main
 
 The CI workflow will:
 1. Detect that `rust-vX` doesn't exist
-2. Run tests on Linux and macOS (Windows runs in best-effort mode)
+2. Run tests on Linux and macOS
 3. Create a Git tag `rust-vX`
 4. Create a GitHub release
 5. Publish to crates.io (if `CRATES_IO_TOKEN` is configured)
@@ -84,7 +84,7 @@ git push origin main
 
 The CI workflow will:
 1. Detect that `python-vX` doesn't exist
-2. Run tests on multiple OS/Python combinations (Windows runs in best-effort mode)
+2. Run tests on multiple OS/Python combinations
 3. Create a Git tag `python-vX`
 4. Build Python wheels using `maturin`
 5. Create a GitHub release

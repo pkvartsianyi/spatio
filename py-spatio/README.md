@@ -388,8 +388,6 @@ The project uses [`cibuildwheel`](https://cibuildwheel.readthedocs.io/) to build
 **Supported Platforms:**
 - Linux: `x86_64`, `aarch64` (manylinux)
 - macOS: `x86_64` (Intel), `arm64` (Apple Silicon)
-- Windows: `AMD64`
-
 **Automated Builds:**
 - Wheels are automatically built on every release via GitHub Actions
 - All wheels are tested before publishing to PyPI
@@ -401,7 +399,7 @@ The project uses [`cibuildwheel`](https://cibuildwheel.readthedocs.io/) to build
 pip install cibuildwheel
 
 # Build wheels for your platform
-cibuildwheel --platform linux  # or macos, windows
+cibuildwheel --platform linux  # or macos
 
 # Build for specific Python versions
 CIBW_BUILD="cp311-* cp312-*" cibuildwheel
@@ -499,7 +497,7 @@ Spatio-Python is in **alpha development**:
 - Advanced spatial features (distance, KNN, polygon queries) powered by georust/geo
 - Complete Python API via PyO3 bindings
 - TTL and persistence support
-- Multi-platform wheels (Linux, macOS, Windows)
+- Multi-platform wheels (Linux, macOS)
 - Python 3.8-3.13 support
 
 Current version: **0.1.0-alpha.10**
@@ -525,7 +523,6 @@ print(nyc.lon)  # -74.0060
 Pre-built wheels are available for:
 - **Linux**: x86_64, aarch64 (manylinux)
 - **macOS**: x86_64 (Intel), arm64 (Apple Silicon)
-- **Windows**: AMD64
 - **Python**: 3.9, 3.10, 3.11, 3.12, 3.13
 ## License
 

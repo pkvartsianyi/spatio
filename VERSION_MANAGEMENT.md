@@ -260,7 +260,7 @@ git push origin main
 - **Clear audit trail** - Easy to see what triggered each release
 - **Prevents forgotten releases** - Can't forget to create a release after version bump
 - **Fast daily CI** - Linux-only testing for quick development feedback
-- **Thorough releases** - Cross-platform testing (Windows best-effort) ensures release quality
+- **Thorough releases** - Cross-platform testing ensures release quality
 - **Cost efficient** - Full testing only when it matters
 
 ## CI Strategy
@@ -274,10 +274,10 @@ git push origin main
 
 ### Release CI
 **Runs automatically when versions change:**
-- **Cross-platform testing**: Linux, macOS (Windows best-effort)
+- **Cross-platform testing**: Linux, macOS
 - **Multiple Python versions**: 3.9-3.13 across platforms
 - **Comprehensive validation** before release
-- **Only releases if required tests pass** (Windows failures are tolerated while support is experimental)
+- **Only releases if required tests pass**
 
 ### Local Testing
 ```bash
