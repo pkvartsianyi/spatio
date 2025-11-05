@@ -1,6 +1,6 @@
-//! Unified spatial index using R-tree for 2D and 3D queries.
+//! Unified spatial index using R*-tree for 2D and 3D queries.
 //!
-//! This module provides the single spatial indexing solution for Spatio, using R-tree
+//! This module provides the single spatial indexing solution for Spatio, using R*-tree
 //! data structures with axis-aligned bounding box (AABB) envelope pruning. It handles
 //! both 2D points (stored with z=0) and native 3D points, providing O(log n) query
 //! performance for all spatial operations.
@@ -8,13 +8,13 @@
 //! ## Envelope-Based Pruning
 //!
 //! Traditional spatial queries iterate through all points and compute distances,
-//! resulting in O(n) complexity. This implementation uses R-tree AABB envelopes
+//! resulting in O(n) complexity. This implementation uses R*-tree AABB envelopes
 //! to prune the search space before computing expensive distance calculations:
 //!
 //! 1. **Compute Query Envelope**: For a spherical or cylindrical query, calculate
 //!    the minimal AABB that fully contains the query volume.
 //!
-//! 2. **Spatial Pruning**: Use R-tree `locate_in_envelope_intersecting` to retrieve
+//! 2. **Spatial Pruning**: Use R*-tree `locate_in_envelope_intersecting` to retrieve
 //!    only points whose bounding boxes intersect with the query envelope. This
 //!    eliminates most points without distance calculations.
 //!
@@ -25,7 +25,7 @@
 //!
 //! - **Spherical queries**: O(log n + k) where k is candidate set size
 //! - **Cylindrical queries**: O(log n + k) with altitude range pruning
-//! - **KNN queries**: O(log n + k log k) using R-tree nearest neighbor iterator
+//! - **KNN queries**: O(log n + k log k) using R*-tree nearest neighbor iterator
 //!
 //! For a dataset with 10,000 points and a localized query:
 //! - Without pruning: 10,000 distance calculations
@@ -84,7 +84,7 @@ pub struct CylinderQuery {
     pub radius: f64,
 }
 
-/// 3D point for R-tree indexing.
+/// 3D point for R*-tree indexing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexedPoint3D {
     pub x: f64,
@@ -135,7 +135,7 @@ impl RstarPoint for IndexedPoint3D {
 
 /// Unified spatial index manager for all spatial queries.
 ///
-/// Maintains per-prefix 3D R-Trees that handle both 2D and 3D points efficiently.
+/// Maintains per-prefix 3D R*-trees that handle both 2D and 3D points efficiently.
 /// 2D points are stored with z=0 coordinate in the 3D structure, allowing a single
 /// index implementation to serve all spatial query types.
 pub struct SpatialIndexManager {
@@ -172,13 +172,13 @@ impl SpatialIndexManager {
 
     /// Query points within a 3D spherical volume using envelope-based pruning.
     ///
-    /// This method uses R-tree AABB envelope intersection to efficiently prune
+    /// This method uses R*-tree AABB envelope intersection to efficiently prune
     /// the search space before computing expensive Haversine distances.
     ///
     /// # Algorithm
     ///
     /// 1. Compute minimal AABB that contains the sphere
-    /// 2. Use R-tree to find points intersecting the AABB (O(log n))
+    /// 2. Use R*-tree to find points intersecting the AABB (O(log n))
     /// 3. Filter candidates by exact 3D Haversine distance
     /// 4. Sort by distance and apply limit
     ///
@@ -576,21 +576,21 @@ impl SpatialIndexManager {
         results
     }
 
-    /// Find the k nearest neighbors in 3D space using R-tree spatial indexing.
+    /// Find the k nearest neighbors in 3D space using R*-tree spatial indexing.
     ///
-    /// This method uses the R-tree's optimized nearest neighbor iterator,
+    /// This method uses the R*-tree's optimized nearest neighbor iterator,
     /// which traverses the tree efficiently without examining all points.
     ///
     /// # Note on Distance Metrics
     ///
-    /// The R-tree internally uses Euclidean distance in coordinate space for
+    /// The R*-tree internally uses Euclidean distance in coordinate space for
     /// ordering. The returned Haversine distances are computed afterward and
-    /// may not perfectly match the R-tree's ordering. This is expected behavior
+    /// may not perfectly match the R*-tree's ordering. This is expected behavior
     /// for geographic KNN queries where coordinate space differs from geodesic space.
     ///
     /// # Performance
     ///
-    /// O(log n + k log k) complexity using R-tree's spatial indexing.
+    /// O(log n + k log k) complexity using R*-tree's spatial indexing.
     ///
     /// # Arguments
     ///

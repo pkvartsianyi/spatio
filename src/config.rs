@@ -288,9 +288,6 @@ impl DbItem {
         }
     }
 
-    /// Check if this item has expired.
-    ///
-    /// Note: This only checks the expiration time; it does not delete the item.
     pub fn is_expired(&self) -> bool {
         self.is_expired_at(SystemTime::now())
     }

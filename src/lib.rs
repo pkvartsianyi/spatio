@@ -1,7 +1,7 @@
 //! Embedded spatio-temporal database with 2D/3D indexing, persistence, and lazy TTL support.
 //!
 //! ## Features
-//! - **Spatial indexing**: 2D/3D points, polygons, bounding boxes with R-Tree spatial indexing
+//! - **Spatial indexing**: 2D/3D points, polygons, bounding boxes with R*-tree spatial indexing
 //! - **Persistence**: Append-only file (AOF) with configurable sync policies
 //! - **Lazy TTL**: Expired items are filtered on read, manual cleanup available
 //! - **Atomic batches**: Group multiple operations atomically

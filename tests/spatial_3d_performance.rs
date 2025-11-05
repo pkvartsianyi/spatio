@@ -1,6 +1,6 @@
 //! Performance validation tests for 3D spatial queries with envelope-based pruning.
 //!
-//! These tests validate that the R-tree envelope pruning optimization
+//! These tests validate that the R*-tree envelope pruning optimization
 //! provides significant performance improvements over linear iteration
 //! for 3D spherical and cylindrical queries.
 
@@ -130,7 +130,7 @@ fn test_3d_cylinder_query_altitude_pruning() {
 
 #[test]
 fn test_3d_knn_with_large_dataset() {
-    // Validate that KNN queries remain efficient with R-tree spatial indexing
+    // Validate that KNN queries remain efficient with R*-tree spatial indexing
 
     let mut db = Spatio::memory().unwrap();
 
@@ -161,12 +161,12 @@ fn test_3d_knn_with_large_dataset() {
     // Should complete in reasonable time (< 100ms on typical hardware)
     assert!(
         elapsed.as_millis() < 100,
-        "KNN query should be fast with R-tree indexing (took {}ms)",
+        "KNN query should be fast with R*-tree indexing (took {}ms)",
         elapsed.as_millis()
     );
 
-    // Note: R-tree uses Euclidean distance in coordinate space for KNN ordering,
-    // which differs from Haversine distance. Results are ordered by R-tree's
+    // Note: R*-tree uses Euclidean distance in coordinate space for KNN ordering,
+    // which differs from Haversine distance. Results are ordered by R*-tree's
     // internal metric, not by the Haversine distances we compute afterward.
     // This is expected behavior for geographic KNN queries.
 }

@@ -174,7 +174,7 @@ def benchmark_spatial_operations():
     )
 
     # Distance calculation benchmark
-    center = spatio.Point(40.7128, -74.0060)
+    center = spatio.Point(-74.0060, 40.7128)
 
     def distance_calc():
         point = random.choice(points)
@@ -302,7 +302,7 @@ def benchmark_configuration_impact():
         db.insert_point("test_locations", point, f"loc_{i}".encode())
 
     # Benchmark spatial queries
-    center = spatio.Point(40.7128, -74.0060)
+    center = spatio.Point(-74.0060, 40.7128)
 
     def spatial_query_test(test_db=db, query_center=center):
         return test_db.query_within_radius("test_locations", query_center, 1000.0, 20)
@@ -412,7 +412,7 @@ def performance_comparison():
 
         # Query every 10 inserts
         if i % 10 == 0:
-            center = spatio.Point(40.7128, -74.0060)
+            center = spatio.Point(-74.0060, 40.7128)
             db3.query_within_radius("mixed", center, 5000.0, 10)
 
     mixed_ops_time = time.perf_counter() - start_time
@@ -444,7 +444,7 @@ def main():
         print()
         print("Key Takeaways:")
         print("- Spatio provides excellent performance for spatial operations")
-        print("- Spatial queries use R-tree indexing for efficient lookups")
+        print("- Spatial queries use R*-tree indexing for efficient lookups")
         print("- Bulk operations show good scalability characteristics")
         print("- Memory usage grows linearly with data size")
         print("- Mixed workloads maintain consistent performance")

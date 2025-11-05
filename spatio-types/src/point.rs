@@ -90,8 +90,6 @@ impl Point3d {
     /// Calculate the 3D Euclidean distance to another 3D point.
     ///
     /// This calculates the straight-line distance in 3D space using the Pythagorean theorem.
-    /// Note: For geographic coordinates, this treats lat/lon as Cartesian coordinates,
-    /// which is only accurate for small distances. For large distances, use `haversine_3d`.
     ///
     /// # Examples
     ///

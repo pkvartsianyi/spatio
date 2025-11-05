@@ -51,7 +51,7 @@ pub(crate) struct DBInner {
     #[cfg(feature = "time-index")]
     /// Items indexed by creation time for time-range queries
     pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
-    /// Spatial index manager for 2D and 3D spatial operations (R-tree based)
+    /// Spatial index manager for 2D and 3D spatial operations (R*-tree based)
     pub spatial_index: SpatialIndexManager,
     /// Append-only file for persistence
     #[cfg(feature = "aof")]
@@ -391,8 +391,6 @@ mod tests {
         assert!(db.get("key").is_err());
         assert!(db.delete("key").is_err());
     }
-
-    // Note: DB is no longer Clone - removed test_clone_shares_state
 
     #[test]
     fn test_cleanup_expired_removes_keys() {

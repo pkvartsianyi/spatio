@@ -52,9 +52,9 @@ user = db.get(b"user:123")
 print(f"User: {user.decode()}")  # User: John Doe
 
 # Store geographic points with automatic spatial indexing
-# Note: Point uses (latitude, longitude) order in Python
-nyc = spatio.Point(40.7128, -74.0060)
-london = spatio.Point(51.5074, -0.1278)
+# Note: Point uses (longitude, latitude) order - same as GeoJSON and Rust API
+nyc = spatio.Point(-74.0060, 40.7128)
+london = spatio.Point(-0.1278, 51.5074)
 
 db.insert_point("cities", nyc, b"New York City")
 db.insert_point("cities", london, b"London")
@@ -101,16 +101,26 @@ path = db.query_trajectory(object_id, start_time, end_time)
 
 Represents a geographic coordinate.
 
-**Note**: Python uses `(latitude, longitude)` order for user convenience, but internally converts to geo crate's `(longitude, latitude)` format.
+**Note**: Uses `(longitude, latitude)` order, matching GeoJSON standard and the Rust API. This is the mathematical (x, y) convention used by most GIS libraries.
 
 ```python
-# Create points (latitude, longitude order in Python)
-point = spatio.Point(latitude, longitude)
-print(f"Location: {point.lat}, {point.lon}")
+# Create points (longitude, latitude order - same as GeoJSON)
+point = spatio.Point(longitude, latitude)  # e.g., Point(-74.0060, 40.7128) for NYC
+print(f"Location: ({point.lon}, {point.lat})")
+
+# Access coordinates
+print(f"Latitude: {point.lat}")   # North-South (-90 to 90)
+print(f"Longitude: {point.lon}")  # East-West (-180 to 180)
 
 # Calculate distance (uses Haversine by default)
 distance = point1.distance_to(point2)  # Returns meters
 ```
+
+**Why (lon, lat)?** This order aligns with:
+- **GeoJSON standard**: `{"type": "Point", "coordinates": [lon, lat]}`
+- **Mathematical convention**: (x, y) where x=longitude, y=latitude
+- **Most GIS tools**: PostGIS, Shapely, GDAL, etc.
+- **The Rust API**: Ensures consistency across language bindings
 
 ### DistanceMetric
 
@@ -159,12 +169,12 @@ import spatio
 db = spatio.Spatio.memory()
 
 # Insert city data
-# Note: Python Point uses (latitude, longitude) order
+# Note: Point uses (longitude, latitude) order - matching GeoJSON standard
 cities = [
-    (spatio.Point(40.7128, -74.0060), b"New York"),
-    (spatio.Point(51.5074, -0.1278), b"London"),
-    (spatio.Point(35.6762, 139.6503), b"Tokyo"),
-    (spatio.Point(48.8566, 2.3522), b"Paris"),
+    (spatio.Point(-74.0060, 40.7128), b"New York"),
+    (spatio.Point(-0.1278, 51.5074), b"London"),
+    (spatio.Point(139.6503, 35.6762), b"Tokyo"),
+    (spatio.Point(2.3522, 48.8566), b"Paris"),
 ]
 
 for point, name in cities:
@@ -289,11 +299,11 @@ import spatio
 db = spatio.Spatio.memory()
 
 # Insert points across different regions
-# Note: Python Point uses (latitude, longitude) order
+# Point uses (longitude, latitude) order - same as GeoJSON
 points = [
-    (spatio.Point(40.7128, -74.0060), b"NYC"),      # North America
-    (spatio.Point(51.5074, -0.1278), b"London"),    # Europe
-    (spatio.Point(35.6762, 139.6503), b"Tokyo"),    # Asia
+    (spatio.Point(-74.0060, 40.7128), b"NYC"),      # North America
+    (spatio.Point(-0.1278, 51.5074), b"London"),    # Europe
+    (spatio.Point(139.6503, 35.6762), b"Tokyo"),    # Asia
 ]
 
 for point, name in points:
@@ -316,7 +326,7 @@ for point, name in european_cities:
 
 Spatio-Py is built for high performance:
 
-- **Fast spatial indexing** using R-tree algorithms
+- **Fast spatial indexing** using R*-tree algorithms
 - **Memory efficient** storage with zero-copy operations where possible
 - **Concurrent access** with minimal locking overhead
 - **Optimized distance calculations** using efficient approximation algorithms

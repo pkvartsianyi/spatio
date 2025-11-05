@@ -146,8 +146,6 @@ let nyc = Point::new(-74.0060, 40.7128);
 let london = Point::new(-0.1278, 51.5074);
 ```
 
-**Note**: In Python bindings, the order is reversed for user convenience: `Point(latitude, longitude)`.
-
 ## Advanced Spatial Features
 
 Spatio leverages the [georust/geo](https://github.com/georust/geo) crate for comprehensive geospatial operations:

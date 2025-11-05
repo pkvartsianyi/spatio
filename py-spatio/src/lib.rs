@@ -38,9 +38,13 @@ impl PyPoint {
     /// API compatibility but will be ignored, as the underlying geo::Point is 2D.
     ///
     /// # Args
-    ///     lat: Latitude in degrees (-90 to 90)
-    ///     lon: Longitude in degrees (-180 to 180)
+    ///     lon: Longitude in degrees (-180 to 180) - x-coordinate
+    ///     lat: Latitude in degrees (-90 to 90) - y-coordinate
     ///     alt: Optional altitude (currently ignored - see note above)
+    ///
+    /// # Note
+    ///     Uses (longitude, latitude) order to match GeoJSON standard and the Rust API.
+    ///     This is the mathematical (x, y) convention used by most GIS libraries.
     ///
     /// # Returns
     ///     A new Point instance
@@ -48,8 +52,8 @@ impl PyPoint {
     /// # Raises
     ///     ValueError: If latitude or longitude are out of valid range
     #[new]
-    #[pyo3(signature = (lat, lon, alt=None))]
-    fn new(lat: f64, lon: f64, alt: Option<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (lon, lat, alt=None))]
+    fn new(lon: f64, lat: f64, alt: Option<f64>) -> PyResult<Self> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
         }
@@ -88,9 +92,9 @@ impl PyPoint {
 
     fn __repr__(&self) -> String {
         if let Some(alt) = self.alt() {
-            format!("Point(lat={}, lon={}, alt={})", self.lat(), self.lon(), alt)
+            format!("Point(lon={}, lat={}, alt={})", self.lon(), self.lat(), alt)
         } else {
-            format!("Point(lat={}, lon={})", self.lat(), self.lon())
+            format!("Point(lon={}, lat={})", self.lon(), self.lat())
         }
     }
 

@@ -13,8 +13,8 @@ Example usage:
     >>> # Store a simple key-value pair
     >>> db.insert(b"user:123", b"John Doe")
     >>>
-    >>> # Store a geographic point
-    >>> nyc = spatio.Point(40.7128, -74.0060)
+    >>> # Store a geographic point (longitude, latitude)
+    >>> nyc = spatio.Point(-74.0060, 40.7128)
     >>> db.insert_point("cities", nyc, b"New York City")
     >>>
     >>> # Find nearby points within 100km

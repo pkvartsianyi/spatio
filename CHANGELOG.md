@@ -6,6 +6,13 @@ All notable changes since the last release are documented below.
 
 ### Breaking Changes
 
+- **Standardized coordinate order to (longitude, latitude)** across all APIs
+  - **Rust API**: Already used `Point::new(lon, lat)` - no change needed
+  - **Python API**: Changed from `Point(lat, lon)` to `Point(lon, lat)` for consistency
+  - Aligns with GeoJSON standard, mathematical (x, y) convention, and industry standards
+  - See [COORDINATE_ORDER.md](COORDINATE_ORDER.md) for detailed explanation
+  - See [py-spatio/MIGRATION.md](py-spatio/MIGRATION.md) for Python migration guide
+
 - **Removed geohash-based indexing** in favor of unified R-tree spatial index
   - Removed `Config::with_geohash_precision()` method
   - Removed `Config.geohash_precision` field
@@ -14,7 +21,7 @@ All notable changes since the last release are documented below.
 
 ### Changed
 
-- **Spatial Indexing**: Now uses single R-tree implementation (`SpatialIndexManager`)
+- **Spatial Indexing**: Now uses single R*-tree implementation (`SpatialIndexManager`)
   - Native 3D support (latitude, longitude, altitude/z-coordinate)
   - Efficient 2D queries (use z=0 for 2D-only data)
   - Automatic optimization based on data distribution
@@ -27,9 +34,14 @@ All notable changes since the last release are documented below.
 
 ### Python Bindings
 
+- **BREAKING**: Changed `Point` constructor to use `(longitude, latitude)` order
+  - **Old**: `Point(latitude, longitude)` - inconsistent with Rust and GeoJSON
+  - **New**: `Point(longitude, latitude)` - matches GeoJSON standard and Rust API
+  - This aligns with mathematical (x, y) convention and industry standards
+  - See [COORDINATE_ORDER.md](COORDINATE_ORDER.md) for detailed explanation
 - Removed `spatio.Config.with_geohash_precision()` static method
 - Removed `spatio.Config.geohash_precision` property
-- Updated examples and documentation to reflect R-tree usage
+- Updated all examples and documentation to use (lon, lat) order
 
 ### Documentation
 

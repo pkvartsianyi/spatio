@@ -40,12 +40,12 @@ No SQL parser, no external dependencies, and requires no setup.
 - **Single-Writer Thread Safety** — Uses a shared RwLock (without lock upgrades) to allow concurrent readers and a single writer
 
 ### Performance Scope
-- **Spatio-temporal queries** — Use 3D R-tree indexing for efficient 2D and 3D spatial operations
+- **Spatio-temporal queries** — Use 3D R*-tree indexing for efficient 2D and 3D spatial operations
 - **Configurable persistence** — Snapshot-based (default) or AOF with sync policies
 - **Startup and Shutdown** — Persistence files are loaded automatically on startup
 
 ### Spatio-Temporal Indexing and Querying
-- **Unified Spatial Indexing** — Native 3D R-Tree indexing for all spatial operations with optional history tracking
+- **Unified Spatial Indexing** — Native 3D R*-tree indexing for all spatial operations with optional history tracking
 - **Advanced Spatial Operations** — Distance calculations (Haversine, Geodesic, Rhumb, Euclidean), K-nearest-neighbors, polygon queries, convex hull, bounding box operations
 - **Spatio-Temporal Queries** — Nearby search, bounding box, distance, containment, and time slicing
 - **3D Spatial Support** — Full 3D point indexing with altitude-aware queries (spherical, cylindrical, bounding box)
@@ -82,12 +82,6 @@ No SQL parser, no external dependencies, and requires no setup.
 - Write-ahead log provides durability guarantees with configurable sync policies
 - Recommended for cloud deployments requiring zero data loss
 - Use `DBBuilder::new().aof_path("data.aof")` with `SyncPolicy::Always` for maximum durability
-
-**Actor Model Deployment**
-- Each actor manages one Spatio instance per namespace
-- Configure snapshot auto-save per actor based on expected write volume
-- Edge actors: `snapshot_auto_ops(50-100)` for low-frequency vehicle updates
-- Cloud actors: enable AOF or use external message queue for replay on restart
 
 ### Sync Strategy Configuration
 - `SyncMode::All` *(default)* — call `fsync`/`File::sync_all` after each batch
@@ -378,7 +372,7 @@ let removed = db.cleanup_expired()?;
 Spatio is organized in layered modules:
 
 - **Storage** – Pluggable backends (in-memory by default, snapshot or AOF for durability) with a common trait surface.
-- **Indexing** – R-tree-based spatial index with efficient 2D and 3D query support.
+- **Indexing** – R*-tree-based spatial index with efficient 2D and 3D query support.
 - **Query** – Radius, bounding-box, and trajectory primitives that reuse the shared spatial index.
 - **API** – Ergonomic Rust API plus PyO3 bindings that expose the same core capabilities.
 
