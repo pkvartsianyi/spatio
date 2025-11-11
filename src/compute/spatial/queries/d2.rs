@@ -1,6 +1,7 @@
 //! 2D spatial operations for geographic queries.
 
 use crate::compute::spatial::{DistanceMetric, distance_between, point_in_polygon};
+use crate::compute::validation::validate_geographic_point;
 use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
@@ -54,6 +55,9 @@ impl DB {
             _ => crate::config::DbItem::new(data_ref.clone()),
         };
         let created_at = item.created_at;
+
+        // Validate geographic coordinates
+        validate_geographic_point(point)?;
 
         DBInner::validate_timestamp(created_at)?;
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
@@ -160,6 +164,9 @@ impl DB {
             _ => crate::config::DbItem::new(data_ref.clone()),
         };
         let created_at = item.created_at;
+
+        // Validate geographic coordinates
+        validate_geographic_point(point)?;
 
         DBInner::validate_timestamp(created_at)?;
 
@@ -560,6 +567,9 @@ impl DB {
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         use geo::BoundingRect;
+
+        // Validate polygon coordinates
+        crate::compute::validation::validate_polygon(polygon)?;
 
         let bbox = polygon
             .bounding_rect()

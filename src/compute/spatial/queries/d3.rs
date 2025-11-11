@@ -1,6 +1,7 @@
 //! 3D spatial operations for altitude-aware geographic queries.
 
 use crate::compute::spatial::rtree::{BBoxQuery, CylinderQuery};
+use crate::compute::validation::validate_geographic_point_3d;
 use crate::config::{BoundingBox3D, Point3d, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::Result;
@@ -57,6 +58,9 @@ impl DB {
             _ => crate::config::DbItem::new(data_ref.clone()),
         };
         let created_at = item.created_at;
+
+        // Validate 3D geographic coordinates
+        validate_geographic_point_3d(point)?;
 
         DBInner::validate_timestamp(created_at)?;
         let key =
