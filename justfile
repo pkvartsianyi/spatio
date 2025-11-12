@@ -17,11 +17,6 @@ lint:
 ci:
     act -W .github/workflows/ci.yml -j test
 
-ci-fake-release:
-    @echo "Running auto-release workflow locally (dry-run mode)..."
-    @echo "Note: Only running detect-changes and test-rust jobs to avoid platform issues"
-    act -W .github/workflows/auto-release.yml --env DRY_RUN=true --container-architecture linux/amd64 -j detect-changes -j test-rust || true
-
 clean:
     cargo clean
 
@@ -85,8 +80,8 @@ py-ci:
 check-version:
     ./scripts/check-version.sh
 
-bump-rust VERSION:
-    ./scripts/bump-version.sh rust {{VERSION}}
+bump-core VERSION:
+    ./scripts/bump-version.sh core {{VERSION}}
 
 bump-python VERSION:
     ./scripts/bump-version.sh python {{VERSION}}
@@ -94,11 +89,8 @@ bump-python VERSION:
 bump-types VERSION:
     ./scripts/bump-version.sh types {{VERSION}}
 
-bump-all VERSION:
-    ./scripts/bump-version.sh all {{VERSION}}
-
-bump-rust-dry VERSION:
-    ./scripts/bump-version.sh rust {{VERSION}} --dry-run
+bump-core-dry VERSION:
+    ./scripts/bump-version.sh core {{VERSION}} --dry-run
 
 bump-python-dry VERSION:
     ./scripts/bump-version.sh python {{VERSION}} --dry-run
@@ -106,11 +98,8 @@ bump-python-dry VERSION:
 bump-types-dry VERSION:
     ./scripts/bump-version.sh types {{VERSION}} --dry-run
 
-bump-all-dry VERSION:
-    ./scripts/bump-version.sh all {{VERSION}} --dry-run
-
-bump-rust-no-commit VERSION:
-    ./scripts/bump-version.sh rust {{VERSION}} --no-commit
+bump-core-no-commit VERSION:
+    ./scripts/bump-version.sh core {{VERSION}} --no-commit
 
 bump-python-no-commit VERSION:
     ./scripts/bump-version.sh python {{VERSION}} --no-commit

@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "Cargo.toml"
-      - "crates/*/Cargo.toml"
+      - "crates/types/Cargo.toml"
+      - "crates/core/Cargo.toml"
+      - "crates/py/Cargo.toml"
   workflow_dispatch:
 
 env:
@@ -21,11 +22,14 @@ jobs:
     name: Detect Version Changes
     runs-on: ubuntu-latest
     outputs:
-      rust-changed: ${{ steps.check-rust.outputs.changed }}
+      types-changed: ${{ steps.check-types.outputs.changed }}
+      core-changed: ${{ steps.check-core.outputs.changed }}
       python-changed: ${{ steps.check-python.outputs.changed }}
-      rust-version: ${{ steps.check-rust.outputs.version }}
+      types-version: ${{ steps.check-types.outputs.version }}
+      core-version: ${{ steps.check-core.outputs.version }}
       python-version: ${{ steps.check-python.outputs.version }}
-      rust-previous: ${{ steps.check-rust.outputs.previous }}
+      types-previous: ${{ steps.check-types.outputs.previous }}
+      core-previous: ${{ steps.check-core.outputs.previous }}
       python-previous: ${{ steps.check-python.outputs.previous }}
 
     steps:
@@ -33,25 +37,48 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check Rust version changes
-        id: check-rust
+      - name: Check spatio-types version changes
+        id: check-types
         run: |
-          CURRENT_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
-          TAG_NAME="rust-v$CURRENT_VERSION"
+          CURRENT_VERSION=$(grep '^version = ' crates/types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_NAME="types-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 Cargo.toml | tail -1)
-          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^\[workspace.package\]' -A 10 | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/types/Cargo.toml | tail -1)
+          if [ -n "$PREVIOUS_COMMIT" ]; then
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/types/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          else
+            PREVIOUS_VERSION=""
+          fi
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check spatio core version changes
+        id: check-core
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' crates/core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_NAME="core-v$CURRENT_VERSION"
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/core/Cargo.toml | tail -1)
+          if [ -n "$PREVIOUS_COMMIT" ]; then
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/core/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          else
+            PREVIOUS_VERSION=""
+          fi
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
       - name: Check Python version changes
         id: check-python
         run: |
-          CURRENT_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(grep '^version = ' crates/py/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_NAME="python-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -59,21 +86,30 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/py/Cargo.toml | tail -1)
-          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^\[workspace.package\]' -A 10 | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          if [ -n "$PREVIOUS_COMMIT" ]; then
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/py/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          else
+            PREVIOUS_VERSION=""
+          fi
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
       - name: Summary
         run: |
-          echo "Rust: ${{ steps.check-rust.outputs.previous }} -> ${{ steps.check-rust.outputs.version }} (Changed: ${{ steps.check-rust.outputs.changed }})"
-          echo "Python: ${{ steps.check-python.outputs.previous }} -> ${{ steps.check-python.outputs.version }} (Changed: ${{ steps.check-python.outputs.changed }})"
+          echo "### Version Detection Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Previous | Current | Changed |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio-types | ${{ steps.check-types.outputs.previous }} | ${{ steps.check-types.outputs.version }} | ${{ steps.check-types.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio | ${{ steps.check-core.outputs.previous }} | ${{ steps.check-core.outputs.version }} | ${{ steps.check-core.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio-py | ${{ steps.check-python.outputs.previous }} | ${{ steps.check-python.outputs.version }} | ${{ steps.check-python.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
 
   # ---------------- STAGE 2: TEST ----------------
-  test-rust:
-    name: Test Rust (${{ matrix.os }})
+  test-types:
+    name: Test spatio-types (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust-changed == 'true'
+    if: needs.detect-changes.outputs.types-changed == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -89,17 +125,47 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-types-${{ hashFiles('**/Cargo.lock') }}
 
       - run: cargo fmt --all -- --check
         if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio -p spatio-types --all-targets --all-features -- -D warnings
+      - run: cargo clippy -p spatio-types --all-targets --all-features -- -D warnings
         if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio -p spatio-types --all-features --verbose
-      - run: cargo test -p spatio -p spatio-types --all-features --verbose
-      - run: cargo test -p spatio -p spatio-types --doc
+      - run: cargo build -p spatio-types --all-features --verbose
+      - run: cargo test -p spatio-types --all-features --verbose
+      - run: cargo test -p spatio-types --doc
       - run: cd crates/types && cargo package --allow-dirty
         if: matrix.os == 'ubuntu-latest'
+
+  test-core:
+    name: Test spatio core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.core-changed == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-core-${{ hashFiles('**/Cargo.lock') }}
+
+      - run: cargo fmt --all -- --check
+        if: matrix.os == 'ubuntu-latest'
+      - run: cargo clippy -p spatio --all-targets --all-features -- -D warnings
+        if: matrix.os == 'ubuntu-latest'
+      - run: cargo build -p spatio --all-features --verbose
+      - run: cargo test -p spatio --all-features --verbose
+      - run: cargo test -p spatio --doc
 
   test-python:
     name: Test Python (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -145,19 +211,78 @@ jobs:
       - name: Run tests
         run: pytest crates/py/tests -v --tb=short -x --maxfail=5
 
-  run-tests:
-    name: Run Tests Stage
+  # ---------------- STAGE 3: RELEASE ----------------
+  release-types:
+    name: Release spatio-types
     runs-on: ubuntu-latest
-    needs: [test-rust, test-python]
-    if: always()
+    needs: [test-types, detect-changes]
+    if: needs.detect-changes.outputs.types-changed == 'true' && needs.test-types.result == 'success'
+    permissions:
+      contents: write
     steps:
-      - run: echo "All tests completed."
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish spatio-types to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/types
+          cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Tag and release
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.types-version }}"
+          TAG="types-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Release spatio-types $VERSION"
+          git push origin "$TAG"
+
+  release-core:
+    name: Release spatio core
+    runs-on: ubuntu-latest
+    needs: [test-core, detect-changes, release-types]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.core-changed == 'true' &&
+      needs.test-core.result == 'success' &&
+      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Wait for spatio-types to be available on crates.io
+        if: needs.release-types.result == 'success'
+        run: sleep 60
+
+      - name: Publish spatio to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/core
+          cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Tag and release
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.core-version }}"
+          TAG="core-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Release spatio $VERSION"
+          git push origin "$TAG"
 
   build-python-artifacts:
     name: Build Python Wheels (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    needs: [run-tests, detect-changes]
-    if: needs.detect-changes.outputs.python-changed == 'true' && needs.run-tests.result == 'success'
+    needs: [test-python, detect-changes]
+    if: needs.detect-changes.outputs.python-changed == 'true' && needs.test-python.result == 'success'
     strategy:
       fail-fast: true
       matrix:
@@ -180,45 +305,8 @@ jobs:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: crates/py/dist/*.whl
 
-  release-rust:
-    name: Release Rust Crate
-    runs-on: ubuntu-latest
-    needs: [run-tests, detect-changes]
-    if: needs.detect-changes.outputs.rust-changed == 'true' && needs.run-tests.result == 'success'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish spatio-types to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/types
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Wait for spatio-types to be available on crates.io
-        run: sleep 30
-
-      - name: Publish spatio to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/core
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-      - name: Tag and release Rust crate
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.rust-version }}"
-          TAG="rust-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release Rust crate $VERSION"
-          git push origin "$TAG"
-
   publish-to-pypi:
-    name: Publish All Wheels to PyPI
+    name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: [build-python-artifacts, detect-changes]
     if: needs.detect-changes.outputs.python-changed == 'true'
@@ -233,6 +321,7 @@ jobs:
           pattern: wheel-*
           merge-multiple: true
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Publish to PyPI
         run: |
           python -m pip install --upgrade pip
@@ -240,31 +329,24 @@ jobs:
           twine check dist/*
           twine upload dist/*.whl --non-interactive
 
-      - name: Tag and release Python package
+      - name: Tag and release
         run: |
           VERSION="${{ needs.detect-changes.outputs.python-version }}"
           TAG="python-v$VERSION"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release Python package $VERSION"
+          git tag "$TAG" -m "Release spatio-py $VERSION"
           git push origin "$TAG"
 
-  run-release:
-    name: Final Release Stage
-    runs-on: ubuntu-latest
-    needs:
-      - release-rust
-      - publish-to-pypi
-    if: always()
-    steps:
-      - run: echo "All release jobs finished successfully."
-
-  # ---------------- STAGE 4: DOCS + SUMMARY ----------------
+  # ---------------- STAGE 4: DOCS ----------------
   docs:
     name: Build and Deploy Docs
     runs-on: ubuntu-latest
-    needs: [run-release]
-    if: needs.detect-changes.outputs.rust-changed == 'true'
+    needs: [release-core, detect-changes]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.core-changed == 'true' &&
+      (needs.release-core.result == 'success' || needs.release-core.result == 'skipped')
     permissions:
       contents: read
       pages: write
@@ -281,16 +363,18 @@ jobs:
           path: target/doc
       - uses: actions/deploy-pages@v4
 
+  # ---------------- STAGE 5: SUMMARY ----------------
   summary:
     name: Release Summary
     runs-on: ubuntu-latest
-    needs: [run-release]
+    needs: [detect-changes, release-types, release-core, publish-to-pypi]
     if: always()
     steps:
       - run: |
-          echo "Release Summary"
-          echo "------------------"
-          echo "Rust changed: ${{ needs.detect-changes.outputs.rust-changed }}"
-          echo "Python changed: ${{ needs.detect-changes.outputs.python-changed }}"
-          echo "Rust version: ${{ needs.detect-changes.outputs.rust-version }}"
-          echo "Python version: ${{ needs.detect-changes.outputs.python-version }}"
+          echo "### Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Crate | Version | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio-types | ${{ needs.detect-changes.outputs.types-version }} | ${{ needs.release-types.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio | ${{ needs.detect-changes.outputs.core-version }} | ${{ needs.release-core.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| spatio-py | ${{ needs.detect-changes.outputs.python-version }} | ${{ needs.publish-to-pypi.result }} |" >> $GITHUB_STEP_SUMMARY

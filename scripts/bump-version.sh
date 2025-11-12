@@ -36,7 +36,7 @@ show_usage() {
 Usage: $0 <package> <new_version> [options]
 
 ARGUMENTS:
-    <package>        Which package to bump: 'rust', 'python', 'types', or 'all'
+    <package>        Which package to bump: 'core', 'python', 'types', or 'all'
     <new_version>    The new version to set (e.g., 0.1.1, 0.2.0-alpha.1, 1.0.0-beta.2)
 
 OPTIONS:
@@ -45,14 +45,14 @@ OPTIONS:
     --help, -h      Show this help message
 
 EXAMPLES:
-    $0 rust 0.1.1                    # Bump Rust crate to 0.1.1
+    $0 core 0.1.9                    # Bump spatio core to 0.1.9
     $0 python 0.2.0                  # Bump Python package to 0.2.0
-    $0 types 0.1.0                   # Bump spatio-types to 0.1.0
-    $0 all 0.1.5                     # Bump all packages to same version
+    $0 types 0.1.9                   # Bump spatio-types to 0.1.9
+    $0 all 0.1.9                     # Bump all packages to same version
     $0 python 0.2.0-alpha.1 --dry-run # Show what would change for Python pre-release
 
 The script will update versions in:
-    - rust: Cargo.toml (workspace root)
+    - core: crates/core/Cargo.toml (spatio core crate)
     - python: crates/py/Cargo.toml (Python bindings)
     - types: crates/types/Cargo.toml (Core types)
     - all: All Cargo.toml files (same version)
@@ -104,7 +104,7 @@ done
 
 # Validate arguments
 if [[ -z "$PACKAGE" ]]; then
-    print_error "Package is required (rust, python, types, or all)"
+    print_error "Package is required (core, python, types, or all)"
     show_usage
     exit 1
 fi
@@ -116,8 +116,8 @@ if [[ -z "$NEW_VERSION" ]]; then
 fi
 
 # Validate package argument
-if [[ "$PACKAGE" != "rust" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "all" ]]; then
-    print_error "Invalid package: $PACKAGE. Must be 'rust', 'python', 'types', or 'all'"
+if [[ "$PACKAGE" != "core" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "all" ]]; then
+    print_error "Invalid package: $PACKAGE. Must be 'core', 'python', 'types', or 'all'"
     show_usage
     exit 1
 fi
@@ -151,15 +151,15 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     fi
 fi
 
-# Get current versions from workspace root
-CURRENT_RUST_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
-CURRENT_PYTHON_VERSION="$CURRENT_RUST_VERSION"  # All use workspace version
-CURRENT_TYPES_VERSION="$CURRENT_RUST_VERSION"   # All use workspace version
+# Get current versions from individual crates
+CURRENT_CORE_VERSION=$(grep '^version = ' crates/core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+CURRENT_PYTHON_VERSION=$(grep '^version = ' crates/py/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+CURRENT_TYPES_VERSION=$(grep '^version = ' crates/types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 print_info "Current versions:"
-print_info "  Rust crate: $CURRENT_RUST_VERSION"
-print_info "  Python package: $CURRENT_PYTHON_VERSION"
-print_info "  Types package: $CURRENT_TYPES_VERSION"
+print_info "  spatio (core): $CURRENT_CORE_VERSION"
+print_info "  spatio-py: $CURRENT_PYTHON_VERSION"
+print_info "  spatio-types: $CURRENT_TYPES_VERSION"
 print_info ""
 print_info "Updating: $PACKAGE"
 print_info "New version: $NEW_VERSION"
@@ -167,9 +167,17 @@ print_info "New version: $NEW_VERSION"
 # Files to update based on package
 declare -a FILES_TO_UPDATE=()
 case "$PACKAGE" in
-    "rust"|"python"|"types"|"all")
-        # All versions managed in workspace root now
-        FILES_TO_UPDATE=("Cargo.toml")
+    "core")
+        FILES_TO_UPDATE=("crates/core/Cargo.toml")
+        ;;
+    "python")
+        FILES_TO_UPDATE=("crates/py/Cargo.toml")
+        ;;
+    "types")
+        FILES_TO_UPDATE=("crates/types/Cargo.toml")
+        ;;
+    "all")
+        FILES_TO_UPDATE=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml")
         ;;
 esac
 
@@ -183,34 +191,19 @@ update_version_in_file() {
         return 1
     fi
 
-    local current_version=$(grep '^\[workspace.package\]' -A 10 "$file" | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
+    local current_version=$(grep '^version = ' "$file" | head -1 | sed 's/version = "\(.*\)"/\1/')
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_info "Would update $file (workspace version): $current_version -> $new_version"
+        print_info "Would update $file: $current_version -> $new_version"
     else
-        print_info "Updating $file (workspace version): $current_version -> $new_version"
+        print_info "Updating $file: $current_version -> $new_version"
 
         # Create backup
         cp "$file" "$file.backup"
 
-        # Update version in [workspace.package] section and spatio-types workspace dependency
-        if awk -v new_ver="$new_version" '
-            /^\[workspace\.package\]/ { in_workspace_pkg=1; in_workspace_deps=0 }
-            /^\[workspace\.dependencies\]/ { in_workspace_deps=1; in_workspace_pkg=0 }
-            /^\[/ && !/^\[workspace\.package\]/ && !/^\[workspace\.dependencies\]/ {
-                in_workspace_pkg=0
-                in_workspace_deps=0
-            }
-            in_workspace_pkg && /^version = / {
-                print "version = \"" new_ver "\""
-                next
-            }
-            in_workspace_deps && /^spatio-types = / {
-                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
-            }
-            { print }
-        ' "$file" > "${file}.tmp"; then
-            mv "${file}.tmp" "$file"
+        # Update version
+        if sed -i.tmp "0,/^version = /s/^version = .*/version = \"$new_version\"/" "$file"; then
+            rm -f "$file.tmp"
             rm "$file.backup"
         else
             print_error "Failed to update $file"
@@ -226,54 +219,40 @@ for file in "${FILES_TO_UPDATE[@]}"; do
     update_version_in_file "$file" "$NEW_VERSION"
 done
 
+# Update workspace dependency for spatio-types if needed
+if [[ "$PACKAGE" == "types" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false ]]; then
+    print_info "Updating spatio-types workspace dependency..."
+    WORKSPACE_CARGO="Cargo.toml"
+
+    if [[ -f "$WORKSPACE_CARGO" ]]; then
+        # Update spatio-types version in workspace dependencies
+        sed -i.tmp "s/^spatio-types = { version = \"[^\"]*\"/spatio-types = { version = \"$NEW_VERSION\"/" "$WORKSPACE_CARGO"
+        rm -f "$WORKSPACE_CARGO.tmp"
+        print_success "Updated workspace dependency for spatio-types"
+    fi
+fi
+
 # Update Cargo.lock files
 UPDATE_FAILED=false
 if [[ "$DRY_RUN" == false ]]; then
     print_info "Updating Cargo.lock files..."
 
-    case "$PACKAGE" in
-        "rust"|"all")
-            if cargo update --workspace --quiet 2>&1; then
-                print_success "Updated main Cargo.lock"
-            else
-                print_error "Failed to update main Cargo.lock"
-                UPDATE_FAILED=true
-            fi
-            ;;
-    esac
+    if cargo update --workspace --quiet 2>&1; then
+        print_success "Updated Cargo.lock"
+    else
+        print_error "Failed to update Cargo.lock"
+        UPDATE_FAILED=true
+    fi
 
-    case "$PACKAGE" in
-        "python"|"all")
-            if (cd crates/py && cargo update --quiet 2>&1); then
-                print_success "Updated crates/py/Cargo.lock"
-            else
-                print_error "Failed to update crates/py/Cargo.lock"
-                UPDATE_FAILED=true
-            fi
-            ;;
-    esac
-
-    case "$PACKAGE" in
-        "types"|"all")
-            if (cd crates/types && cargo update --quiet 2>/dev/null); then
-                print_success "Updated crates/types/Cargo.lock"
-            else
-                print_info "crates/types has no Cargo.lock (workspace member)"
-            fi
-            ;;
-    esac
-
-    # Abort if any critical update failed
+    # Abort if update failed
     if [[ "$UPDATE_FAILED" == true ]]; then
         print_error "Cargo update failed. Aborting without committing."
         print_error ""
         print_error "Run 'git status' to see what was changed."
-        print_error "You may need to run: git checkout Cargo.toml"
+        print_error "You may need to restore files with: git checkout ."
         exit 1
     fi
 fi
-
-# --- CHANGELOG GENERATION ----------------------------------------------------
 
 # --- CHANGELOG GENERATION ----------------------------------------------------
 
@@ -357,14 +336,17 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     # Add files based on what was updated
     declare -a FILES_TO_ADD=()
     case "$PACKAGE" in
-        "rust"|"types")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock")
+        "core")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "Cargo.lock")
             ;;
         "python")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "crates/py/Cargo.lock")
+            FILES_TO_ADD=("crates/py/Cargo.toml" "Cargo.lock")
+            ;;
+        "types")
+            FILES_TO_ADD=("crates/types/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "all")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "crates/py/Cargo.lock" "crates/types/Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
             ;;
     esac
 
@@ -373,7 +355,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
         if [[ "$file" == *"Cargo.lock" ]]; then
             git add -f "$file" 2>/dev/null || print_warning "Could not add $file (might be ignored)"
         else
-            git add "$file"
+            git add "$file" 2>/dev/null || print_warning "Could not add $file"
         fi
     done
 
@@ -399,19 +381,19 @@ elif [[ "$NO_COMMIT" == true ]]; then
 else
     print_info "Changes committed."
     print_info ""
-    print_info "Next step: Merge changes to trigger auto-release"
+    print_info "Next step: Push to main to trigger auto-release"
 fi
 
 print_info ""
 print_info "GitHub Actions will automatically detect the version change and:"
 case "$PACKAGE" in
-    "rust")
-        print_info "  - Create GitHub release with rust-v$NEW_VERSION tag"
-        print_info "  - Publish Rust crate to crates.io"
+    "core")
+        print_info "  - Create GitHub release with core-v$NEW_VERSION tag"
+        print_info "  - Publish spatio to crates.io"
         ;;
     "python")
         print_info "  - Create GitHub release with python-v$NEW_VERSION tag"
-        print_info "  - Publish Python package to PyPI"
+        print_info "  - Publish spatio-py to PyPI"
         ;;
     "types")
         print_info "  - Create GitHub release with types-v$NEW_VERSION tag"
@@ -419,8 +401,8 @@ case "$PACKAGE" in
         ;;
     "all")
         print_info "  - Create GitHub releases for all packages"
-        print_info "  - Publish Rust crate to crates.io"
-        print_info "  - Publish Python package to PyPI"
+        print_info "  - Publish spatio to crates.io"
+        print_info "  - Publish spatio-py to PyPI"
         print_info "  - Publish spatio-types to crates.io"
         ;;
 esac
