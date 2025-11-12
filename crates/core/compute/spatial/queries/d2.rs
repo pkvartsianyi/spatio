@@ -32,22 +32,15 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let data_ref = Bytes::copy_from_slice(value);
+        // Validate geographic coordinates first
+        validate_geographic_point(point)?;
 
-        let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
-            }
-            Some(SetOptions {
-                expires_at: Some(expires_at),
-                ..
-            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
-            _ => crate::config::DbItem::new(data_ref.clone()),
-        };
+        let data_ref = Bytes::copy_from_slice(value);
+        let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
 
-        // Validate geographic coordinates
-        validate_geographic_point(point)?;
+        // Clone data only once for spatial index
+        let data_for_index = item.value.clone();
 
         DBInner::validate_timestamp(created_at)?;
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
@@ -60,7 +53,7 @@ impl DB {
             point.x(),
             point.y(),
             key.clone(),
-            data_ref.clone(),
+            data_for_index,
         );
 
         self.inner
@@ -101,35 +94,23 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        if self.inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-
-        let data_ref = Bytes::copy_from_slice(value);
-
-        let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
-            }
-            Some(SetOptions {
-                expires_at: Some(expires_at),
-                ..
-            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
-            _ => crate::config::DbItem::new(data_ref.clone()),
-        };
-        let created_at = item.created_at;
-
-        // Validate geographic coordinates
+        // Validate geographic coordinates first
         validate_geographic_point(point)?;
 
-        DBInner::validate_timestamp(created_at)?;
+        let data_ref = Bytes::copy_from_slice(value);
+        let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
+        let created_at = item.created_at;
 
-        // Use deterministic key: prefix:obj:object_id
-        let key = format!("{}:obj:{}", prefix, object_id);
+        // Clone data only once for spatial index
+        let data_for_index = item.value.clone();
+
+        let key = format!("{}:{}", prefix, object_id);
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         // Remove old spatial index entry if exists
-        if self.inner.keys.contains_key(&key_bytes) {
+        if let Some(old_item) = self.inner.keys.get(&key_bytes)
+            && !old_item.is_expired()
+        {
             let _ = self.inner.spatial_index.remove_entry(prefix, &key);
         }
 
@@ -142,7 +123,7 @@ impl DB {
             point.x(),
             point.y(),
             key.clone(),
-            data_ref.clone(),
+            data_for_index,
         );
 
         self.inner
@@ -184,6 +165,9 @@ impl DB {
         radius_meters: f64,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         let results = self.inner.spatial_index.query_within_radius_2d(
             prefix,
             center.x(),
@@ -215,6 +199,9 @@ impl DB {
     /// # }
     /// ```
     pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         Ok(self.inner.spatial_index.contains_point_2d(
             prefix,
             center.x(),
@@ -244,6 +231,8 @@ impl DB {
         max_lat: f64,
         max_lon: f64,
     ) -> Result<bool> {
+        crate::compute::validation::validate_bbox(min_lon, min_lat, max_lon, max_lat)?;
+
         let results = self
             .inner
             .spatial_index
@@ -271,6 +260,9 @@ impl DB {
         center: &Point,
         radius_meters: f64,
     ) -> Result<usize> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         Ok(self.inner.spatial_index.count_within_radius_2d(
             prefix,
             center.x(),

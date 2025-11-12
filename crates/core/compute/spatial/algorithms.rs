@@ -6,6 +6,8 @@ use geo::{
     Intersects, Rect, Rhumb,
 };
 use spatio_types::geo::{Point, Polygon};
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 /// Distance metric for spatial calculations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -27,23 +29,85 @@ pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) 
     }
 }
 
+/// Helper struct for KNN heap ordering (max-heap by distance, so we pop largest)
+#[derive(Clone)]
+struct KnnEntry<'a, T> {
+    point: Point,
+    distance: f64,
+    data: &'a T,
+}
+
+impl<'a, T> PartialEq for KnnEntry<'a, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.distance == other.distance
+    }
+}
+
+impl<'a, T> Eq for KnnEntry<'a, T> {}
+
+impl<'a, T> PartialOrd for KnnEntry<'a, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a, T> Ord for KnnEntry<'a, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Max-heap: larger distances have higher priority
+        self.distance
+            .partial_cmp(&other.distance)
+            .unwrap_or(Ordering::Equal)
+    }
+}
+
 /// K nearest neighbors. Returns (point, distance, data) sorted by distance.
+///
+/// Uses a bounded max-heap to avoid cloning all N points - only clones the final K results.
+/// Complexity: O(n log k) instead of O(n log n), with O(k) clones instead of O(n).
 pub fn knn<T: Clone>(
     center: &Point,
     points: &[(Point, T)],
     k: usize,
     metric: DistanceMetric,
 ) -> Vec<(Point, f64, T)> {
-    let mut distances: Vec<(Point, f64, T)> = points
-        .iter()
-        .map(|(pt, data)| {
-            let dist = distance_between(center, pt, metric);
-            (*pt, dist, data.clone())
-        })
-        .collect();
+    if k == 0 || points.is_empty() {
+        return Vec::new();
+    }
 
-    distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-    distances.into_iter().take(k).collect()
+    let mut heap = BinaryHeap::with_capacity(k.min(points.len()));
+
+    for (pt, data) in points.iter() {
+        let dist = distance_between(center, pt, metric);
+
+        // Skip non-finite distances
+        if !dist.is_finite() {
+            continue;
+        }
+
+        if heap.len() < k {
+            heap.push(KnnEntry {
+                point: *pt,
+                distance: dist,
+                data,
+            });
+        } else if let Some(worst) = heap.peek()
+            && dist < worst.distance
+        {
+            heap.pop();
+            heap.push(KnnEntry {
+                point: *pt,
+                distance: dist,
+                data,
+            });
+        }
+    }
+
+    // Convert heap to sorted vector, cloning only the K items we need
+    // into_sorted_vec gives us ascending order, which is what we want
+    heap.into_sorted_vec()
+        .into_iter()
+        .map(|entry| (entry.point, entry.distance, entry.data.clone()))
+        .collect()
 }
 
 pub fn bounding_box(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Result<Rect> {

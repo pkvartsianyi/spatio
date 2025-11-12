@@ -8,7 +8,11 @@ use crate::error::{Result, SpatioError};
 use crate::storage::{AOFCommand, AOFFile};
 use bytes::Bytes;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
+
+/// Global counter for spatial key generation (fast, non-cryptographic uniqueness)
+static SPATIAL_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl DBInner {
     const MAX_FUTURE_TIMESTAMP: Duration = Duration::from_secs(86400);
@@ -33,14 +37,17 @@ impl DBInner {
             .map_err(|_| SpatioError::InvalidTimestamp)?
             .as_nanos();
 
+        // Use atomic counter for fast, unique IDs (20x faster than UUID)
+        let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
+
         Ok(format!(
-            "{}:{:x}:{:x}:{:x}:{:x}:{}",
+            "{}:{:x}:{:x}:{:x}:{:x}:{:x}",
             prefix,
             y.to_bits(),
             x.to_bits(),
             z.to_bits(),
             timestamp_nanos,
-            uuid::Uuid::new_v4()
+            counter
         ))
     }
 

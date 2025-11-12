@@ -22,7 +22,10 @@ fn handle_error<T>(result: RustResult<T>) -> PyResult<T> {
     result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
-/// Python wrapper for geographic Point
+/// Python wrapper for geographic Point (2D only - altitude not currently supported)
+///
+/// Note: The `alt` parameter is accepted for API compatibility but ignored,
+/// as the underlying geo::Point type is 2D.
 #[pyclass(name = "Point")]
 #[derive(Clone, Debug)]
 pub struct PyPoint {
@@ -33,14 +36,10 @@ pub struct PyPoint {
 impl PyPoint {
     /// Create a new Point with latitude and longitude.
     ///
-    /// # Note
-    /// Altitude is currently not supported. The `alt` parameter is accepted for
-    /// API compatibility but will be ignored, as the underlying geo::Point is 2D.
-    ///
     /// # Args
     ///     lon: Longitude in degrees (-180 to 180) - x-coordinate
     ///     lat: Latitude in degrees (-90 to 90) - y-coordinate
-    ///     alt: Optional altitude (currently ignored - see note above)
+    ///     alt: Optional altitude (ignored - see struct documentation)
     ///
     /// # Note
     ///     Uses (longitude, latitude) order to match GeoJSON standard and the Rust API.
@@ -64,9 +63,8 @@ impl PyPoint {
         }
 
         let point = RustPoint::new(lon, lat);
-        if alt.is_some() {
-            // Note: geo::Point doesn't support altitude, parameter ignored
-        }
+        // Altitude parameter is silently ignored (see struct documentation)
+        let _ = alt;
 
         Ok(PyPoint { inner: point })
     }
@@ -83,11 +81,10 @@ impl PyPoint {
 
     /// Get the altitude of the point.
     ///
-    /// # Note
-    /// Always returns None as altitude is not currently supported.
+    /// Always returns None (altitude not supported).
     #[getter]
     fn alt(&self) -> Option<f64> {
-        None // geo::Point doesn't support altitude in current version
+        None
     }
 
     fn __repr__(&self) -> String {
