@@ -151,10 +151,24 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     fi
 fi
 
-# Get current versions from individual crates
-CURRENT_CORE_VERSION=$(grep '^version = ' crates/core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-CURRENT_PYTHON_VERSION=$(grep '^version = ' crates/py/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-CURRENT_TYPES_VERSION=$(grep '^version = ' crates/types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Get current versions using cargo metadata for robust parsing
+CURRENT_CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+CURRENT_PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+CURRENT_TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+
+# Fallback to awk if cargo metadata fails
+if [[ -z "$CURRENT_CORE_VERSION" ]]; then
+    CURRENT_CORE_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
+fi
+if [[ -z "$CURRENT_PYTHON_VERSION" ]]; then
+    CURRENT_PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
+fi
+if [[ -z "$CURRENT_TYPES_VERSION" ]]; then
+    CURRENT_TYPES_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
+fi
 
 print_info "Current versions:"
 print_info "  spatio (core): $CURRENT_CORE_VERSION"
@@ -191,7 +205,7 @@ update_version_in_file() {
         return 1
     fi
 
-    local current_version=$(grep '^version = ' "$file" | head -1 | sed 's/version = "\(.*\)"/\1/')
+    local current_version=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' "$file")
 
     if [[ "$DRY_RUN" == true ]]; then
         print_info "Would update $file: $current_version -> $new_version"
@@ -201,15 +215,29 @@ update_version_in_file() {
         # Create backup
         cp "$file" "$file.backup"
 
-        # Update version
-        if sed -i.tmp "0,/^version = /s/^version = .*/version = \"$new_version\"/" "$file"; then
-            rm -f "$file.tmp"
-            rm "$file.backup"
-        else
-            print_error "Failed to update $file"
+        # Update version using sed
+        sed -i.tmp "0,/^version = /s/^version = .*/version = \"$new_version\"/" "$file"
+
+        # Check if sed succeeded
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to update $file (sed command failed)"
             mv "$file.backup" "$file" 2>/dev/null || true
+            rm -f "$file.tmp" 2>/dev/null || true
             return 1
         fi
+
+        # Verify the version was actually changed
+        local updated_version=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' "$file")
+        if [[ "$updated_version" != "$new_version" ]]; then
+            print_error "Failed to update $file (version verification failed: expected $new_version, got $updated_version)"
+            mv "$file.backup" "$file" 2>/dev/null || true
+            rm -f "$file.tmp" 2>/dev/null || true
+            return 1
+        fi
+
+        # Success - cleanup
+        rm -f "$file.tmp" 2>/dev/null || true
+        rm -f "$file.backup" 2>/dev/null || true
     fi
 }
 
@@ -226,9 +254,19 @@ if [[ "$PACKAGE" == "types" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false 
 
     if [[ -f "$WORKSPACE_CARGO" ]]; then
         # Update spatio-types version in workspace dependencies
+        cp "$WORKSPACE_CARGO" "$WORKSPACE_CARGO.backup"
         sed -i.tmp "s/^spatio-types = { version = \"[^\"]*\"/spatio-types = { version = \"$NEW_VERSION\"/" "$WORKSPACE_CARGO"
-        rm -f "$WORKSPACE_CARGO.tmp"
-        print_success "Updated workspace dependency for spatio-types"
+
+        # Check if sed succeeded
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to update workspace dependency (sed command failed)"
+            mv "$WORKSPACE_CARGO.backup" "$WORKSPACE_CARGO" 2>/dev/null || true
+            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+        else
+            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+            rm -f "$WORKSPACE_CARGO.backup" 2>/dev/null || true
+            print_success "Updated workspace dependency for spatio-types"
+        fi
     fi
 fi
 

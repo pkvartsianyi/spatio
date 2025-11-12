@@ -55,9 +55,24 @@ if [[ ! -f "crates/types/Cargo.toml" ]]; then
     exit 1
 fi
 
-CORE_VERSION=$(grep '^version = ' crates/core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-PYTHON_VERSION=$(grep '^version = ' crates/py/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-TYPES_VERSION=$(grep '^version = ' crates/types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Extract version using cargo metadata for robust parsing
+CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+
+# Fallback to awk if cargo metadata fails
+if [[ -z "$CORE_VERSION" ]]; then
+    CORE_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
+fi
+if [[ -z "$PYTHON_VERSION" ]]; then
+    PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
+fi
+if [[ -z "$TYPES_VERSION" ]]; then
+    TYPES_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
+fi
 
 # Get latest git tags
 LATEST_CORE_TAG=$(git tag -l "core-v*" | sort -V | tail -1 2>/dev/null || echo "none")
@@ -130,7 +145,12 @@ print_info ""
 print_info "Workspace Dependencies:"
 print_info "----------------------"
 
-WORKSPACE_TYPES_VERSION=$(grep '^spatio-types = ' Cargo.toml | sed 's/.*version = "\([^"]*\)".*/\1/')
+WORKSPACE_TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+# Fallback to awk if cargo metadata fails
+if [[ -z "$WORKSPACE_TYPES_VERSION" ]]; then
+    WORKSPACE_TYPES_VERSION=$(awk -F'"' '/^spatio-types[[:space:]]*=.*version/ {for(i=1;i<=NF;i++) if($(i)=="version") print $(i+2)}' Cargo.toml)
+fi
 if [[ "$WORKSPACE_TYPES_VERSION" == "$TYPES_VERSION" ]]; then
     print_success "Workspace spatio-types dependency matches crate version ($TYPES_VERSION)"
 else

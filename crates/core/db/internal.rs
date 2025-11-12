@@ -11,7 +11,14 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-/// Global counter for spatial key generation (fast, non-cryptographic uniqueness)
+/// Global counter for spatial key generation (fast, non-cryptographic uniqueness).
+///
+/// This counter wraps around at u64::MAX (18,446,744,073,709,551,615). Even at
+/// 1 million inserts/second, this would take ~584,942 years to wrap around.
+///
+/// The key format combines: prefix:lat:lon:z:timestamp_nanos:counter
+/// Even if the counter wraps, the nanosecond timestamp ensures uniqueness across
+/// different time periods, making collisions effectively impossible in practice.
 static SPATIAL_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 impl DBInner {
@@ -37,7 +44,8 @@ impl DBInner {
             .map_err(|_| SpatioError::InvalidTimestamp)?
             .as_nanos();
 
-        // Use atomic counter for fast, unique IDs (20x faster than UUID)
+        // fetch_add wraps around at u64::MAX (after ~584,942 years at 1M ops/sec).
+        // The nanosecond timestamp ensures uniqueness even after theoretical wrap-around.
         let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
 
         Ok(format!(

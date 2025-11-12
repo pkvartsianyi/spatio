@@ -40,7 +40,7 @@ jobs:
       - name: Check spatio-types version changes
         id: check-types
         run: |
-          CURRENT_VERSION=$(grep '^version = ' crates/types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
           TAG_NAME="types-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -49,7 +49,7 @@ jobs:
           fi
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/types/Cargo.toml | tail -1)
           if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/types/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/types/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
           else
             PREVIOUS_VERSION=""
           fi
@@ -59,7 +59,7 @@ jobs:
       - name: Check spatio core version changes
         id: check-core
         run: |
-          CURRENT_VERSION=$(grep '^version = ' crates/core/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
           TAG_NAME="core-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -68,7 +68,7 @@ jobs:
           fi
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/core/Cargo.toml | tail -1)
           if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/core/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/core/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
           else
             PREVIOUS_VERSION=""
           fi
@@ -78,7 +78,7 @@ jobs:
       - name: Check Python version changes
         id: check-python
         run: |
-          CURRENT_VERSION=$(grep '^version = ' crates/py/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
           TAG_NAME="python-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -87,7 +87,7 @@ jobs:
           fi
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/py/Cargo.toml | tail -1)
           if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/py/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/py/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
           else
             PREVIOUS_VERSION=""
           fi
@@ -249,7 +249,8 @@ jobs:
       always() &&
       needs.detect-changes.outputs.core-changed == 'true' &&
       needs.test-core.result == 'success' &&
-      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
+      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped') &&
+      needs.release-types.result != 'failure'
     permissions:
       contents: write
     steps:
@@ -260,7 +261,35 @@ jobs:
 
       - name: Wait for spatio-types to be available on crates.io
         if: needs.release-types.result == 'success'
-        run: sleep 60
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.types-version }}"
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          SLEEP_TIME=5
+
+          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
+            sleep $SLEEP_TIME
+
+            # Check if the version is available on crates.io
+            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio-types v$VERSION is now available on crates.io"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            # Exponential backoff: 5s, 10s, 20s, 40s, 60s (capped at 60s)
+            SLEEP_TIME=$((SLEEP_TIME * 2))
+            if [ $SLEEP_TIME -gt 60 ]; then
+              SLEEP_TIME=60
+            fi
+          done
+
+          echo "Warning: spatio-types v$VERSION not confirmed on crates.io after $MAX_ATTEMPTS attempts"
+          echo "Proceeding anyway - cargo publish will fail if dependency is not available"
+          exit 0
 
       - name: Publish spatio to crates.io
         env:

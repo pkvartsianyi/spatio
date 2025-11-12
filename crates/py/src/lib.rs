@@ -101,7 +101,7 @@ impl PyPoint {
 
     /// Calculate distance to another point in meters using Haversine formula
     fn distance_to(&self, other: &PyPoint) -> f64 {
-        Haversine.distance(self.inner, other.inner)
+        Haversine.distance(self.inner.into_inner(), other.inner.into_inner())
     }
 }
 
@@ -331,7 +331,7 @@ impl PySpatio {
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
                 let py_value = PyBytes::new(py, &value);
-                let distance = Haversine.distance(center.inner, point);
+                let distance = Haversine.distance(center.inner.into_inner(), point.into_inner());
                 let tuple = (py_point, py_value, distance).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
@@ -532,8 +532,9 @@ impl PySpatio {
 
         // Create polygon
         let polygon = GeoPolygon::new(geo::LineString::from(coords), vec![]);
+        let spatio_polygon: spatio::Polygon = polygon.into();
 
-        let results = handle_error(self.db.query_within_polygon(prefix, &polygon, limit))?;
+        let results = handle_error(self.db.query_within_polygon(prefix, &spatio_polygon, limit))?;
 
         Python::with_gil(|py| {
             let py_list = PyList::empty(py);

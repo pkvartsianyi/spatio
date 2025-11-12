@@ -25,6 +25,14 @@ impl DB {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Key Format
+    ///
+    /// This method generates auto-incrementing keys in the format:
+    /// `prefix:lat_hex:lon_hex:z_hex:timestamp_hex:counter_hex`
+    ///
+    /// Each call creates a new entry, even for the same coordinates.
+    /// For updating existing objects by ID, use [`upsert_point`](Self::upsert_point) instead.
     pub fn insert_point(
         &mut self,
         prefix: &str,
@@ -68,6 +76,13 @@ impl DB {
     /// of moving objects without accumulating historical data.
     ///
     /// Returns the previous data if the object existed.
+    ///
+    /// # Key Format
+    ///
+    /// This method uses stable keys in the format: `prefix:object_id`
+    ///
+    /// This is intentionally different from `insert_point`'s auto-generated keys,
+    /// allowing deterministic updates to the same logical object.
     ///
     /// # Examples
     ///

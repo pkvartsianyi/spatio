@@ -15,6 +15,14 @@ This crate provides fundamental types for working with spatio-temporal data, bui
 spatio-types = "0.1"
 ```
 
+### Optional Features
+
+```toml
+[dependencies]
+# Enable GeoJSON support for serialization/deserialization
+spatio-types = { version = "0.1", features = ["geojson"] }
+```
+
 ## Types
 
 ### Point Types
@@ -47,7 +55,7 @@ spatio-types = "0.1"
 
 ```rust
 use spatio_types::point::TemporalPoint;
-use geo::Point;
+use spatio_types::geo::Point;
 use std::time::SystemTime;
 
 // Create a temporal point (location with timestamp)
@@ -71,7 +79,7 @@ println!("Drone at altitude: {} meters", drone_position.altitude);
 
 ```rust
 use spatio_types::bbox::BoundingBox2D;
-use geo::Point;
+use spatio_types::geo::Point;
 
 // Create a bounding box for Manhattan
 let manhattan = BoundingBox2D::new(-74.0479, 40.6829, -73.9067, 40.8820);
@@ -90,7 +98,7 @@ println!("Manhattan center: {:?}", center);
 ```rust
 use spatio_types::trajectory::Trajectory;
 use spatio_types::point::TemporalPoint;
-use geo::Point;
+use spatio_types::geo::Point;
 use std::time::{SystemTime, Duration};
 
 // Create a movement trajectory
@@ -137,7 +145,7 @@ All types support Serde serialization:
 
 ```rust
 use spatio_types::point::TemporalPoint;
-use geo::Point;
+use spatio_types::geo::Point;
 use std::time::SystemTime;
 
 let point = TemporalPoint::new(Point::new(-74.0, 40.7), SystemTime::now());
@@ -147,6 +155,28 @@ let json = serde_json::to_string(&point).unwrap();
 
 // Deserialize from JSON
 let deserialized: TemporalPoint = serde_json::from_str(&json).unwrap();
+```
+
+### GeoJSON Support
+
+Enable the `geojson` feature for GeoJSON format support:
+
+```rust
+use spatio_types::point::Point3d;
+use spatio_types::geo::Point;
+
+// With the geojson feature enabled, you can work with GeoJSON data
+// Example: Convert from GeoJSON Feature
+let geojson_str = r#"{
+    "type": "Feature",
+    "geometry": {
+        "type": "Point",
+        "coordinates": [-74.0060, 40.7128]
+    }
+}"#;
+
+// Parse and use GeoJSON with spatio-types
+// (Exact API depends on your conversion implementation)
 ```
 
 ## Use Cases
@@ -166,6 +196,7 @@ This crate is ideal for:
 - **Built on `geo` types** for compatibility with the Rust geospatial ecosystem
 - **Time-aware** with `SystemTime` timestamps
 - **3D support** with altitude/elevation data
+- **GeoJSON support** (optional) - Enable with the `geojson` feature flag
 
 ## Integration with Spatio
 
