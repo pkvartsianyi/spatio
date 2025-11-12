@@ -42,7 +42,7 @@ uuid = { version = "1.0", features = ["v4"] }
 pyo3 = { version = "0.24.1", features = ["extension-module"] }
 
 # Workspace crates
-spatio-types = { path = "crates/types" }
+spatio-types = { version = "0.1.7", path = "crates/types" }
 
 # Dev dependencies
 criterion = "0.5"

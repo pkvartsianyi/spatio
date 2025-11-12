@@ -193,11 +193,21 @@ update_version_in_file() {
         # Create backup
         cp "$file" "$file.backup"
 
-        # Update version in [workspace.package] section
+        # Update version in [workspace.package] section and spatio-types workspace dependency
         if awk -v new_ver="$new_version" '
-            /^\[workspace\.package\]/ { in_workspace=1 }
-            /^\[/ && !/^\[workspace\.package\]/ { in_workspace=0 }
-            in_workspace && /^version = / { print "version = \"" new_ver "\""; next }
+            /^\[workspace\.package\]/ { in_workspace_pkg=1; in_workspace_deps=0 }
+            /^\[workspace\.dependencies\]/ { in_workspace_deps=1; in_workspace_pkg=0 }
+            /^\[/ && !/^\[workspace\.package\]/ && !/^\[workspace\.dependencies\]/ {
+                in_workspace_pkg=0
+                in_workspace_deps=0
+            }
+            in_workspace_pkg && /^version = / {
+                print "version = \"" new_ver "\""
+                next
+            }
+            in_workspace_deps && /^spatio-types = / {
+                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
+            }
             { print }
         ' "$file" > "${file}.tmp"; then
             mv "${file}.tmp" "$file"
