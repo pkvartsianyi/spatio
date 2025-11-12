@@ -224,8 +224,9 @@ jobs:
     if: needs.detect-changes.outputs.python-changed == 'true'
     permissions:
       id-token: write
-      contents: read
+      contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -238,6 +239,15 @@ jobs:
           pip install "packaging>=24.1" twine
           twine check dist/*
           twine upload dist/*.whl --non-interactive
+
+      - name: Tag and release Python package
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.python-version }}"
+          TAG="python-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Release Python package $VERSION"
+          git push origin "$TAG"
 
   run-release:
     name: Final Release Stage
