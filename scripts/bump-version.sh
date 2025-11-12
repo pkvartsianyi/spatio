@@ -216,26 +216,79 @@ for file in "${FILES_TO_UPDATE[@]}"; do
     update_version_in_file "$file" "$NEW_VERSION"
 done
 
+# Function to check if version is a prerelease
+is_prerelease() {
+    [[ "$1" =~ -[a-zA-Z0-9]+(\.[0-9]+)?$ ]]
+}
+
+# Function to update dependency version in Cargo.toml
+update_dependency_version() {
+    local file="$1"
+    local dep_name="$2"
+    local new_version="$3"
+
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+
+    # Create backup
+    cp "$file" "$file.backup"
+
+    # Update dependency version (macOS and Linux compatible)
+    if awk -v dep="$dep_name" -v ver="$new_version" '
+        /^[[:space:]]*spatio-types = \{/ {
+            sub(/version = "[^"]*"/, "version = \"" ver "\"")
+        }
+        { print }
+    ' "$file" > "$file.tmp"; then
+        mv "$file.tmp" "$file"
+        rm "$file.backup"
+        return 0
+    else
+        mv "$file.backup" "$file" 2>/dev/null || true
+        return 1
+    fi
+}
+
+# For prerelease versions, update dependency specifications to use exact version
+if [[ "$DRY_RUN" == false ]] && is_prerelease "$NEW_VERSION"; then
+    print_info "Prerelease version detected - updating dependency specifications..."
+
+    case "$PACKAGE" in
+        "rust"|"all")
+            if update_dependency_version "crates/core/Cargo.toml" "spatio-types" "=$NEW_VERSION"; then
+                print_success "Updated spatio-types dependency in crates/core/Cargo.toml to =$NEW_VERSION"
+            else
+                print_error "Failed to update spatio-types dependency specification"
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 # Update Cargo.lock files
+UPDATE_FAILED=false
 if [[ "$DRY_RUN" == false ]]; then
     print_info "Updating Cargo.lock files..."
 
     case "$PACKAGE" in
         "rust"|"all")
-            if cargo update --workspace --quiet; then
+            if cargo update --workspace --quiet 2>&1; then
                 print_success "Updated main Cargo.lock"
             else
-                print_warning "Failed to update main Cargo.lock"
+                print_error "Failed to update main Cargo.lock"
+                UPDATE_FAILED=true
             fi
             ;;
     esac
 
     case "$PACKAGE" in
         "python"|"all")
-            if (cd crates/py && cargo update --quiet); then
+            if (cd crates/py && cargo update --quiet 2>&1); then
                 print_success "Updated crates/py/Cargo.lock"
             else
-                print_warning "Failed to update crates/py/Cargo.lock"
+                print_error "Failed to update crates/py/Cargo.lock"
+                UPDATE_FAILED=true
             fi
             ;;
     esac
@@ -249,6 +302,16 @@ if [[ "$DRY_RUN" == false ]]; then
             fi
             ;;
     esac
+
+    # Abort if any critical update failed
+    if [[ "$UPDATE_FAILED" == true ]]; then
+        print_error "Cargo update failed. Aborting without committing."
+        print_error ""
+        print_error "For prerelease versions, dependencies need exact version specifications."
+        print_error "The dependency updates may have been applied. You may need to:"
+        print_error "  git checkout Cargo.toml crates/core/Cargo.toml"
+        exit 1
+    fi
 fi
 
 # --- CHANGELOG GENERATION ----------------------------------------------------
