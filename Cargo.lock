@@ -1210,7 +1210,9 @@ name = "spatio-types"
 version = "0.1.8"
 dependencies = [
  "geo",
+ "geojson",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

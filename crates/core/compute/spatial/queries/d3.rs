@@ -29,22 +29,15 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let data_ref = Bytes::copy_from_slice(value);
+        // Validate 3D geographic coordinates first
+        validate_geographic_point_3d(point)?;
 
-        let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
-            }
-            Some(SetOptions {
-                expires_at: Some(expires_at),
-                ..
-            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
-            _ => crate::config::DbItem::new(data_ref.clone()),
-        };
+        let data_ref = Bytes::copy_from_slice(value);
+        let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
 
-        // Validate 3D geographic coordinates
-        validate_geographic_point_3d(point)?;
+        // Clone data only once for spatial index
+        let data_for_index = item.value.clone();
 
         DBInner::validate_timestamp(created_at)?;
         let key =
@@ -59,7 +52,7 @@ impl DB {
             point.y(),
             point.z(),
             key.clone(),
-            data_ref.clone(),
+            data_for_index,
         );
 
         self.inner
@@ -93,6 +86,9 @@ impl DB {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(Point3d, Bytes, f64)>> {
+        validate_geographic_point_3d(center)?;
+        crate::compute::validation::validate_radius(radius)?;
+
         let results = self.inner.spatial_index.query_within_sphere(
             prefix,
             center.x(),
@@ -132,6 +128,10 @@ impl DB {
         bbox: &BoundingBox3D,
         limit: usize,
     ) -> Result<Vec<(Point3d, Bytes)>> {
+        crate::compute::validation::validate_bbox_3d(
+            bbox.min_x, bbox.min_y, bbox.min_z, bbox.max_x, bbox.max_y, bbox.max_z,
+        )?;
+
         let results = self.inner.spatial_index.query_within_bbox(
             prefix,
             BBoxQuery {

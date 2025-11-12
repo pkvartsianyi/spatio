@@ -162,6 +162,12 @@ impl DB {
         #[cfg(feature = "snapshot")]
         self.inner.maybe_auto_snapshot()?;
 
+        // Periodically check for expired item accumulation (skip early operations to avoid overhead)
+        let ops = self.inner.stats.operations_count;
+        if ops >= 1000 && ops.is_multiple_of(1000) {
+            self.check_expired_threshold();
+        }
+
         Ok(old.map(|item| item.value))
     }
 
@@ -241,6 +247,53 @@ impl DB {
             return Err(SpatioError::DatabaseClosed);
         }
         self.inner.save_snapshot()
+    }
+
+    /// Get statistics about expired items.
+    ///
+    /// Returns information about the ratio of expired items in the database.
+    /// Use this to monitor whether `cleanup_expired()` should be called.
+    pub fn expired_stats(&self) -> ExpiredStats {
+        let total = self.inner.keys.len();
+        if total == 0 {
+            return ExpiredStats {
+                total_keys: 0,
+                expired_keys: 0,
+                expired_ratio: 0.0,
+            };
+        }
+
+        let now = SystemTime::now();
+        let expired = self
+            .inner
+            .keys
+            .values()
+            .filter(|item| item.is_expired_at(now))
+            .count();
+
+        ExpiredStats {
+            total_keys: total,
+            expired_keys: expired,
+            expired_ratio: expired as f64 / total as f64,
+        }
+    }
+
+    /// Check if expired items exceed threshold and log warning if needed.
+    ///
+    /// Note: This performs a full scan of keys, so it's only called periodically
+    /// (every 1000 operations) to minimize performance impact.
+    fn check_expired_threshold(&self) {
+        const WARNING_THRESHOLD: f64 = 0.25; // 25%
+
+        let stats = self.expired_stats();
+        if stats.expired_ratio > WARNING_THRESHOLD {
+            log::warn!(
+                "High expired items ratio: {:.1}% ({}/{} keys). Consider calling cleanup_expired() to reclaim memory.",
+                stats.expired_ratio * 100.0,
+                stats.expired_keys,
+                stats.total_keys
+            );
+        }
     }
 
     /// Close the database and sync all pending writes.
@@ -352,6 +405,20 @@ impl Drop for DB {
 }
 
 pub use DB as Spatio;
+
+/// Statistics about expired items in the database.
+///
+/// Use this to monitor the ratio of expired items and determine
+/// when to call [`DB::cleanup_expired`] to reclaim memory.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpiredStats {
+    /// Total number of keys in the database
+    pub total_keys: usize,
+    /// Number of expired keys
+    pub expired_keys: usize,
+    /// Ratio of expired keys (0.0 to 1.0)
+    pub expired_ratio: f64,
+}
 
 #[cfg(test)]
 mod tests {

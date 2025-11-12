@@ -1,9 +1,9 @@
 //! GeoJSON conversion for Points and Polygons.
 
 use crate::error::{Result, SpatioError};
-use geo::{Point, Polygon};
 use geojson::{Feature, FeatureCollection, Geometry, Value};
 use serde_json::Map;
+use spatio_types::geo::{Point, Polygon};
 use spatio_types::point::Point3d;
 use std::collections::HashMap;
 
@@ -279,7 +279,7 @@ mod tests {
             (x: -80.0, y: 35.0),
         ];
 
-        let json = polygon_to_geojson(&poly).unwrap();
+        let json = polygon_to_geojson(&Polygon::from(poly)).unwrap();
         assert!(json.contains("Polygon"));
         assert!(json.contains("-80"));
     }
@@ -304,7 +304,7 @@ mod tests {
             (x: -80.0, y: 35.0),
         ];
 
-        let json = polygon_to_geojson(&original).unwrap();
+        let json = polygon_to_geojson(&Polygon::from(original.clone())).unwrap();
         let parsed = polygon_from_geojson(&json).unwrap();
 
         assert_eq!(

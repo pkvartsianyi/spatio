@@ -1,4 +1,4 @@
-use geo::{Distance, Haversine, Point};
+use crate::geo::Point;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
@@ -11,7 +11,7 @@ use std::time::SystemTime;
 ///
 /// ```
 /// use spatio_types::point::Point3d;
-/// use geo::Point;
+/// use spatio_types::geo::Point;
 ///
 /// // Create a 3D point for a drone at 100 meters altitude
 /// let drone_position = Point3d::new(-74.0060, 40.7128, 100.0);
@@ -24,7 +24,7 @@ use std::time::SystemTime;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point3d {
     /// The 2D geographic point (longitude/latitude or x/y)
-    pub point: Point<f64>,
+    pub point: Point,
     /// The altitude/elevation/z-coordinate (in meters typically)
     pub z: f64,
 }
@@ -53,7 +53,7 @@ impl Point3d {
     }
 
     /// Create a 3D point from a 2D point and altitude.
-    pub fn from_point_and_altitude(point: Point<f64>, z: f64) -> Self {
+    pub fn from_point_and_altitude(point: Point, z: f64) -> Self {
         Self { point, z }
     }
 
@@ -78,12 +78,12 @@ impl Point3d {
     }
 
     /// Get a reference to the underlying 2D point.
-    pub fn point_2d(&self) -> &Point<f64> {
+    pub fn point_2d(&self) -> &Point {
         &self.point
     }
 
     /// Project this 3D point to 2D by discarding the z coordinate.
-    pub fn to_2d(&self) -> Point<f64> {
+    pub fn to_2d(&self) -> Point {
         self.point
     }
 
@@ -127,7 +127,7 @@ impl Point3d {
     /// let (h_dist, alt_diff, dist_3d) = p1.haversine_distances(&p2);
     /// ```
     pub fn haversine_distances(&self, other: &Point3d) -> (f64, f64, f64) {
-        let horizontal_distance = Haversine.distance(self.point, other.point);
+        let horizontal_distance = self.point.haversine_distance(&other.point);
         let altitude_diff = (self.z - other.z).abs();
         let distance_3d = (horizontal_distance.powi(2) + altitude_diff.powi(2)).sqrt();
 
@@ -165,7 +165,7 @@ impl Point3d {
     /// Distance in meters.
     #[inline]
     pub fn haversine_2d(&self, other: &Point3d) -> f64 {
-        Haversine.distance(self.point, other.point)
+        self.point.haversine_distance(&other.point)
     }
 
     /// Get the altitude difference to another point.
@@ -173,21 +173,84 @@ impl Point3d {
     pub fn altitude_difference(&self, other: &Point3d) -> f64 {
         (self.z - other.z).abs()
     }
+
+    /// Convert to GeoJSON string representation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "geojson")]
+    /// # {
+    /// use spatio_types::point::Point3d;
+    ///
+    /// let point = Point3d::new(-74.0060, 40.7128, 100.0);
+    /// let json = point.to_geojson().unwrap();
+    /// assert!(json.contains("Point"));
+    /// # }
+    /// ```
+    #[cfg(feature = "geojson")]
+    pub fn to_geojson(&self) -> Result<String, crate::geo::GeoJsonError> {
+        use geojson::{Geometry, Value};
+
+        let geom = Geometry::new(Value::Point(vec![self.x(), self.y(), self.z()]));
+        serde_json::to_string(&geom).map_err(|e| {
+            crate::geo::GeoJsonError::Serialization(format!("Failed to serialize 3D point: {}", e))
+        })
+    }
+
+    /// Parse from GeoJSON string. Defaults altitude to 0.0 if not present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "geojson")]
+    /// # {
+    /// use spatio_types::point::Point3d;
+    ///
+    /// let json = r#"{"type":"Point","coordinates":[-74.006,40.7128,100.0]}"#;
+    /// let point = Point3d::from_geojson(json).unwrap();
+    /// assert_eq!(point.x(), -74.006);
+    /// assert_eq!(point.z(), 100.0);
+    /// # }
+    /// ```
+    #[cfg(feature = "geojson")]
+    pub fn from_geojson(geojson: &str) -> Result<Self, crate::geo::GeoJsonError> {
+        use geojson::{Geometry, Value};
+
+        let geom: Geometry = serde_json::from_str(geojson).map_err(|e| {
+            crate::geo::GeoJsonError::Deserialization(format!("Failed to parse GeoJSON: {}", e))
+        })?;
+
+        match geom.value {
+            Value::Point(coords) => {
+                if coords.len() < 2 {
+                    return Err(crate::geo::GeoJsonError::InvalidCoordinates(
+                        "Point must have at least 2 coordinates".to_string(),
+                    ));
+                }
+                let z = coords.get(2).copied().unwrap_or(0.0);
+                Ok(Point3d::new(coords[0], coords[1], z))
+            }
+            _ => Err(crate::geo::GeoJsonError::InvalidGeometry(
+                "GeoJSON geometry is not a Point".to_string(),
+            )),
+        }
+    }
 }
 
 /// A geographic point with an associated timestamp.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalPoint {
-    pub point: Point<f64>,
+    pub point: Point,
     pub timestamp: SystemTime,
 }
 
 impl TemporalPoint {
-    pub fn new(point: Point<f64>, timestamp: SystemTime) -> Self {
+    pub fn new(point: Point, timestamp: SystemTime) -> Self {
         Self { point, timestamp }
     }
 
-    pub fn point(&self) -> &Point<f64> {
+    pub fn point(&self) -> &Point {
         &self.point
     }
 
@@ -199,13 +262,13 @@ impl TemporalPoint {
 /// A geographic point with an associated altitude and timestamp.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemporalPoint3D {
-    pub point: Point<f64>,
+    pub point: Point,
     pub altitude: f64,
     pub timestamp: SystemTime,
 }
 
 impl TemporalPoint3D {
-    pub fn new(point: Point<f64>, altitude: f64, timestamp: SystemTime) -> Self {
+    pub fn new(point: Point, altitude: f64, timestamp: SystemTime) -> Self {
         Self {
             point,
             altitude,
@@ -213,7 +276,7 @@ impl TemporalPoint3D {
         }
     }
 
-    pub fn point(&self) -> &Point<f64> {
+    pub fn point(&self) -> &Point {
         &self.point
     }
 
@@ -306,5 +369,25 @@ mod tests {
         assert_eq!(p3d.x(), -74.0);
         assert_eq!(p3d.y(), 40.7);
         assert_eq!(p3d.altitude(), 100.0);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn test_point3d_geojson_roundtrip() {
+        let original = Point3d::new(-74.0060, 40.7128, 100.0);
+        let json = original.to_geojson().unwrap();
+        let parsed = Point3d::from_geojson(&json).unwrap();
+
+        assert!((original.x() - parsed.x()).abs() < 1e-10);
+        assert!((original.y() - parsed.y()).abs() < 1e-10);
+        assert!((original.z() - parsed.z()).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn test_point3d_from_geojson_defaults_z() {
+        let json = r#"{"type":"Point","coordinates":[-74.006,40.7128]}"#;
+        let point = Point3d::from_geojson(json).unwrap();
+        assert_eq!(point.z(), 0.0);
     }
 }

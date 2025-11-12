@@ -1,5 +1,4 @@
-use geo::Point;
-use spatio::{SetOptions, Spatio, TemporalPoint};
+use spatio::{Point, SetOptions, Spatio, TemporalPoint};
 use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 

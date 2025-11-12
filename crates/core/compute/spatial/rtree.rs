@@ -1,61 +1,23 @@
 //! Unified spatial index using R*-tree for 2D and 3D queries.
 //!
-//! This module provides the single spatial indexing solution for Spatio, using R*-tree
-//! data structures with axis-aligned bounding box (AABB) envelope pruning. It handles
-//! both 2D points (stored with z=0) and native 3D points, providing O(log n) query
-//! performance for all spatial operations.
+//! Provides R*-tree based spatial indexing with AABB envelope pruning for efficient
+//! geographic queries. Handles both 2D points (z=0) and native 3D points.
 //!
-//! ## Envelope-Based Pruning
+//! Uses Haversine distance for geographic accuracy and achieves O(log n) query
+//! performance through spatial pruning before distance calculations.
 //!
-//! Traditional spatial queries iterate through all points and compute distances,
-//! resulting in O(n) complexity. This implementation uses R*-tree AABB envelopes
-//! to prune the search space before computing expensive distance calculations:
-//!
-//! 1. **Compute Query Envelope**: For a spherical or cylindrical query, calculate
-//!    the minimal AABB that fully contains the query volume.
-//!
-//! 2. **Spatial Pruning**: Use R*-tree `locate_in_envelope_intersecting` to retrieve
-//!    only points whose bounding boxes intersect with the query envelope. This
-//!    eliminates most points without distance calculations.
-//!
-//! 3. **Exact Filtering**: For remaining candidates, compute precise Haversine
-//!    distance and filter by exact query constraints.
-//!
-//! ## Performance Characteristics
-//!
-//! - **Spherical queries**: O(log n + k) where k is candidate set size
-//! - **Cylindrical queries**: O(log n + k) with altitude range pruning
-//! - **KNN queries**: O(log n + k log k) using R*-tree nearest neighbor iterator
-//!
-//! For a dataset with 10,000 points and a localized query:
-//! - Without pruning: 10,000 distance calculations
-//! - With envelope pruning: ~100-500 distance calculations (98-95% reduction)
-//!
-//! ## Geographic Coordinate Handling
-//!
-//! Envelopes are computed in degrees for latitude/longitude but account for:
-//! - Earth curvature via latitude-dependent longitude scaling
-//! - Altitude as a metric dimension (meters)
-//! - Haversine distance for final filtering
-//!
-//! ## Example
+//! # Example
 //!
 //! ```rust
 //! use spatio::Spatio;
 //! use spatio::Point3d;
 //!
 //! let mut db = Spatio::memory().unwrap();
+//! let point = Point3d::new(-74.0, 40.7, 5000.0);
+//! db.insert_point_3d("aircraft", &point, b"data", None).unwrap();
 //!
-//! // Insert aircraft positions
-//! for i in 0..10000 {
-//!     let point = Point3d::new(-74.0 + i as f64 * 0.0001, 40.0, 5000.0);
-//!     db.insert_point_3d("aircraft", &point, b"data", None).unwrap();
-//! }
-//!
-//! // Fast spherical query using envelope pruning
 //! let center = Point3d::new(-74.0, 40.0, 5000.0);
 //! let results = db.query_within_sphere_3d("aircraft", &center, 10000.0, 100).unwrap();
-//! // Only examines ~500 candidates instead of all 10,000 points
 //! ```
 
 use bytes::Bytes;
@@ -219,7 +181,7 @@ impl SpatialIndexManager {
             .filter_map(|point| {
                 let distance =
                     haversine_3d_distance(center_x, center_y, center_z, point.x, point.y, point.z);
-                if distance <= radius {
+                if distance.is_finite() && distance <= radius {
                     Some((point.key.clone(), point.data.clone(), distance))
                 } else {
                     None
@@ -227,7 +189,10 @@ impl SpatialIndexManager {
             })
             .collect();
 
-        results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.2.partial_cmp(&b.2)
+                .expect("Distance should be finite after filtering")
+        });
         results.truncate(limit);
         results
     }
@@ -263,7 +228,7 @@ impl SpatialIndexManager {
             .locate_in_envelope_intersecting(&envelope)
             .filter_map(|point| {
                 let distance = haversine_2d_distance(center_x, center_y, point.x, point.y);
-                if distance <= radius {
+                if distance.is_finite() && distance <= radius {
                     Some((
                         point.x,
                         point.y,
@@ -277,7 +242,10 @@ impl SpatialIndexManager {
             })
             .collect();
 
-        results.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.4.partial_cmp(&b.4)
+                .expect("Distance should be finite after filtering")
+        });
         results.truncate(limit);
         results
     }
@@ -441,15 +409,19 @@ impl SpatialIndexManager {
 
         tree.nearest_neighbor_iter(&query_point)
             .take(k)
-            .map(|point| {
+            .filter_map(|point| {
                 let distance = haversine_2d_distance(x, y, point.x, point.y);
-                (
-                    point.x,
-                    point.y,
-                    point.key.clone(),
-                    point.data.clone(),
-                    distance,
-                )
+                if distance.is_finite() {
+                    Some((
+                        point.x,
+                        point.y,
+                        point.key.clone(),
+                        point.data.clone(),
+                        distance,
+                    ))
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -489,6 +461,9 @@ impl SpatialIndexManager {
         tree.nearest_neighbor_iter(&query_point)
             .filter_map(|point| {
                 let distance = haversine_2d_distance(x, y, point.x, point.y);
+                if !distance.is_finite() {
+                    return None;
+                }
                 if let Some(max_dist) = max_distance
                     && distance > max_dist
                 {
@@ -624,9 +599,13 @@ impl SpatialIndexManager {
 
         tree.nearest_neighbor_iter(&query_point)
             .take(k)
-            .map(|point| {
+            .filter_map(|point| {
                 let distance = haversine_3d_distance(x, y, z, point.x, point.y, point.z);
-                (point.key.clone(), point.data.clone(), distance)
+                if distance.is_finite() {
+                    Some((point.key.clone(), point.data.clone(), distance))
+                } else {
+                    None
+                }
             })
             .collect()
     }

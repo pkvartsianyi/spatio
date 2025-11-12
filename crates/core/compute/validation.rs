@@ -1,7 +1,7 @@
 //! Validation for geographic coordinates.
 
 use crate::error::{Result, SpatioError};
-use geo::Point;
+use spatio_types::geo::Point;
 use spatio_types::point::Point3d;
 
 /// Validates a 2D point has valid longitude and latitude.
@@ -12,7 +12,7 @@ use spatio_types::point::Point3d;
 ///
 /// ```
 /// use spatio::compute::validation::validate_geographic_point;
-/// use geo::Point;
+/// use spatio_types::geo::Point;
 ///
 /// // Valid point
 /// let nyc = Point::new(-74.0060, 40.7128);
@@ -109,7 +109,7 @@ pub fn validate_geographic_point_3d(point: &Point3d) -> Result<()> {
 ///
 /// ```
 /// use spatio::compute::validation::validate_points;
-/// use geo::Point;
+/// use spatio_types::geo::Point;
 ///
 /// let points = vec![
 ///     Point::new(-74.0, 40.7),
@@ -143,21 +143,23 @@ pub fn validate_points_3d(points: &[Point3d]) -> Result<()> {
 ///
 /// ```
 /// use spatio::compute::validation::validate_polygon;
-/// use geo::{polygon, Polygon};
+/// use spatio::Polygon;
+/// use geo::polygon;
 ///
-/// let poly: Polygon = polygon![
+/// let poly = polygon![
 ///     (x: -80.0, y: 35.0),
 ///     (x: -70.0, y: 35.0),
 ///     (x: -70.0, y: 45.0),
 ///     (x: -80.0, y: 45.0),
 ///     (x: -80.0, y: 35.0),
 /// ];
+/// let poly: Polygon = poly.into();
 ///
 /// assert!(validate_polygon(&poly).is_ok());
 /// ```
-pub fn validate_polygon(polygon: &geo::Polygon) -> Result<()> {
+pub fn validate_polygon(polygon: &spatio_types::geo::Polygon) -> Result<()> {
     for (idx, coord) in polygon.exterior().coords().enumerate() {
-        let point = Point::from(*coord);
+        let point = Point::new(coord.x, coord.y);
         validate_geographic_point(&point).map_err(|e| {
             SpatioError::InvalidInput(format!("Exterior ring point at index {}: {}", idx, e))
         })?;
@@ -165,7 +167,7 @@ pub fn validate_polygon(polygon: &geo::Polygon) -> Result<()> {
 
     for (ring_idx, interior) in polygon.interiors().iter().enumerate() {
         for (idx, coord) in interior.coords().enumerate() {
-            let point = Point::from(*coord);
+            let point = Point::new(coord.x, coord.y);
             validate_geographic_point(&point).map_err(|e| {
                 SpatioError::InvalidInput(format!(
                     "Interior ring {} point at index {}: {}",
@@ -173,6 +175,115 @@ pub fn validate_polygon(polygon: &geo::Polygon) -> Result<()> {
                 ))
             })?;
         }
+    }
+
+    Ok(())
+}
+
+/// Validates a radius for spatial queries.
+///
+/// Ensures radius is positive, finite, and not exceeding Earth's circumference.
+///
+/// # Examples
+///
+/// ```
+/// use spatio::compute::validation::validate_radius;
+///
+/// assert!(validate_radius(1000.0).is_ok());
+/// assert!(validate_radius(0.0).is_err());
+/// assert!(validate_radius(-100.0).is_err());
+/// assert!(validate_radius(f64::NAN).is_err());
+/// ```
+pub fn validate_radius(radius: f64) -> Result<()> {
+    if !radius.is_finite() {
+        return Err(SpatioError::InvalidInput(format!(
+            "Radius must be finite, got: {}",
+            radius
+        )));
+    }
+    if radius <= 0.0 {
+        return Err(SpatioError::InvalidInput(format!(
+            "Radius must be positive, got: {}",
+            radius
+        )));
+    }
+    const EARTH_CIRCUMFERENCE: f64 = 40_075_000.0; // meters
+    if radius > EARTH_CIRCUMFERENCE {
+        return Err(SpatioError::InvalidInput(format!(
+            "Radius {} exceeds Earth's circumference ({} meters)",
+            radius, EARTH_CIRCUMFERENCE
+        )));
+    }
+    Ok(())
+}
+
+/// Validates a bounding box.
+///
+/// Ensures coordinates are valid and min < max for both dimensions.
+///
+/// # Examples
+///
+/// ```
+/// use spatio::compute::validation::validate_bbox;
+///
+/// assert!(validate_bbox(-10.0, -10.0, 10.0, 10.0).is_ok());
+/// assert!(validate_bbox(10.0, -10.0, -10.0, 10.0).is_err()); // min > max
+/// ```
+pub fn validate_bbox(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Result<()> {
+    // Validate all coordinates
+    let min_point = Point::new(min_lon, min_lat);
+    let max_point = Point::new(max_lon, max_lat);
+    validate_geographic_point(&min_point)?;
+    validate_geographic_point(&max_point)?;
+
+    // Ensure min < max
+    if min_lon >= max_lon {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lon ({}) must be < max_lon ({})",
+            min_lon, max_lon
+        )));
+    }
+    if min_lat >= max_lat {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lat ({}) must be < max_lat ({})",
+            min_lat, max_lat
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validates a 3D bounding box.
+pub fn validate_bbox_3d(
+    min_lon: f64,
+    min_lat: f64,
+    min_alt: f64,
+    max_lon: f64,
+    max_lat: f64,
+    max_alt: f64,
+) -> Result<()> {
+    let min_point = Point3d::new(min_lon, min_lat, min_alt);
+    let max_point = Point3d::new(max_lon, max_lat, max_alt);
+    validate_geographic_point_3d(&min_point)?;
+    validate_geographic_point_3d(&max_point)?;
+
+    if min_lon >= max_lon {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lon ({}) must be < max_lon ({})",
+            min_lon, max_lon
+        )));
+    }
+    if min_lat >= max_lat {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_lat ({}) must be < max_lat ({})",
+            min_lat, max_lat
+        )));
+    }
+    if min_alt >= max_alt {
+        return Err(SpatioError::InvalidInput(format!(
+            "min_alt ({}) must be < max_alt ({})",
+            min_alt, max_alt
+        )));
     }
 
     Ok(())
@@ -293,23 +404,60 @@ mod tests {
     #[test]
     fn test_validate_polygon() {
         use geo::polygon;
+        use spatio_types::geo::Polygon;
 
-        let valid_poly: geo::Polygon = polygon![
+        let valid_poly = polygon![
             (x: -80.0, y: 35.0),
             (x: -70.0, y: 35.0),
             (x: -70.0, y: 45.0),
             (x: -80.0, y: 45.0),
             (x: -80.0, y: 35.0),
         ];
-        assert!(validate_polygon(&valid_poly).is_ok());
+        assert!(validate_polygon(&Polygon::from(valid_poly)).is_ok());
 
-        let invalid_poly: geo::Polygon = polygon![
+        let invalid_poly = polygon![
             (x: -80.0, y: 35.0),
-            (x: 999.0, y: 35.0), // Invalid longitude
+            (x: 200.0, y: 35.0),  // Invalid longitude
             (x: -70.0, y: 45.0),
             (x: -80.0, y: 45.0),
-            (x: -80.0, y: 35.0),
         ];
-        assert!(validate_polygon(&invalid_poly).is_err());
+        assert!(validate_polygon(&Polygon::from(invalid_poly)).is_err());
+    }
+
+    #[test]
+    fn test_validate_radius() {
+        assert!(validate_radius(1000.0).is_ok());
+        assert!(validate_radius(0.1).is_ok());
+        assert!(validate_radius(1_000_000.0).is_ok());
+
+        assert!(validate_radius(0.0).is_err());
+        assert!(validate_radius(-100.0).is_err());
+        assert!(validate_radius(f64::NAN).is_err());
+        assert!(validate_radius(f64::INFINITY).is_err());
+        assert!(validate_radius(50_000_000.0).is_err()); // > Earth circumference
+    }
+
+    #[test]
+    fn test_validate_bbox() {
+        assert!(validate_bbox(-10.0, -10.0, 10.0, 10.0).is_ok());
+        assert!(validate_bbox(-180.0, -90.0, 180.0, 90.0).is_ok());
+
+        // min >= max errors
+        assert!(validate_bbox(10.0, -10.0, -10.0, 10.0).is_err());
+        assert!(validate_bbox(-10.0, 10.0, 10.0, -10.0).is_err());
+        assert!(validate_bbox(10.0, 10.0, 10.0, 10.0).is_err());
+
+        // Invalid coordinates
+        assert!(validate_bbox(-200.0, -10.0, 10.0, 10.0).is_err());
+        assert!(validate_bbox(-10.0, -100.0, 10.0, 10.0).is_err());
+    }
+
+    #[test]
+    fn test_validate_bbox_3d() {
+        assert!(validate_bbox_3d(-10.0, -10.0, 0.0, 10.0, 10.0, 1000.0).is_ok());
+
+        // Altitude validation
+        assert!(validate_bbox_3d(-10.0, -10.0, 1000.0, 10.0, 10.0, 0.0).is_err());
+        assert!(validate_bbox_3d(-10.0, -10.0, -20000.0, 10.0, 10.0, 0.0).is_err());
     }
 }

@@ -6,7 +6,7 @@ use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
-use geo::Point;
+use spatio_types::geo::{Point, Polygon};
 use std::cmp::Ordering;
 
 impl DB {
@@ -25,6 +25,14 @@ impl DB {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Key Format
+    ///
+    /// This method generates auto-incrementing keys in the format:
+    /// `prefix:lat_hex:lon_hex:z_hex:timestamp_hex:counter_hex`
+    ///
+    /// Each call creates a new entry, even for the same coordinates.
+    /// For updating existing objects by ID, use [`upsert_point`](Self::upsert_point) instead.
     pub fn insert_point(
         &mut self,
         prefix: &str,
@@ -32,22 +40,15 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let data_ref = Bytes::copy_from_slice(value);
+        // Validate geographic coordinates first
+        validate_geographic_point(point)?;
 
-        let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
-            }
-            Some(SetOptions {
-                expires_at: Some(expires_at),
-                ..
-            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
-            _ => crate::config::DbItem::new(data_ref.clone()),
-        };
+        let data_ref = Bytes::copy_from_slice(value);
+        let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
 
-        // Validate geographic coordinates
-        validate_geographic_point(point)?;
+        // Clone data only once for spatial index
+        let data_for_index = item.value.clone();
 
         DBInner::validate_timestamp(created_at)?;
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
@@ -60,7 +61,7 @@ impl DB {
             point.x(),
             point.y(),
             key.clone(),
-            data_ref.clone(),
+            data_for_index,
         );
 
         self.inner
@@ -75,6 +76,13 @@ impl DB {
     /// of moving objects without accumulating historical data.
     ///
     /// Returns the previous data if the object existed.
+    ///
+    /// # Key Format
+    ///
+    /// This method uses stable keys in the format: `prefix:object_id`
+    ///
+    /// This is intentionally different from `insert_point`'s auto-generated keys,
+    /// allowing deterministic updates to the same logical object.
     ///
     /// # Examples
     ///
@@ -101,35 +109,23 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        if self.inner.closed {
-            return Err(SpatioError::DatabaseClosed);
-        }
-
-        let data_ref = Bytes::copy_from_slice(value);
-
-        let item = match opts {
-            Some(SetOptions { ttl: Some(ttl), .. }) => {
-                crate::config::DbItem::with_ttl(data_ref.clone(), ttl)
-            }
-            Some(SetOptions {
-                expires_at: Some(expires_at),
-                ..
-            }) => crate::config::DbItem::with_expiration(data_ref.clone(), expires_at),
-            _ => crate::config::DbItem::new(data_ref.clone()),
-        };
-        let created_at = item.created_at;
-
-        // Validate geographic coordinates
+        // Validate geographic coordinates first
         validate_geographic_point(point)?;
 
-        DBInner::validate_timestamp(created_at)?;
+        let data_ref = Bytes::copy_from_slice(value);
+        let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
+        let created_at = item.created_at;
 
-        // Use deterministic key: prefix:obj:object_id
-        let key = format!("{}:obj:{}", prefix, object_id);
+        // Clone data only once for spatial index
+        let data_for_index = item.value.clone();
+
+        let key = format!("{}:{}", prefix, object_id);
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
 
         // Remove old spatial index entry if exists
-        if self.inner.keys.contains_key(&key_bytes) {
+        if let Some(old_item) = self.inner.keys.get(&key_bytes)
+            && !old_item.is_expired()
+        {
             let _ = self.inner.spatial_index.remove_entry(prefix, &key);
         }
 
@@ -142,7 +138,7 @@ impl DB {
             point.x(),
             point.y(),
             key.clone(),
-            data_ref.clone(),
+            data_for_index,
         );
 
         self.inner
@@ -184,6 +180,9 @@ impl DB {
         radius_meters: f64,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         let results = self.inner.spatial_index.query_within_radius_2d(
             prefix,
             center.x(),
@@ -215,6 +214,9 @@ impl DB {
     /// # }
     /// ```
     pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         Ok(self.inner.spatial_index.contains_point_2d(
             prefix,
             center.x(),
@@ -244,6 +246,8 @@ impl DB {
         max_lat: f64,
         max_lon: f64,
     ) -> Result<bool> {
+        crate::compute::validation::validate_bbox(min_lon, min_lat, max_lon, max_lat)?;
+
         let results = self
             .inner
             .spatial_index
@@ -271,6 +275,9 @@ impl DB {
         center: &Point,
         radius_meters: f64,
     ) -> Result<usize> {
+        validate_geographic_point(center)?;
+        crate::compute::validation::validate_radius(radius_meters)?;
+
         Ok(self.inner.spatial_index.count_within_radius_2d(
             prefix,
             center.x(),
@@ -428,18 +435,19 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point};
-    /// use geo::{polygon, Polygon};
+    /// use spatio::{Spatio, Point, Polygon};
+    /// use geo::polygon;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     ///
-    /// let poly: Polygon = polygon![
+    /// let poly = polygon![
     ///     (x: -74.0, y: 40.7),
     ///     (x: -73.9, y: 40.7),
     ///     (x: -73.9, y: 40.8),
     ///     (x: -74.0, y: 40.8),
     /// ];
+    /// let poly: Polygon = poly.into();
     ///
     /// let results = db.query_within_polygon("cities", &poly, 100)?;
     /// println!("Found {} cities in polygon", results.len());
@@ -449,7 +457,7 @@ impl DB {
     pub fn query_within_polygon(
         &self,
         prefix: &str,
-        polygon: &geo::Polygon,
+        polygon: &Polygon,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         use geo::BoundingRect;
@@ -458,6 +466,7 @@ impl DB {
         crate::compute::validation::validate_polygon(polygon)?;
 
         let bbox = polygon
+            .inner()
             .bounding_rect()
             .ok_or_else(|| SpatioError::InvalidInput("Polygon has no bounding box".to_string()))?;
 

@@ -94,13 +94,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Define a polygon covering parts of the eastern US
     use geo::polygon;
-    let east_coast_polygon: Polygon = polygon![
+    let east_coast_polygon = polygon![
         (x: -80.0, y: 35.0),  // South
         (x: -70.0, y: 35.0),  // Southeast
         (x: -70.0, y: 45.0),  // Northeast
         (x: -80.0, y: 45.0),  // Northwest
         (x: -80.0, y: 35.0),  // Close the polygon
     ];
+    let east_coast_polygon: Polygon = east_coast_polygon.into();
 
     let cities_in_polygon = db.query_within_polygon("world_cities", &east_coast_polygon, 100)?;
 
