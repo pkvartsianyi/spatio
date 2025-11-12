@@ -583,7 +583,7 @@ impl DB {
         bbox: &BoundingBox2D,
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        let serialized = bincode::serialize(bbox)
+        let serialized = bincode::serde::encode_to_vec(bbox, bincode::config::standard())
             .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
         self.insert(key, serialized, opts)?;
         Ok(())
@@ -617,8 +617,9 @@ impl DB {
     pub fn get_bbox(&self, key: impl AsRef<[u8]>) -> Result<Option<BoundingBox2D>> {
         match self.get(key)? {
             Some(data) => {
-                let bbox = bincode::deserialize(&data)
-                    .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
+                let (bbox, _): (BoundingBox2D, usize) =
+                    bincode::serde::decode_from_slice(&data, bincode::config::standard())
+                        .map_err(|e| SpatioError::SerializationErrorWithContext(e.to_string()))?;
                 Ok(Some(bbox))
             }
             None => Ok(None),
@@ -670,8 +671,10 @@ impl DB {
                 continue;
             }
 
-            if let Ok(stored_bbox) = bincode::deserialize::<BoundingBox2D>(&item.value)
-                && stored_bbox.intersects(bbox)
+            if let Ok((stored_bbox, _)) = bincode::serde::decode_from_slice::<BoundingBox2D, _>(
+                &item.value,
+                bincode::config::standard(),
+            ) && stored_bbox.intersects(bbox)
             {
                 let key_str = String::from_utf8_lossy(key).to_string();
                 results.push((key_str, stored_bbox));

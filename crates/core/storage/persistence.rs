@@ -1,4 +1,4 @@
-//! Append-only persistence layer for Spatio (feature `aof`).
+//! Persistence interfaces and AOF (Append-Only File) implementation for Spatio (feature `aof`).
 //!
 //! Provides simplified AOF file management, rewrite logic, and command
 //! serialization used when durability is enabled.
@@ -67,6 +67,36 @@ pub enum AOFCommand {
     Delete {
         key: Bytes,
     },
+}
+
+/// Interface for pluggable persistence logs.
+///
+/// Implementors can provide custom persistence backends (e.g., AOF, snapshotting logs,
+/// databases) by implementing this trait. The default in-repo implementation is AOFFile.
+pub trait PersistenceLog: Send {
+    /// Append a Set record to the log.
+    fn write_set(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+        options: Option<&SetOptions>,
+        created_at: SystemTime,
+    ) -> Result<()>;
+
+    /// Append a Delete record to the log.
+    fn write_delete(&mut self, key: &[u8]) -> Result<()>;
+
+    /// Replay the log into a sequence of commands.
+    fn replay(&mut self) -> Result<Vec<AOFCommand>>;
+
+    /// Flush buffered data to the underlying medium.
+    fn flush(&mut self) -> Result<()>;
+
+    /// Sync with a specific durability mode.
+    fn sync_with_mode(&mut self, mode: SyncMode) -> Result<()>;
+
+    /// Convenience: sync with default policy.
+    fn sync(&mut self) -> Result<()>;
 }
 
 impl AOFFile {
@@ -521,6 +551,38 @@ impl AOFFile {
     /// Get the file path
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl PersistenceLog for AOFFile {
+    fn write_set(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+        options: Option<&SetOptions>,
+        created_at: SystemTime,
+    ) -> Result<()> {
+        AOFFile::write_set(self, key, value, options, created_at)
+    }
+
+    fn write_delete(&mut self, key: &[u8]) -> Result<()> {
+        AOFFile::write_delete(self, key)
+    }
+
+    fn replay(&mut self) -> Result<Vec<AOFCommand>> {
+        AOFFile::replay(self)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        AOFFile::flush(self)
+    }
+
+    fn sync_with_mode(&mut self, mode: SyncMode) -> Result<()> {
+        AOFFile::sync_with_mode(self, mode)
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        AOFFile::sync(self)
     }
 }
 

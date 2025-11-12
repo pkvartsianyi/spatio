@@ -70,9 +70,8 @@ pub use compute::geojson;
 pub use compute::validation;
 
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
-
-#[cfg(feature = "aof")]
-pub use storage::{AOFConfig, AOFFile};
+// Re-export persistence interface (not concrete types)
+pub use storage::{AOFCommand, PersistenceLog};
 
 #[cfg(feature = "snapshot")]
 pub use storage::{SnapshotConfig, SnapshotFile};

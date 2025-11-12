@@ -3,7 +3,7 @@
 use super::MemoryBackend;
 use crate::config::{DbItem, SetOptions};
 use crate::error::Result;
-use crate::storage::persistence::AOFCommand;
+use crate::storage::persistence::{AOFCommand, AOFFile};
 use crate::storage::{StorageBackend, StorageOp, StorageStats};
 use bytes::Bytes;
 use std::collections::BTreeMap;
@@ -12,13 +12,13 @@ use std::time::SystemTime;
 /// Persistent storage backend using AOF (Append-Only File)
 pub struct AOFBackend {
     memory: MemoryBackend,
-    aof_writer: crate::storage::AOFFile,
+    aof_writer: AOFFile,
 }
 
 impl AOFBackend {
     /// Create a new AOF storage backend
     pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let aof_writer = crate::storage::AOFFile::open(path)?;
+        let aof_writer = AOFFile::open(path)?;
         let memory = MemoryBackend::new();
 
         Ok(Self { memory, aof_writer })

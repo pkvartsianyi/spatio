@@ -125,12 +125,14 @@ impl DB {
                     .as_secs(),
                 i
             );
-            let point_data = bincode::serialize(&temporal_point).map_err(|e| {
-                SpatioError::SerializationErrorWithContext(format!(
-                    "Failed to serialize trajectory point for object '{}': {}",
-                    object_id, e
-                ))
-            })?;
+            let point_data =
+                bincode::serde::encode_to_vec(temporal_point, bincode::config::standard())
+                    .map_err(|e| {
+                        SpatioError::SerializationErrorWithContext(format!(
+                            "Failed to serialize trajectory point for object '{}': {}",
+                            object_id, e
+                        ))
+                    })?;
 
             self.insert(&key, &point_data, opts.clone())?;
         }
@@ -197,8 +199,11 @@ impl DB {
                 continue;
             }
 
-            match bincode::deserialize::<TemporalPoint>(&item.value) {
-                Ok(temporal_point) => results.push(temporal_point),
+            match bincode::serde::decode_from_slice::<TemporalPoint, _>(
+                &item.value,
+                bincode::config::standard(),
+            ) {
+                Ok((temporal_point, _)) => results.push(temporal_point),
                 Err(e) => {
                     log::warn!(
                         "Failed to deserialize trajectory point for object '{}': {}. Skipping corrupted point.",

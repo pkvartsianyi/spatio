@@ -7,11 +7,13 @@ use crate::config::Config;
 use crate::db::{DB, DBInner};
 use crate::error::Result;
 #[cfg(feature = "aof")]
-use crate::storage::AOFFile;
+use crate::storage::PersistenceLog;
 #[cfg(feature = "snapshot")]
 use crate::storage::SnapshotConfig;
 #[cfg(feature = "snapshot")]
 use crate::storage::SnapshotFile;
+#[cfg(feature = "aof")]
+use crate::storage::persistence::AOFFile;
 use std::path::PathBuf;
 
 /// Builder for database configuration with custom persistence paths and settings.
@@ -89,7 +91,9 @@ impl DBBuilder {
             if let Some(aof_path) = self.aof_path {
                 let mut aof_file = AOFFile::open(&aof_path)?;
                 inner.load_from_aof(&mut aof_file)?;
-                inner.aof_file = Some(aof_file);
+                inner.aof_file = Some(parking_lot::Mutex::new(
+                    Box::new(aof_file) as Box<dyn PersistenceLog>
+                ));
             }
 
             #[cfg(feature = "snapshot")]

@@ -10,16 +10,14 @@ use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 pub mod backends;
-#[cfg(feature = "aof")]
-mod persistence;
+/// Persistence interface to allow pluggable backends
+pub mod persistence;
 #[cfg(feature = "snapshot")]
 mod snapshot;
 
-#[cfg(feature = "aof")]
-pub use backends::AOFBackend;
 pub use backends::MemoryBackend;
-#[cfg(feature = "aof")]
-pub use persistence::{AOFCommand, AOFConfig, AOFFile};
+// Re-export persistence interface and default AOF types
+pub use persistence::{AOFCommand, PersistenceLog};
 #[cfg(feature = "snapshot")]
 pub use snapshot::{SnapshotConfig, SnapshotFile};
 
