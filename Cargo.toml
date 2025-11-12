@@ -1,81 +1,50 @@
-[package]
-name = "spatio"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/types",
+    "crates/py",
+]
+
+[workspace.package]
 version = "0.1.7"
 edition = "2024"
 rust-version = "1.90.0"
-description = "A high-performance, embedded spatio-temporal database for modern applications"
 license = "MIT"
 repository = "https://github.com/pkvartsianyi/spatio"
-homepage = "https://github.com/pkvartsianyi/spatio"
-documentation = "https://docs.rs/spatio"
-keywords = ["spatial", "database", "geospatial", "embedded", "temporal"]
-categories = ["database-implementations", "science::geo"]
+authors = ["Petro Kvartsianyi"]
 
-[lib]
-name = "spatio"
-crate-type = ["rlib", "cdylib"]
-
-[dependencies]
-bincode = { version = "1.3", optional = true }
-bytes = "1.5"
+[workspace.dependencies]
+# Spatial and geometric types
 geo = "0.31.0"
+rstar = "0.11.0"
+s2 = "0.0.13"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+geojson = "0.24.1"
+geozero = { version = "0.14.0", features = ["with-geojson", "with-geo"] }
+
+# Utilities
+bytes = "1.5"
 log = "0.4"
 once_cell = "1.19"
 parking_lot = "0.12.5"
-rstar = "0.11.0"
 rustc-hash = "1.1"
-s2 = "0.0.13"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0" }
-geojson = "0.24.1"
-geozero = { version = "0.14.0", features = ["with-geojson", "with-geo"], optional = true }
 smallvec = "1.11"
 thiserror = "1.0"
-toml = { version = "0.8", optional = true }
+toml = "0.8"
 uuid = { version = "1.0", features = ["v4"] }
-spatio-types = { version = "0.1.0", path = "./spatio-types" }
 
-[features]
-default = ["snapshot", "geojson", "time-index"]
-geojson = ["dep:geozero", "geozero/with-geojson"]
-aof = ["dep:bincode"]
-snapshot = ["dep:bincode"]
-toml = ["dep:toml"]
-time-index = []
-bench-prof = []
-sync = []
-full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync"]
+# Python bindings
+pyo3 = { version = "0.24.1", features = ["extension-module"] }
 
-[dev-dependencies]
+# Dev dependencies
 criterion = "0.5"
 env_logger = "0.11"
 tempfile = "3.8"
-
-[[bench]]
-name = "spatial_benchmarks"
-harness = false
-
-[[example]]
-name = "getting_started"
-doc-scrape-examples = true
-
-[[example]]
-name = "spatial_queries"
-
-[[example]]
-name = "trajectory_tracking"
-
-[[example]]
-name = "comprehensive_demo"
-
-
-[[example]]
-name = "persistence_lifecycle"
-required-features = ["aof"]
-
-[[test]]
-name = "aof_rewrite_test"
-required-features = ["aof"]
 
 [profile.release]
 lto = "thin"
@@ -83,3 +52,7 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"
 strip = "symbols"
+
+[profile.dev]
+debug = true
+opt-level = 0

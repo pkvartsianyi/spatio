@@ -1,11 +1,11 @@
 [package]
 name = "spatio-py"
-version = "0.1.7"
-edition = "2024"
-rust-version = "1.90.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Python bindings for Spatio - A high-performance, embedded spatio-temporal database"
-license = "MIT"
-repository = "https://github.com/pkvartsianyi/spatio"
 keywords = ["spatial", "database", "geospatial", "python", "bindings"]
 categories = ["database-implementations", "science::geo", "api-bindings"]
 
@@ -15,24 +15,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Core Spatio dependency
-spatio = { path = "..", features = ["sync"] }
+spatio = { path = "../core", features = ["sync"] }
 
 # Python bindings
-pyo3 = { version = "0.24.1", features = ["extension-module"] }
+pyo3.workspace = true
 
 # Geo types and algorithms
-geo = "0.31.0"
+geo.workspace = true
 
 [features]
 default = []
-
-# Build settings for different profiles
-[profile.release]
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = "symbols"
-
-[profile.dev]
-debug = true
-opt-level = 0

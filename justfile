@@ -5,14 +5,14 @@ default:
 # =============
 
 build:
-    cargo build --release
+    cargo build -p spatio -p spatio-types --release
 
 test:
-    cargo test --all
+    cargo test -p spatio -p spatio-types --all-features
 
 lint:
-    cargo fmt
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo fmt --all
+    cargo clippy -p spatio -p spatio-types --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -26,58 +26,58 @@ clean:
     cargo clean
 
 doc:
-    cargo doc --no-deps --open
+    cargo doc -p spatio -p spatio-types --no-deps --all-features --open
 
 # Python commands (delegate to py-spatio)
 # ======================================
 
 py-setup:
-    cd py-spatio && just setup
+    cd crates/py && just setup
 
 py-build:
-    cd py-spatio && just build
+    cd crates/py && just build
 
 py-build-release:
-    cd py-spatio && just build-release
+    cd crates/py && just build-release
 
 py-test:
-    cd py-spatio && just test
+    cd crates/py && just test
 
 py-coverage:
-    cd py-spatio && just coverage
+    cd crates/py && just coverage
 
 py-fmt:
-    cd py-spatio && just fmt
+    cd crates/py && just fmt
 
 py-lint:
-    cd py-spatio && just lint
+    cd crates/py && just lint
 
 py-typecheck:
-    cd py-spatio && just typecheck
+    cd crates/py && just typecheck
 
 py-examples:
-    cd py-spatio && just examples
+    cd crates/py && just examples
 
 py-example name:
-    cd py-spatio && just example {{name}}
+    cd crates/py && just example {{name}}
 
 py-wheel:
-    cd py-spatio && just wheel
+    cd crates/py && just wheel
 
 py-clean:
-    cd py-spatio && just clean
+    cd crates/py && just clean
 
 py-bench:
-    cd py-spatio && just bench
+    cd crates/py && just bench
 
 py-version:
-    cd py-spatio && just version
+    cd crates/py && just version
 
 py-dev-setup:
-    cd py-spatio && just dev-setup
+    cd crates/py && just dev-setup
 
 py-ci:
-    cd py-spatio && just ci
+    cd crates/py && just ci
 
 # Version management
 # ==================
@@ -120,22 +120,22 @@ bump-python-no-commit VERSION:
 
 security-audit:
     cargo audit
-    cd py-spatio && bandit -r src/ && safety check
+    cd crates/py && bandit -r src/ && safety check
 
 benchmarks:
-    cargo bench
-    cd py-spatio && just bench
+    cargo bench -p spatio
+    cd crates/py && just bench
 
 coverage:
-    cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out html
-    cd py-spatio && just coverage
+    cargo tarpaulin --verbose --all-features -p spatio -p spatio-types --timeout 120 --out html
+    cd crates/py && just coverage
 
 test-examples:
-    cargo run --example getting_started
-    cargo run --example spatial_queries
-    cargo run --example trajectory_tracking
-    cargo run --example comprehensive_demo
-    cd py-spatio && just examples
+    cargo run -p spatio --example getting_started
+    cargo run -p spatio --example spatial_queries
+    cargo run -p spatio --example trajectory_tracking
+    cargo run -p spatio --example comprehensive_demo
+    cd crates/py && just examples
 
 # Combined commands
 # ================

@@ -1,11 +1,10 @@
 # Rust build artifacts
 /target/
-py-spatio/target/
-py-spatio/publish_env
-spatio-types/target/
-# Cargo.lock is excluded for the main library crate
-# but included for the Python bindings (application-like)
+crates/*/target/
+
+# Cargo.lock is excluded for library crates but included for binaries
 /Cargo.lock
+crates/types/Cargo.lock
 
 # Database files
 *.aof
@@ -22,6 +21,7 @@ my_*.db
 # Temporary files
 *.tmp
 *.temp
+*.backup
 
 # OS generated files
 .DS_Store
@@ -78,6 +78,10 @@ env/
 ENV/
 .env/
 .python-version
+crates/py/.venv/
+crates/py/venv/
+crates/py/publish_env/
+crates/py/test_venv/
 
 # Python artifacts
 __pycache__/
@@ -101,6 +105,11 @@ coverage.xml
 htmlcov/
 .tox/
 .nox/
+crates/py/.pytest_cache/
+crates/py/.mypy_cache/
+crates/py/.ruff_cache/
+crates/py/.qodo/
+crates/py/.benchmarks/
 
 # Python tools
 .mypy_cache/
@@ -117,6 +126,7 @@ pip-delete-this-directory.txt
 
 # maturin build artifacts
 target/wheels/
+crates/py/dist/
 
 # Development and debugging
 profile.svg
@@ -127,3 +137,9 @@ flamegraph.svg
 .local/
 local_config.toml
 settings.json
+
+# UV lock files (keep uv.lock in git)
+# uv.lock files are tracked for reproducible builds
+
+# Temporary CI check files
+/tmp/clippy-*.log
