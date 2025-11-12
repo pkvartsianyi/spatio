@@ -2,9 +2,16 @@
 
 All notable changes since the last release are documented below.
 
-## [0.1.7] - 2025-11-05
+## [0.1.8] - 2025-11-12
+
+### Added
+- workspace (#56)
 
 ### Changed
-- readmes
-- preparations for spatio 0.2 (#55)
+- use workspace dependency for spatio-types
+
+### Fixed
+- handle prerelease versions and abort on cargo update failures
+- auto-release
+- readme
 
