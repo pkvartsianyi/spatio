@@ -2,9 +2,10 @@
 
 use crate::error::{Result, SpatioError};
 use geo::{
-    BoundingRect, ChamberlainDuquetteArea, Contains, ConvexHull, Distance, Euclidean, Geodesic,
-    GeodesicArea, Haversine, Intersects, Point, Polygon, Rect, Rhumb,
+    BoundingRect, ChamberlainDuquetteArea, Contains, ConvexHull, Distance, GeodesicArea,
+    Intersects, Rect, Rhumb,
 };
+use spatio_types::geo::{Point, Polygon};
 
 /// Distance metric for spatial calculations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -19,10 +20,10 @@ pub enum DistanceMetric {
 /// Distance between two points in meters.
 pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) -> f64 {
     match metric {
-        DistanceMetric::Haversine => Haversine.distance(*point1, *point2),
-        DistanceMetric::Geodesic => Geodesic.distance(*point1, *point2),
-        DistanceMetric::Rhumb => Rhumb.distance(*point1, *point2),
-        DistanceMetric::Euclidean => Euclidean.distance(*point1, *point2),
+        DistanceMetric::Haversine => point1.haversine_distance(point2),
+        DistanceMetric::Geodesic => point1.geodesic_distance(point2),
+        DistanceMetric::Rhumb => Rhumb.distance(*point1.inner(), *point2.inner()),
+        DistanceMetric::Euclidean => point1.euclidean_distance(point2),
     }
 }
 
@@ -70,23 +71,24 @@ pub fn point_in_polygon(polygon: &Polygon, point: &Point) -> bool {
 }
 
 pub fn point_in_bbox(bbox: &Rect, point: &Point) -> bool {
-    bbox.contains(point)
+    bbox.contains(point.inner())
 }
 
 pub fn polygon_area(polygon: &Polygon) -> f64 {
-    polygon.chamberlain_duquette_unsigned_area()
+    polygon.inner().chamberlain_duquette_unsigned_area()
 }
 
 pub fn geodesic_polygon_area(polygon: &Polygon) -> f64 {
-    polygon.geodesic_area_unsigned()
+    polygon.inner().geodesic_area_unsigned()
 }
 
 pub fn convex_hull(points: &[Point]) -> Option<Polygon> {
     if points.is_empty() {
         return None;
     }
-    let multi_point = geo::MultiPoint::new(points.to_vec());
-    Some(multi_point.convex_hull())
+    let geo_points: Vec<geo::Point> = points.iter().map(|p| (*p).into()).collect();
+    let multi_point = geo::MultiPoint::new(geo_points);
+    Some(multi_point.convex_hull().into())
 }
 
 pub fn bounding_rect_for_points(points: &[Point]) -> Option<Rect> {
@@ -94,7 +96,8 @@ pub fn bounding_rect_for_points(points: &[Point]) -> Option<Rect> {
         return None;
     }
 
-    let multi_point = geo::MultiPoint::new(points.to_vec());
+    let geo_points: Vec<geo::Point> = points.iter().map(|p| (*p).into()).collect();
+    let multi_point = geo::MultiPoint::new(geo_points);
     multi_point.bounding_rect()
 }
 

@@ -1,7 +1,7 @@
 //! Validation for geographic coordinates.
 
 use crate::error::{Result, SpatioError};
-use geo::Point;
+use spatio_types::geo::Point;
 use spatio_types::point::Point3d;
 
 /// Validates a 2D point has valid longitude and latitude.
@@ -12,7 +12,7 @@ use spatio_types::point::Point3d;
 ///
 /// ```
 /// use spatio::compute::validation::validate_geographic_point;
-/// use geo::Point;
+/// use spatio_types::geo::Point;
 ///
 /// // Valid point
 /// let nyc = Point::new(-74.0060, 40.7128);
@@ -109,7 +109,7 @@ pub fn validate_geographic_point_3d(point: &Point3d) -> Result<()> {
 ///
 /// ```
 /// use spatio::compute::validation::validate_points;
-/// use geo::Point;
+/// use spatio_types::geo::Point;
 ///
 /// let points = vec![
 ///     Point::new(-74.0, 40.7),
@@ -143,21 +143,23 @@ pub fn validate_points_3d(points: &[Point3d]) -> Result<()> {
 ///
 /// ```
 /// use spatio::compute::validation::validate_polygon;
-/// use geo::{polygon, Polygon};
+/// use spatio::Polygon;
+/// use geo::polygon;
 ///
-/// let poly: Polygon = polygon![
+/// let poly = polygon![
 ///     (x: -80.0, y: 35.0),
 ///     (x: -70.0, y: 35.0),
 ///     (x: -70.0, y: 45.0),
 ///     (x: -80.0, y: 45.0),
 ///     (x: -80.0, y: 35.0),
 /// ];
+/// let poly: Polygon = poly.into();
 ///
 /// assert!(validate_polygon(&poly).is_ok());
 /// ```
-pub fn validate_polygon(polygon: &geo::Polygon) -> Result<()> {
+pub fn validate_polygon(polygon: &spatio_types::geo::Polygon) -> Result<()> {
     for (idx, coord) in polygon.exterior().coords().enumerate() {
-        let point = Point::from(*coord);
+        let point = Point::new(coord.x, coord.y);
         validate_geographic_point(&point).map_err(|e| {
             SpatioError::InvalidInput(format!("Exterior ring point at index {}: {}", idx, e))
         })?;
@@ -165,7 +167,7 @@ pub fn validate_polygon(polygon: &geo::Polygon) -> Result<()> {
 
     for (ring_idx, interior) in polygon.interiors().iter().enumerate() {
         for (idx, coord) in interior.coords().enumerate() {
-            let point = Point::from(*coord);
+            let point = Point::new(coord.x, coord.y);
             validate_geographic_point(&point).map_err(|e| {
                 SpatioError::InvalidInput(format!(
                     "Interior ring {} point at index {}: {}",
@@ -293,23 +295,23 @@ mod tests {
     #[test]
     fn test_validate_polygon() {
         use geo::polygon;
+        use spatio_types::geo::Polygon;
 
-        let valid_poly: geo::Polygon = polygon![
+        let valid_poly = polygon![
             (x: -80.0, y: 35.0),
             (x: -70.0, y: 35.0),
             (x: -70.0, y: 45.0),
             (x: -80.0, y: 45.0),
             (x: -80.0, y: 35.0),
         ];
-        assert!(validate_polygon(&valid_poly).is_ok());
+        assert!(validate_polygon(&Polygon::from(valid_poly)).is_ok());
 
-        let invalid_poly: geo::Polygon = polygon![
+        let invalid_poly = polygon![
             (x: -80.0, y: 35.0),
-            (x: 999.0, y: 35.0), // Invalid longitude
+            (x: 200.0, y: 35.0),  // Invalid longitude
             (x: -70.0, y: 45.0),
             (x: -80.0, y: 45.0),
-            (x: -80.0, y: 35.0),
         ];
-        assert!(validate_polygon(&invalid_poly).is_err());
+        assert!(validate_polygon(&Polygon::from(invalid_poly)).is_err());
     }
 }

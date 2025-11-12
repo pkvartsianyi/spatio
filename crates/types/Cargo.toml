@@ -8,7 +8,16 @@ repository.workspace = true
 description = "Core spatial and temporal data types for the Spatio database"
 keywords = ["spatial", "temporal", "geospatial", "types"]
 categories = ["data-structures", "science::geo"]
+readme = "README.md"
 
 [dependencies]
 geo = { workspace = true, features = ["use-serde"] }
 serde.workspace = true
+
+# Optional dependencies
+geojson = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = []
+geojson = ["dep:geojson", "dep:serde_json"]

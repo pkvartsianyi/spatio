@@ -50,7 +50,8 @@ pub use db::SyncDB;
 
 pub type Spatio = DB;
 
-pub use geo::{Point, Polygon, Rect};
+pub use geo::Rect;
+pub use spatio_types::geo::{Point, Polygon};
 
 pub use config::{
     BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,

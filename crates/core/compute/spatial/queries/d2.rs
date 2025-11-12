@@ -6,7 +6,7 @@ use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
-use geo::Point;
+use spatio_types::geo::{Point, Polygon};
 use std::cmp::Ordering;
 
 impl DB {
@@ -428,18 +428,19 @@ impl DB {
     /// # Examples
     ///
     /// ```rust
-    /// use spatio::{Spatio, Point};
-    /// use geo::{polygon, Polygon};
+    /// use spatio::{Spatio, Point, Polygon};
+    /// use geo::polygon;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     ///
-    /// let poly: Polygon = polygon![
+    /// let poly = polygon![
     ///     (x: -74.0, y: 40.7),
     ///     (x: -73.9, y: 40.7),
     ///     (x: -73.9, y: 40.8),
     ///     (x: -74.0, y: 40.8),
     /// ];
+    /// let poly: Polygon = poly.into();
     ///
     /// let results = db.query_within_polygon("cities", &poly, 100)?;
     /// println!("Found {} cities in polygon", results.len());
@@ -449,7 +450,7 @@ impl DB {
     pub fn query_within_polygon(
         &self,
         prefix: &str,
-        polygon: &geo::Polygon,
+        polygon: &Polygon,
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         use geo::BoundingRect;
@@ -458,6 +459,7 @@ impl DB {
         crate::compute::validation::validate_polygon(polygon)?;
 
         let bbox = polygon
+            .inner()
             .bounding_rect()
             .ok_or_else(|| SpatioError::InvalidInput("Polygon has no bounding box".to_string()))?;
 
