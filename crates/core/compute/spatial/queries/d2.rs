@@ -1,6 +1,7 @@
 //! 2D spatial operations for geographic queries.
 
 use crate::compute::spatial::{DistanceMetric, distance_between, point_in_polygon};
+use crate::compute::validation::validate_geographic_point;
 use crate::config::{BoundingBox2D, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::{Result, SpatioError};
@@ -10,16 +11,6 @@ use std::cmp::Ordering;
 
 impl DB {
     /// Insert a geographic point with automatic spatial indexing.
-    ///
-    /// Points are automatically indexed for spatial queries. The system
-    /// chooses the optimal indexing strategy based on data patterns.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace for the point (e.g., "cities", "sensors")
-    /// * `point` - Geographic coordinates
-    /// * `data` - Associated data to store with the point
-    /// * `opts` - Optional settings like TTL
     ///
     /// # Examples
     ///
@@ -55,6 +46,9 @@ impl DB {
         };
         let created_at = item.created_at;
 
+        // Validate geographic coordinates
+        validate_geographic_point(point)?;
+
         DBInner::validate_timestamp(created_at)?;
         let key = DBInner::generate_spatial_key(prefix, point.x(), point.y(), 0.0, created_at)?;
         let key_bytes = Bytes::copy_from_slice(key.as_bytes());
@@ -74,38 +68,13 @@ impl DB {
         Ok(())
     }
 
-    /// Insert or update a geographic point with automatic spatial indexing.
+    /// Insert or update a geographic point using a stable object ID.
     ///
-    /// Unlike `insert_point` which creates a new entry each time, `upsert_point`
-    /// uses a deterministic key based on the object_id, allowing updates to
-    /// replace previous positions. This is ideal for real-time tracking where
-    /// you only need the current position of each object.
+    /// Unlike `insert_point`, this uses a deterministic key based on `object_id`,
+    /// so updates replace previous positions. Ideal for tracking current state
+    /// of moving objects without accumulating historical data.
     ///
-    /// # Use Cases
-    ///
-    /// - Real-time vehicle/drone tracking (current position only)
-    /// - IoT sensor networks (latest reading)
-    /// - User location services (where is user now)
-    ///
-    /// # Memory Impact
-    ///
-    /// With `upsert_point`, each object_id has exactly ONE entry in memory:
-    /// - 10,000 drones = 10,000 points = ~4 MB
-    ///
-    /// With `insert_point`, each update creates a NEW entry:
-    /// - 10,000 drones × 100 updates = 1,000,000 points = ~400 MB
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace for the point (e.g., "drones", "vehicles")
-    /// * `object_id` - Stable identifier for the tracked object
-    /// * `point` - Current geographic coordinates
-    /// * `value` - Associated data to store
-    /// * `opts` - Optional settings like TTL
-    ///
-    /// # Returns
-    ///
-    /// Returns the previous position data if the object existed, None otherwise.
+    /// Returns the previous data if the object existed.
     ///
     /// # Examples
     ///
@@ -115,26 +84,15 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     ///
-    /// // Update drone position (replaces old position)
-    /// let drone_pos = Point::new(-74.0060, 40.7128);
-    /// db.upsert_point("drones", "drone_123", &drone_pos, b"active", None)?;
+    /// let pos = Point::new(-74.0060, 40.7128);
+    /// db.upsert_point("drones", "drone_123", &pos, b"active", None)?;
     ///
-    /// // Later update - overwrites previous position
     /// let new_pos = Point::new(-74.0070, 40.7138);
-    /// let old_data = db.upsert_point("drones", "drone_123", &new_pos, b"active", None)?;
-    /// assert!(old_data.is_some()); // Returns previous data
-    ///
-    /// // Query still works with current positions
-    /// let nearby = db.query_within_radius("drones", &drone_pos, 1000.0, 10)?;
+    /// let old = db.upsert_point("drones", "drone_123", &new_pos, b"active", None)?;
+    /// assert!(old.is_some());
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// # Performance
-    ///
-    /// - First insert: Same as insert_point
-    /// - Updates: Removes old spatial entry, inserts new one
-    /// - Spatial queries: Same performance as insert_point
     pub fn upsert_point(
         &mut self,
         prefix: &str,
@@ -160,6 +118,9 @@ impl DB {
             _ => crate::config::DbItem::new(data_ref.clone()),
         };
         let created_at = item.created_at;
+
+        // Validate geographic coordinates
+        validate_geographic_point(point)?;
 
         DBInner::validate_timestamp(created_at)?;
 
@@ -239,16 +200,7 @@ impl DB {
         Ok(points)
     }
 
-    /// Check if there are any points within a circular region.
-    ///
-    /// This method checks if any points exist within the specified distance
-    /// from a center point in the given namespace.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `center` - Center point of the circular region
-    /// * `radius_meters` - Radius in meters
+    /// Check if any points exist within a circular radius.
     ///
     /// # Examples
     ///
@@ -258,8 +210,6 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
-    ///
-    /// // Check if there are any cities within 50km
     /// let has_nearby = db.contains_point("cities", &center, 50_000.0)?;
     /// # Ok(())
     /// # }
@@ -273,18 +223,7 @@ impl DB {
         ))
     }
 
-    /// Check if there are any points within a bounding box.
-    ///
-    /// This method checks if any points exist within the specified
-    /// rectangular region in the given namespace.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `min_lat` - Minimum latitude of bounding box
-    /// * `min_lon` - Minimum longitude of bounding box
-    /// * `max_lat` - Maximum latitude of bounding box
-    /// * `max_lon` - Maximum longitude of bounding box
+    /// Check if any points exist within a bounding box.
     ///
     /// # Examples
     ///
@@ -293,8 +232,6 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
-    ///
-    /// // Check if there are any points in Manhattan area
     /// let has_points = db.intersects_bounds("sensors", 40.7, -74.1, 40.8, -73.9)?;
     /// # Ok(())
     /// # }
@@ -314,17 +251,7 @@ impl DB {
         Ok(!results.is_empty())
     }
 
-    /// Count points within a distance from a center point.
-    ///
-    /// This method counts how many points exist within the specified
-    /// distance from a center point without returning the actual points.
-    /// More efficient than `query_within_radius` when you only need the count.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `center` - Center point for the search
-    /// * `radius_meters` - Search radius in meters
+    /// Count points within a circular radius.
     ///
     /// # Examples
     ///
@@ -334,10 +261,7 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
-    ///
-    /// // Count how many sensors are within 1km
     /// let count = db.count_within_radius("sensors", &center, 1000.0)?;
-    /// println!("Found {} sensors within 1km", count);
     /// # Ok(())
     /// # }
     /// ```
@@ -357,18 +281,6 @@ impl DB {
 
     /// Find all points within a bounding box.
     ///
-    /// This method returns all points that fall within the specified
-    /// rectangular region, up to the specified limit.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `min_lat` - Minimum latitude of bounding box
-    /// * `min_lon` - Minimum longitude of bounding box
-    /// * `max_lat` - Maximum latitude of bounding box
-    /// * `max_lon` - Maximum longitude of bounding box
-    /// * `limit` - Maximum number of results to return
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -376,10 +288,7 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
-    ///
-    /// // Find all sensors in Manhattan area
     /// let points = db.find_within_bounds("sensors", 40.7, -74.1, 40.8, -73.9, 100)?;
-    /// println!("Found {} sensors in Manhattan", points.len());
     /// # Ok(())
     /// # }
     /// ```
@@ -409,20 +318,7 @@ impl DB {
         Ok(points)
     }
 
-    /// Calculate the distance between two points using a specified metric.
-    ///
-    /// This is a convenience method that wraps geo crate distance calculations.
-    /// For most lon/lat use cases, Haversine is recommended.
-    ///
-    /// # Arguments
-    ///
-    /// * `point1` - First point
-    /// * `point2` - Second point
-    /// * `metric` - Distance metric (Haversine, Geodesic, Rhumb, or Euclidean)
-    ///
-    /// # Returns
-    ///
-    /// Distance in meters
+    /// Calculate distance between two points (meters).
     ///
     /// # Examples
     ///
@@ -431,12 +327,9 @@ impl DB {
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
-    ///
     /// let nyc = Point::new(-74.0060, 40.7128);
     /// let la = Point::new(-118.2437, 34.0522);
-    ///
     /// let distance = db.distance_between(&nyc, &la, DistanceMetric::Haversine)?;
-    /// println!("Distance: {} meters", distance);
     /// # Ok(())
     /// # }
     /// ```
@@ -560,6 +453,9 @@ impl DB {
         limit: usize,
     ) -> Result<Vec<(Point, Bytes)>> {
         use geo::BoundingRect;
+
+        // Validate polygon coordinates
+        crate::compute::validation::validate_polygon(polygon)?;
 
         let bbox = polygon
             .bounding_rect()

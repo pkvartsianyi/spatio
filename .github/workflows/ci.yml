@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,7 +36,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-            py-spatio/target
+            crates/*/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -43,29 +45,47 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('py-spatio/requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('crates/py/requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      # Rust testing
+      # Rust formatting
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features
+      # Rust linting
+      - name: Run clippy (spatio-types)
+        run: cargo clippy -p spatio-types --all-targets -- -D warnings
 
-      - name: Build Rust crate
-        run: cargo build --verbose
+      - name: Run clippy (spatio)
+        run: cargo clippy -p spatio --all-targets --all-features -- -D warnings
 
-      - name: Run Rust tests
-        run: cargo test --verbose
+      # Rust building
+      - name: Build spatio-types
+        run: cargo build -p spatio-types --verbose
+
+      - name: Build spatio (default features)
+        run: cargo build -p spatio --verbose
+
+      - name: Build spatio (all features)
+        run: cargo build -p spatio --all-features --verbose
+
+      # Rust testing
+      - name: Run tests (spatio-types)
+        run: cargo test -p spatio-types --verbose
+
+      - name: Run tests (spatio - default features)
+        run: cargo test -p spatio --verbose
+
+      - name: Run tests (spatio - all features)
+        run: cargo test -p spatio --all-features --verbose
 
       - name: Run doc tests
-        run: cargo test --doc
+        run: cargo test -p spatio -p spatio-types --doc
 
       # Python testing
       - name: Install Python dependencies
-        working-directory: py-spatio
+        working-directory: crates/py
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade setuptools
@@ -73,13 +93,15 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Build Python package
-        working-directory: py-spatio
+        working-directory: crates/py
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           echo "Building Python package..."
           maturin build --out dist --verbose
 
       - name: Install Python package
-        working-directory: py-spatio
+        working-directory: crates/py
         run: |
           echo "Installing Python package..."
           wheel_file=$(find dist -name "*.whl" -type f | head -1)
@@ -94,13 +116,77 @@ jobs:
           python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
 
       - name: Run Python tests
-        working-directory: py-spatio
+        working-directory: crates/py
         run: |
           echo "Running Python tests..."
           pytest -v
 
       - name: Run Python linting
-        working-directory: py-spatio
+        working-directory: crates/py
         run: |
           ruff check src/ tests/ examples/
           mypy src/
+
+  # Test on multiple platforms
+  test-platforms:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build spatio
+        run: cargo build -p spatio --all-features --verbose
+
+      - name: Run tests
+        run: cargo test -p spatio -p spatio-types --all-features --verbose
+
+  # Check documentation builds
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build documentation
+        run: cargo doc -p spatio -p spatio-types --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # Run benchmarks (don't fail on performance regression, just run them)
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run benchmarks
+        run: cargo bench -p spatio --no-fail-fast -- --test

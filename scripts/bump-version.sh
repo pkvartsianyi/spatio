@@ -52,9 +52,9 @@ EXAMPLES:
     $0 python 0.2.0-alpha.1 --dry-run # Show what would change for Python pre-release
 
 The script will update versions in:
-    - rust: Cargo.toml (main project)
-    - python: py-spatio/Cargo.toml (Python bindings)
-    - types: spatio-types/Cargo.toml (Core types)
+    - rust: Cargo.toml (workspace root)
+    - python: crates/py/Cargo.toml (Python bindings)
+    - types: crates/types/Cargo.toml (Core types)
     - all: All Cargo.toml files (same version)
 
 Note: GitHub Actions will automatically detect version changes and create releases.
@@ -151,10 +151,10 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     fi
 fi
 
-# Get current versions
-CURRENT_RUST_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-CURRENT_PYTHON_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-CURRENT_TYPES_VERSION=$(grep '^version = ' spatio-types/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Get current versions from workspace root
+CURRENT_RUST_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
+CURRENT_PYTHON_VERSION="$CURRENT_RUST_VERSION"  # All use workspace version
+CURRENT_TYPES_VERSION="$CURRENT_RUST_VERSION"   # All use workspace version
 
 print_info "Current versions:"
 print_info "  Rust crate: $CURRENT_RUST_VERSION"
@@ -167,17 +167,9 @@ print_info "New version: $NEW_VERSION"
 # Files to update based on package
 declare -a FILES_TO_UPDATE=()
 case "$PACKAGE" in
-    "rust")
+    "rust"|"python"|"types"|"all")
+        # All versions managed in workspace root now
         FILES_TO_UPDATE=("Cargo.toml")
-        ;;
-    "python")
-        FILES_TO_UPDATE=("py-spatio/Cargo.toml")
-        ;;
-    "types")
-        FILES_TO_UPDATE=("spatio-types/Cargo.toml")
-        ;;
-    "all")
-        FILES_TO_UPDATE=("Cargo.toml" "py-spatio/Cargo.toml" "spatio-types/Cargo.toml")
         ;;
 esac
 
@@ -191,19 +183,24 @@ update_version_in_file() {
         return 1
     fi
 
-    local current_version=$(grep '^version = ' "$file" | head -1 | sed 's/version = "\(.*\)"/\1/')
+    local current_version=$(grep '^\[workspace.package\]' -A 10 "$file" | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
 
     if [[ "$DRY_RUN" == true ]]; then
-        print_info "Would update $file: $current_version -> $new_version"
+        print_info "Would update $file (workspace version): $current_version -> $new_version"
     else
-        print_info "Updating $file: $current_version -> $new_version"
+        print_info "Updating $file (workspace version): $current_version -> $new_version"
 
         # Create backup
         cp "$file" "$file.backup"
 
-        # Update version
-        if sed -i.tmp "s/^version = \".*\"/version = \"$new_version\"/" "$file"; then
-            rm "${file}.tmp" 2>/dev/null || true
+        # Update version in [workspace.package] section
+        if awk -v new_ver="$new_version" '
+            /^\[workspace\.package\]/ { in_workspace=1 }
+            /^\[/ && !/^\[workspace\.package\]/ { in_workspace=0 }
+            in_workspace && /^version = / { print "version = \"" new_ver "\""; next }
+            { print }
+        ' "$file" > "${file}.tmp"; then
+            mv "${file}.tmp" "$file"
             rm "$file.backup"
         else
             print_error "Failed to update $file"
@@ -235,20 +232,20 @@ if [[ "$DRY_RUN" == false ]]; then
 
     case "$PACKAGE" in
         "python"|"all")
-            if (cd py-spatio && cargo update --quiet); then
-                print_success "Updated py-spatio/Cargo.lock"
+            if (cd crates/py && cargo update --quiet); then
+                print_success "Updated crates/py/Cargo.lock"
             else
-                print_warning "Failed to update py-spatio/Cargo.lock"
+                print_warning "Failed to update crates/py/Cargo.lock"
             fi
             ;;
     esac
 
     case "$PACKAGE" in
         "types"|"all")
-            if (cd spatio-types && cargo update --quiet 2>/dev/null); then
-                print_success "Updated spatio-types/Cargo.lock"
+            if (cd crates/types && cargo update --quiet 2>/dev/null); then
+                print_success "Updated crates/types/Cargo.lock"
             else
-                print_info "spatio-types has no Cargo.lock (workspace member or no dependencies)"
+                print_info "crates/types has no Cargo.lock (workspace member)"
             fi
             ;;
     esac
@@ -338,17 +335,14 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     # Add files based on what was updated
     declare -a FILES_TO_ADD=()
     case "$PACKAGE" in
-        "rust")
+        "rust"|"types")
             FILES_TO_ADD=("Cargo.toml" "Cargo.lock")
             ;;
         "python")
-            FILES_TO_ADD=("py-spatio/Cargo.toml" "py-spatio/Cargo.lock")
-            ;;
-        "types")
-            FILES_TO_ADD=("spatio-types/Cargo.toml" "spatio-types/Cargo.lock" "Cargo.lock")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "crates/py/Cargo.lock")
             ;;
         "all")
-            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "py-spatio/Cargo.toml" "py-spatio/Cargo.lock" "spatio-types/Cargo.toml" "spatio-types/Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("Cargo.toml" "Cargo.lock" "crates/py/Cargo.lock" "crates/types/Cargo.lock" "CHANGELOG.md")
             ;;
     esac
 

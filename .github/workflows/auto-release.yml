@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "Cargo.toml"
-      - "py-spatio/Cargo.toml"
+      - "crates/*/Cargo.toml"
   workflow_dispatch:
 
 env:
@@ -36,7 +36,7 @@ jobs:
       - name: Check Rust version changes
         id: check-rust
         run: |
-          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_NAME="rust-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
@@ -44,22 +44,22 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 Cargo.toml | tail -1)
-          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^\[workspace.package\]' -A 10 | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
       - name: Check Python version changes
         id: check-python
         run: |
-          CURRENT_VERSION=$(grep '^version = ' py-spatio/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          CURRENT_VERSION=$(grep '^\[workspace.package\]' -A 10 Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/')
           TAG_NAME="python-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 py-spatio/Cargo.toml | tail -1)
-          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:py-spatio/Cargo.toml | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/py/Cargo.toml | tail -1)
+          PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:Cargo.toml | grep '^\[workspace.package\]' -A 10 | grep '^version = ' | head -1 | sed 's/version = "\(.*\)"/\1/' || echo "")
           echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
           echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
 
@@ -93,12 +93,12 @@ jobs:
 
       - run: cargo fmt --all -- --check
         if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy -p spatio -p spatio-types --all-targets --all-features -- -D warnings
         if: matrix.os == 'ubuntu-latest'
-      - run: cargo build --verbose
-      - run: cargo test --verbose
-      - run: cargo test --doc
-      - run: cd spatio-types && cargo package --allow-dirty
+      - run: cargo build -p spatio -p spatio-types --all-features --verbose
+      - run: cargo test -p spatio -p spatio-types --all-features --verbose
+      - run: cargo test -p spatio -p spatio-types --doc
+      - run: cd crates/types && cargo package --allow-dirty
         if: matrix.os == 'ubuntu-latest'
 
   test-python:
@@ -124,24 +124,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
-        working-directory: py-spatio
+        working-directory: crates/py
         run: |
           python -m pip install --upgrade pip
           pip install setuptools maturin pytest -r requirements-dev.txt
 
       - name: Build wheel
-        working-directory: py-spatio
+        working-directory: crates/py
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: maturin build --release --out dist --interpreter python
 
       - name: Install wheel
-        working-directory: py-spatio
+        working-directory: crates/py
         shell: bash
         run: |
           WHEEL=$(find dist -name "*.whl" | head -n 1)
           python -m pip install "$WHEEL" --force-reinstall --no-deps
 
       - name: Run tests
-        run: pytest py-spatio/tests -v --tb=short -x --maxfail=5
+        run: pytest crates/py/tests -v --tb=short -x --maxfail=5
 
   run-tests:
     name: Run Tests Stage
@@ -170,11 +172,13 @@ jobs:
       - run: pip install maturin
       - run: |
           maturin build --release --out dist --interpreter python
-        working-directory: py-spatio
+        working-directory: crates/py
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: py-spatio/dist/*.whl
+          path: crates/py/dist/*.whl
 
   release-rust:
     name: Release Rust Crate
@@ -192,7 +196,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: |
-          cd spatio-types
+          cd crates/types
           cargo publish --token "$CARGO_REGISTRY_TOKEN"
 
       - name: Wait for spatio-types to be available on crates.io
@@ -201,7 +205,9 @@ jobs:
       - name: Publish spatio to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+        run: |
+          cd crates/core
+          cargo publish --token "$CARGO_REGISTRY_TOKEN"
       - name: Tag and release Rust crate
         run: |
           VERSION="${{ needs.detect-changes.outputs.rust-version }}"
@@ -257,7 +263,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: |
-          cargo doc --no-deps --all-features
+          cargo doc -p spatio -p spatio-types --no-deps --all-features
           echo '<meta http-equiv="refresh" content="0; url=spatio">' > target/doc/index.html
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3

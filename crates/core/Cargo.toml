@@ -1,0 +1,82 @@
+[package]
+name = "spatio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A high-performance, embedded spatio-temporal database for modern applications"
+homepage = "https://github.com/pkvartsianyi/spatio"
+documentation = "https://docs.rs/spatio"
+keywords = ["spatial", "database", "geospatial", "embedded", "temporal"]
+categories = ["database-implementations", "science::geo"]
+
+[lib]
+name = "spatio"
+path = "lib.rs"
+
+[dependencies]
+# Workspace dependencies
+geo.workspace = true
+rstar.workspace = true
+s2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+geojson.workspace = true
+bytes.workspace = true
+log.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+rustc-hash.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+# Optional dependencies
+bincode = { workspace = true, optional = true }
+geozero = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+
+# Local workspace crates
+spatio-types = { version = "0.1.7", path = "../types" }
+
+[features]
+default = ["snapshot", "geojson", "time-index"]
+geojson = ["dep:geozero"]
+aof = ["dep:bincode"]
+snapshot = ["dep:bincode"]
+toml = ["dep:toml"]
+time-index = []
+bench-prof = []
+sync = []
+full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync"]
+
+[dev-dependencies]
+criterion.workspace = true
+env_logger.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "spatial_benchmarks"
+harness = false
+
+[[example]]
+name = "getting_started"
+doc-scrape-examples = true
+
+[[example]]
+name = "spatial_queries"
+
+[[example]]
+name = "trajectory_tracking"
+
+[[example]]
+name = "comprehensive_demo"
+
+[[example]]
+name = "persistence_lifecycle"
+required-features = ["aof"]
+
+[[test]]
+name = "aof_rewrite_test"
+required-features = ["aof"]

@@ -64,6 +64,10 @@ pub use config::{HistoryEntry, HistoryEventKind};
 
 pub use db::{AtomicBatch, Namespace, NamespaceManager};
 
+// Re-export validation and GeoJSON utilities
+pub use compute::geojson;
+pub use compute::validation;
+
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 
 #[cfg(feature = "aof")]
@@ -89,6 +93,8 @@ pub mod prelude {
     pub use crate::{AtomicBatch, Namespace, NamespaceManager};
 
     pub use crate::{MemoryBackend, StorageBackend};
+
+    pub use crate::{geojson, validation};
 
     pub use std::time::Duration;
 }

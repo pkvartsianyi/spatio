@@ -18,7 +18,7 @@ pip install spatio
 
 Supports: Linux (x86_64, aarch64), macOS (Intel, Apple Silicon), Python 3.9-3.13.
 
-**Windows not supported** - use WSL2 or Docker.
+**Windows not supported** - use WSL2, Docker, or a Linux VM.
 
 ## Quick Start
 
@@ -275,11 +275,6 @@ maturin build --release
 - Linux: x86_64, aarch64 (manylinux)
 - macOS: x86_64 (Intel), arm64 (Apple Silicon)
 - Python: 3.9, 3.10, 3.11, 3.12, 3.13
-
-**Not supported:**
-- Windows (use WSL2, Docker, or VM)
-
-See main [PLATFORMS.md](../PLATFORMS.md) for details.
 
 ## Examples
 
