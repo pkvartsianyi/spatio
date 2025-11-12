@@ -194,21 +194,8 @@ impl SnapshotFile {
 
     fn sync_parent_dir(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
-            #[cfg(unix)]
-            {
-                let dir = File::open(parent)?;
-                dir.sync_all()?;
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::OpenOptionsExt;
-                const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
-                let dir = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-                    .open(parent)?;
-                dir.sync_all()?;
-            }
+            let dir = File::open(parent)?;
+            dir.sync_all()?;
         }
         Ok(())
     }

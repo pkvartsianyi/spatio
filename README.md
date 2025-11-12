@@ -182,7 +182,7 @@ let db = DBBuilder::new()
 - macOS (x86_64, arm64)
 
 **Not supported:**
-- Windows (use WSL2 or Docker)
+- Windows (not supported - use WSL2, Docker, or a Linux VM)
 
 See [PLATFORMS.md](PLATFORMS.md) for details.
 
