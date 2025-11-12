@@ -215,16 +215,26 @@ update_version_in_file() {
         # Create backup
         cp "$file" "$file.backup"
 
-        # Update version using sed
-        sed -i.tmp "0,/^version = /s/^version = .*/version = \"$new_version\"/" "$file"
+        # Update version using awk (BSD sed compatible)
+        awk -v new_ver="$new_version" '
+            /^version[[:space:]]*=/ && !done {
+                print "version = \"" new_ver "\""
+                done=1
+                next
+            }
+            { print }
+        ' "$file" > "$file.tmp"
 
-        # Check if sed succeeded
+        # Check if awk succeeded
         if [[ $? -ne 0 ]]; then
-            print_error "Failed to update $file (sed command failed)"
+            print_error "Failed to update $file (awk command failed)"
             mv "$file.backup" "$file" 2>/dev/null || true
             rm -f "$file.tmp" 2>/dev/null || true
             return 1
         fi
+
+        # Move the temp file to the original
+        mv "$file.tmp" "$file"
 
         # Verify the version was actually changed
         local updated_version=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' "$file")
@@ -236,7 +246,6 @@ update_version_in_file() {
         fi
 
         # Success - cleanup
-        rm -f "$file.tmp" 2>/dev/null || true
         rm -f "$file.backup" 2>/dev/null || true
     fi
 }
@@ -255,15 +264,22 @@ if [[ "$PACKAGE" == "types" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false 
     if [[ -f "$WORKSPACE_CARGO" ]]; then
         # Update spatio-types version in workspace dependencies
         cp "$WORKSPACE_CARGO" "$WORKSPACE_CARGO.backup"
-        sed -i.tmp "s/^spatio-types = { version = \"[^\"]*\"/spatio-types = { version = \"$NEW_VERSION\"/" "$WORKSPACE_CARGO"
 
-        # Check if sed succeeded
+        # Use awk for BSD sed compatibility
+        awk -v new_ver="$NEW_VERSION" '
+            /^spatio-types = { version = / {
+                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
+            }
+            { print }
+        ' "$WORKSPACE_CARGO" > "$WORKSPACE_CARGO.tmp"
+
+        # Check if awk succeeded
         if [[ $? -ne 0 ]]; then
-            print_error "Failed to update workspace dependency (sed command failed)"
+            print_error "Failed to update workspace dependency (awk command failed)"
             mv "$WORKSPACE_CARGO.backup" "$WORKSPACE_CARGO" 2>/dev/null || true
             rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
         else
-            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+            mv "$WORKSPACE_CARGO.tmp" "$WORKSPACE_CARGO"
             rm -f "$WORKSPACE_CARGO.backup" 2>/dev/null || true
             print_success "Updated workspace dependency for spatio-types"
         fi
