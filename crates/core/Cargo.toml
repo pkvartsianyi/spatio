@@ -38,7 +38,7 @@ geozero = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 
 # Local workspace crates
-spatio-types = { version = "0.1.7", path = "../types" }
+spatio-types.workspace = true
 
 [features]
 default = ["snapshot", "geojson", "time-index"]
