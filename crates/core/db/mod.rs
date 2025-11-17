@@ -184,16 +184,11 @@ impl DB {
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = self.inner.get_item(&key_bytes) {
-            if item.is_expired() {
-                // Lazy expiration: treat as non-existent without physically deleting
-                // (get() is immutable, cannot modify storage)
-                return Ok(None);
-            }
-            return Ok(Some(item.value.clone()));
-        }
-
-        Ok(None)
+        Ok(self
+            .inner
+            .get_item(&key_bytes)
+            .filter(|item| !item.is_expired())
+            .map(|item| item.value.clone()))
     }
 
     /// Delete a key.
@@ -282,18 +277,35 @@ impl DB {
 
     /// Check if expired items exceed threshold and log warning if needed.
     ///
-    /// Note: This performs a full scan of keys, so it's only called periodically
-    /// (every 1000 operations) to minimize performance impact.
+    /// Uses sampling to avoid O(n) scans on hot paths.
     fn check_expired_threshold(&self) {
         const WARNING_THRESHOLD: f64 = 0.25; // 25%
+        const SAMPLE_SIZE: usize = 100;
 
-        let stats = self.expired_stats();
-        if stats.expired_ratio > WARNING_THRESHOLD {
+        let total = self.inner.keys.len();
+        if total == 0 {
+            return;
+        }
+
+        let now = SystemTime::now();
+        let mut sample_expired = 0usize;
+        let mut sampled = 0usize;
+        for (_, item) in self.inner.keys.iter().take(SAMPLE_SIZE) {
+            sampled += 1;
+            if item.is_expired_at(now) {
+                sample_expired += 1;
+            }
+        }
+        if sampled == 0 {
+            return;
+        }
+        let estimated_ratio = sample_expired as f64 / sampled as f64;
+        if estimated_ratio > WARNING_THRESHOLD {
             log::warn!(
-                "High expired items ratio: {:.1}% ({}/{} keys). Consider calling cleanup_expired() to reclaim memory.",
-                stats.expired_ratio * 100.0,
-                stats.expired_keys,
-                stats.total_keys
+                "Estimated high expired items ratio: ~{:.1}% (sampled {} of {} keys). Consider calling cleanup_expired().",
+                estimated_ratio * 100.0,
+                sampled,
+                total
             );
         }
     }

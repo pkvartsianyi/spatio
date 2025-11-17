@@ -41,10 +41,14 @@ pub struct AOFFile {
     profile: AOFProfile,
 }
 
+/// Initial scratch buffer size (8KB) - sized for typical key-value pairs
 const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
-const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024; // 128KB (more aggressive)
-const SCRATCH_IDLE_SHRINK_COUNT: usize = 100; // Shrink after N small writes
-const AOF_BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer for BufWriter
+/// Shrink threshold (128KB) - 16x initial capacity to avoid thrashing
+const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024;
+/// Decay threshold for consecutive small writes before shrinking
+const SCRATCH_SHRINK_DECAY_FACTOR: usize = 4;
+/// 64KB buffer for BufWriter (amortizes syscalls while keeping latency reasonable)
+const AOF_BUFFER_SIZE: usize = 64 * 1024;
 
 #[cfg(feature = "bench-prof")]
 #[derive(Default)]
@@ -209,15 +213,26 @@ impl AOFFile {
         }
         self.size += written_len as u64;
 
+        // Adaptive scratch buffer shrink: use exponential decay to avoid thrashing.
         if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD {
             if written_len <= SCRATCH_INITIAL_CAPACITY {
-                self.scratch_small_write_count += 1;
-                if self.scratch_small_write_count >= SCRATCH_IDLE_SHRINK_COUNT {
-                    self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
-                    self.scratch_small_write_count = 0;
+                // Sustained small writes increment the counter
+                self.scratch_small_write_count = self.scratch_small_write_count.saturating_add(1);
+                if self.scratch_small_write_count >= SCRATCH_SHRINK_DECAY_FACTOR {
+                    // Shrink gradually by half, but never below initial capacity
+                    let mut new_cap = self.scratch.capacity() / 2;
+                    if new_cap < SCRATCH_INITIAL_CAPACITY {
+                        new_cap = SCRATCH_INITIAL_CAPACITY;
+                    }
+                    if new_cap < self.scratch.capacity() {
+                        self.scratch = BytesMut::with_capacity(new_cap);
+                    }
+                    // Reduce the counter to require sustained small writes again
+                    self.scratch_small_write_count /= 2;
                 }
             } else {
-                self.scratch_small_write_count = 0;
+                // Large write observed; decay the small-write counter
+                self.scratch_small_write_count /= 2;
             }
         }
 
@@ -294,14 +309,8 @@ impl AOFFile {
             self.writer.flush()?;
             self.file.sync_all()?;
 
-            let dummy_path = "/dev/null";
-
-            drop(std::mem::replace(
-                &mut self.writer,
-                BufWriter::with_capacity(AOF_BUFFER_SIZE, File::open(dummy_path)?),
-            ));
-            drop(std::mem::replace(&mut self.file, File::open(dummy_path)?));
-
+            // Atomically replace the target with the rewritten file on supported platforms.
+            // Keep the existing file handles intact until rename succeeds and we can reopen.
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 
@@ -316,6 +325,7 @@ impl AOFFile {
             let writer_file = new_file.try_clone()?;
             let new_writer = BufWriter::with_capacity(AOF_BUFFER_SIZE, writer_file);
 
+            // Atomically swap internal handles only after new ones are confirmed working
             self.file = new_file;
             self.writer = new_writer;
             self.size = new_size;

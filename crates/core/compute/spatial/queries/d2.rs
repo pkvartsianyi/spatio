@@ -40,8 +40,24 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        // Validate geographic coordinates first
+        // Validate once here; inner unchecked path assumes trusted/pre-validated data
         validate_geographic_point(point)?;
+        self.insert_point_unchecked(prefix, point, value, opts)
+    }
+
+    /// Insert a geographic point without validating coordinates.
+    ///
+    /// Safety: The caller must ensure that `point` has valid geographic coordinates.
+    /// Prefer using `insert_point` unless you have validated at a higher level
+    /// (e.g., batch validation) and want to avoid repeated checks in the hot path.
+    pub fn insert_point_unchecked(
+        &mut self,
+        prefix: &str,
+        point: &Point,
+        value: &[u8],
+        opts: Option<SetOptions>,
+    ) -> Result<()> {
+        debug_assert!(validate_geographic_point(point).is_ok());
 
         let data_ref = Bytes::copy_from_slice(value);
         let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());

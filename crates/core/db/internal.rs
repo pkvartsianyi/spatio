@@ -46,7 +46,8 @@ impl DBInner {
 
         // fetch_add wraps around at u64::MAX (after ~584,942 years at 1M ops/sec).
         // The nanosecond timestamp ensures uniqueness even after theoretical wrap-around.
-        let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        // Use SeqCst to avoid reordering with timestamp reads on weak memory models
+        let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         Ok(format!(
             "{}:{:x}:{:x}:{:x}:{:x}:{:x}",
