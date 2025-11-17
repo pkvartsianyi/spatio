@@ -102,12 +102,13 @@ pub fn knn<T: Clone>(
         }
     }
 
-    // Convert heap to sorted vector, cloning only the K items we need
-    // into_sorted_vec gives us ascending order, which is what we want
-    heap.into_sorted_vec()
-        .into_iter()
-        .map(|entry| (entry.point, entry.distance, entry.data.clone()))
-        .collect()
+    // Convert the max-heap to ascending results by popping then reversing.
+    let mut results = Vec::with_capacity(heap.len());
+    while let Some(entry) = heap.pop() {
+        results.push((entry.point, entry.distance, entry.data.clone()));
+    }
+    results.reverse();
+    results
 }
 
 pub fn bounding_box(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Result<Rect> {

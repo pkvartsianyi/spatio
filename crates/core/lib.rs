@@ -69,10 +69,8 @@ pub use db::{AtomicBatch, ExpiredStats, Namespace, NamespaceManager};
 pub use compute::geojson;
 pub use compute::validation;
 
+pub use storage::{AOFCommand, PersistenceLog};
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
-
-#[cfg(feature = "aof")]
-pub use storage::{AOFConfig, AOFFile};
 
 #[cfg(feature = "snapshot")]
 pub use storage::{SnapshotConfig, SnapshotFile};

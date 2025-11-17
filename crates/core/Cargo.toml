@@ -56,10 +56,6 @@ criterion.workspace = true
 env_logger.workspace = true
 tempfile.workspace = true
 
-[[bench]]
-name = "spatial_benchmarks"
-harness = false
-
 [[example]]
 name = "getting_started"
 doc-scrape-examples = true

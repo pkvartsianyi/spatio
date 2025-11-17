@@ -273,23 +273,23 @@ impl PySpatio {
     }
 
     /// Get a value by key, returns None if not found
-    fn get(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<PyObject>> {
+    fn get(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_bytes = key.as_bytes();
         let result = handle_error(self.db.get(key_bytes))?;
 
-        Python::with_gil(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).into())),
+        Python::attach(|py| match result {
+            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).unbind())),
             None => Ok(None),
         })
     }
 
     /// Delete a key, returns the old value if it existed
-    fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<PyObject>> {
+    fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
         let key_bytes = key.as_bytes();
         let result = handle_error(self.db.delete(key_bytes))?;
 
-        Python::with_gil(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).into())),
+        Python::attach(|py| match result {
+            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).unbind())),
             None => Ok(None),
         })
     }
@@ -319,14 +319,14 @@ impl PySpatio {
         center: &PyPoint,
         radius_meters: f64,
         limit: usize,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyList>> {
         let results =
             handle_error(
                 self.db
                     .query_within_radius(prefix, &center.inner, radius_meters, limit),
             )?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
@@ -335,7 +335,7 @@ impl PySpatio {
                 let tuple = (py_point, py_value, distance).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.unbind())
         })
     }
 
@@ -350,7 +350,7 @@ impl PySpatio {
         let mut rust_trajectory = Vec::new();
 
         for item in trajectory.iter() {
-            let tuple = item.downcast::<PyTuple>()?;
+            let tuple = item.cast::<PyTuple>()?;
             if tuple.len() != 2 {
                 return Err(PyValueError::new_err(
                     "Trajectory items must be (Point, timestamp) tuples",
@@ -378,14 +378,14 @@ impl PySpatio {
         object_id: &str,
         start_time: f64,
         end_time: f64,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyList>> {
         let results = handle_error(self.db.query_trajectory(
             object_id,
             start_time as u64,
             end_time as u64,
         ))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for temporal_point in results {
                 let py_point = PyPoint {
@@ -399,7 +399,7 @@ impl PySpatio {
                 let tuple = (py_point, timestamp_f64).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.unbind())
         })
     }
 
@@ -445,13 +445,13 @@ impl PySpatio {
         max_lat: f64,
         max_lon: f64,
         limit: usize,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyList>> {
         let results = handle_error(
             self.db
                 .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit),
         )?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
@@ -459,7 +459,7 @@ impl PySpatio {
                 let tuple = (py_point, py_value).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.unbind())
         })
     }
 
@@ -484,14 +484,14 @@ impl PySpatio {
         k: usize,
         max_radius: f64,
         metric: &PyDistanceMetric,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyList>> {
         let results =
             handle_error(
                 self.db
                     .knn(prefix, &center.inner, k, max_radius, metric.inner),
             )?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for (point, value, distance) in results {
                 let py_point = PyPoint { inner: point };
@@ -499,7 +499,7 @@ impl PySpatio {
                 let tuple = (py_point, py_value, distance).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.unbind())
         })
     }
 
@@ -509,11 +509,11 @@ impl PySpatio {
         prefix: &str,
         polygon_coords: &Bound<'_, PyList>,
         limit: usize,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyList>> {
         // Parse polygon coordinates from list of (lon, lat) tuples
         let mut coords = Vec::new();
         for item in polygon_coords.iter() {
-            let tuple = item.downcast::<PyTuple>()?;
+            let tuple = item.cast::<PyTuple>()?;
             if tuple.len() != 2 {
                 return Err(PyValueError::new_err(
                     "Polygon coordinates must be (lon, lat) tuples",
@@ -536,7 +536,7 @@ impl PySpatio {
 
         let results = handle_error(self.db.query_within_polygon(prefix, &spatio_polygon, limit))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for (point, value) in results {
                 let py_point = PyPoint { inner: point };
@@ -544,7 +544,7 @@ impl PySpatio {
                 let tuple = (py_point, py_value).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
-            Ok(py_list.into())
+            Ok(py_list.unbind())
         })
     }
 
@@ -554,15 +554,15 @@ impl PySpatio {
     }
 
     /// Get database statistics
-    fn stats(&self) -> PyResult<PyObject> {
+    fn stats(&self) -> PyResult<Py<PyAny>> {
         let stats = self.db.stats();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("key_count", stats.key_count)?;
             dict.set_item("expired_count", stats.expired_count)?;
             dict.set_item("operations_count", stats.operations_count)?;
-            Ok(dict.into())
+            Ok(dict.into_any().unbind())
         })
     }
 

@@ -5,7 +5,7 @@ use crate::compute::spatial::SpatialIndexManager;
 use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
-use crate::storage::{AOFCommand, AOFFile};
+use crate::storage::{AOFCommand, PersistenceLog};
 use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,7 +46,7 @@ impl DBInner {
 
         // fetch_add wraps around at u64::MAX (after ~584,942 years at 1M ops/sec).
         // The nanosecond timestamp ensures uniqueness even after theoretical wrap-around.
-        let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let counter = SPATIAL_KEY_COUNTER.fetch_add(1, Ordering::SeqCst);
 
         Ok(format!(
             "{}:{:x}:{:x}:{:x}:{:x}:{:x}",
@@ -166,7 +166,7 @@ impl DBInner {
     }
 
     #[cfg(feature = "aof")]
-    pub fn load_from_aof(&mut self, aof_file: &mut AOFFile) -> Result<()> {
+    pub fn load_from_aof(&mut self, aof_file: &mut dyn PersistenceLog) -> Result<()> {
         for command in aof_file.replay()? {
             match command {
                 AOFCommand::Set {
@@ -324,7 +324,7 @@ impl DBInner {
         options: Option<&SetOptions>,
         created_at: SystemTime,
     ) -> Result<()> {
-        let Some(aof_file) = self.aof_file.as_mut() else {
+        let Some(aof_file) = self.aof_file.as_ref() else {
             return Ok(());
         };
 
@@ -333,7 +333,10 @@ impl DBInner {
         let batch_size = self.config.sync_batch_size;
         let value_bytes = Bytes::copy_from_slice(value);
 
-        aof_file.write_set(key, &value_bytes, options, created_at)?;
+        {
+            let mut log = aof_file.lock();
+            log.write_set(key, &value_bytes, options, created_at)?;
+        }
         self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
         Ok(())
     }
@@ -351,7 +354,7 @@ impl DBInner {
 
     #[cfg(feature = "aof")]
     pub fn write_delete_to_aof_if_needed(&mut self, key: &Bytes) -> Result<()> {
-        let Some(aof_file) = self.aof_file.as_mut() else {
+        let Some(aof_file) = self.aof_file.as_ref() else {
             return Ok(());
         };
 
@@ -359,7 +362,10 @@ impl DBInner {
         let sync_mode = self.config.sync_mode;
         let batch_size = self.config.sync_batch_size;
 
-        aof_file.write_delete(key)?;
+        {
+            let mut log = aof_file.lock();
+            log.write_delete(key)?;
+        }
         self.maybe_flush_or_sync(sync_policy, sync_mode, batch_size)?;
         Ok(())
     }
@@ -374,7 +380,7 @@ impl DBInner {
         &mut self,
         operations: &[(Bytes, Bytes, Option<SetOptions>, SystemTime, bool)], // (key, value, opts, created_at, is_delete)
     ) -> Result<()> {
-        let Some(aof_file) = self.aof_file.as_mut() else {
+        let Some(aof_file) = self.aof_file.as_ref() else {
             return Ok(());
         };
 
@@ -382,11 +388,14 @@ impl DBInner {
         let sync_mode = self.config.sync_mode;
         let batch_size = self.config.sync_batch_size;
 
-        for (key, value, opts, created_at, is_delete) in operations {
-            if *is_delete {
-                aof_file.write_delete(key)?;
-            } else {
-                aof_file.write_set(key, value, opts.as_ref(), *created_at)?;
+        {
+            let mut log = aof_file.lock();
+            for (key, value, opts, created_at, is_delete) in operations {
+                if *is_delete {
+                    log.write_delete(key)?;
+                } else {
+                    log.write_set(key, value, opts.as_ref(), *created_at)?;
+                }
             }
         }
 
@@ -413,7 +422,7 @@ impl DBInner {
     ) -> Result<()> {
         use crate::config::SyncPolicy;
 
-        let Some(aof_file) = self.aof_file.as_mut() else {
+        let Some(aof_file) = self.aof_file.as_ref() else {
             return Ok(());
         };
 
@@ -421,14 +430,17 @@ impl DBInner {
             SyncPolicy::Always => {
                 self.sync_ops_since_flush += 1;
                 if self.sync_ops_since_flush >= batch_size {
-                    aof_file.sync_with_mode(mode)?;
+                    let mut log = aof_file.lock();
+                    log.sync_with_mode(mode)?;
                     self.sync_ops_since_flush = 0;
                 } else {
-                    aof_file.flush()?;
+                    let mut log = aof_file.lock();
+                    log.flush()?;
                 }
             }
             SyncPolicy::EverySecond => {
-                aof_file.flush()?;
+                let mut log = aof_file.lock();
+                log.flush()?;
             }
             SyncPolicy::Never => {}
         }

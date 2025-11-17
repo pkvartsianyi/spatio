@@ -1,4 +1,4 @@
-//! Append-only persistence layer for Spatio (feature `aof`).
+//! Persistence interfaces implementation for Spatio (feature `aof`).
 //!
 //! Provides simplified AOF file management, rewrite logic, and command
 //! serialization used when durability is enabled.
@@ -41,10 +41,14 @@ pub struct AOFFile {
     profile: AOFProfile,
 }
 
+/// Initial scratch buffer size (8KB)
 const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
-const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024; // 128KB (more aggressive)
-const SCRATCH_IDLE_SHRINK_COUNT: usize = 100; // Shrink after N small writes
-const AOF_BUFFER_SIZE: usize = 64 * 1024; // 64KB buffer for BufWriter
+/// Shrink threshold (128KB)
+const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024;
+/// Decay threshold for consecutive small writes before shrinking
+const SCRATCH_SHRINK_DECAY_FACTOR: usize = 4;
+/// 64KB buffer for BufWriter
+const AOF_BUFFER_SIZE: usize = 64 * 1024;
 
 #[cfg(feature = "bench-prof")]
 #[derive(Default)]
@@ -67,6 +71,36 @@ pub enum AOFCommand {
     Delete {
         key: Bytes,
     },
+}
+
+/// Interface for pluggable persistence logs.
+///
+/// Implementors can provide custom persistence backends (e.g., AOF, snapshotting logs,
+/// databases) by implementing this trait. The default in-repo implementation is AOFFile.
+pub trait PersistenceLog: Send + Sync {
+    /// Append a Set record to the log.
+    fn write_set(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+        options: Option<&SetOptions>,
+        created_at: SystemTime,
+    ) -> Result<()>;
+
+    /// Append a Delete record to the log.
+    fn write_delete(&mut self, key: &[u8]) -> Result<()>;
+
+    /// Replay the log into a sequence of commands.
+    fn replay(&mut self) -> Result<Vec<AOFCommand>>;
+
+    /// Flush buffered data to the underlying medium.
+    fn flush(&mut self) -> Result<()>;
+
+    /// Sync with a specific durability mode.
+    fn sync_with_mode(&mut self, mode: SyncMode) -> Result<()>;
+
+    /// Convenience: sync with default policy.
+    fn sync(&mut self) -> Result<()>;
 }
 
 impl AOFFile {
@@ -181,13 +215,19 @@ impl AOFFile {
 
         if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD {
             if written_len <= SCRATCH_INITIAL_CAPACITY {
-                self.scratch_small_write_count += 1;
-                if self.scratch_small_write_count >= SCRATCH_IDLE_SHRINK_COUNT {
-                    self.scratch = BytesMut::with_capacity(SCRATCH_INITIAL_CAPACITY);
-                    self.scratch_small_write_count = 0;
+                self.scratch_small_write_count = self.scratch_small_write_count.saturating_add(1);
+                if self.scratch_small_write_count >= SCRATCH_SHRINK_DECAY_FACTOR {
+                    let mut new_cap = self.scratch.capacity() / 2;
+                    if new_cap < SCRATCH_INITIAL_CAPACITY {
+                        new_cap = SCRATCH_INITIAL_CAPACITY;
+                    }
+                    if new_cap < self.scratch.capacity() {
+                        self.scratch = BytesMut::with_capacity(new_cap);
+                    }
+                    self.scratch_small_write_count /= 2;
                 }
             } else {
-                self.scratch_small_write_count = 0;
+                self.scratch_small_write_count /= 2;
             }
         }
 
@@ -264,14 +304,7 @@ impl AOFFile {
             self.writer.flush()?;
             self.file.sync_all()?;
 
-            let dummy_path = "/dev/null";
-
-            drop(std::mem::replace(
-                &mut self.writer,
-                BufWriter::with_capacity(AOF_BUFFER_SIZE, File::open(dummy_path)?),
-            ));
-            drop(std::mem::replace(&mut self.file, File::open(dummy_path)?));
-
+            // Atomically replace the target with the rewritten file on supported platforms.
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 
@@ -521,6 +554,38 @@ impl AOFFile {
     /// Get the file path
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl PersistenceLog for AOFFile {
+    fn write_set(
+        &mut self,
+        key: &[u8],
+        value: &[u8],
+        options: Option<&SetOptions>,
+        created_at: SystemTime,
+    ) -> Result<()> {
+        AOFFile::write_set(self, key, value, options, created_at)
+    }
+
+    fn write_delete(&mut self, key: &[u8]) -> Result<()> {
+        AOFFile::write_delete(self, key)
+    }
+
+    fn replay(&mut self) -> Result<Vec<AOFCommand>> {
+        AOFFile::replay(self)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        AOFFile::flush(self)
+    }
+
+    fn sync_with_mode(&mut self, mode: SyncMode) -> Result<()> {
+        AOFFile::sync_with_mode(self, mode)
+    }
+
+    fn sync(&mut self) -> Result<()> {
+        AOFFile::sync(self)
     }
 }
 

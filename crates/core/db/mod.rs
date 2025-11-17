@@ -9,7 +9,7 @@ use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::config::{HistoryEntry, HistoryEventKind};
 use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
-use crate::storage::AOFFile;
+use crate::storage::PersistenceLog;
 #[cfg(feature = "snapshot")]
 use crate::storage::SnapshotFile;
 use bytes::Bytes;
@@ -53,9 +53,9 @@ pub(crate) struct DBInner {
     pub created_index: BTreeMap<SystemTime, BTreeSet<Bytes>>,
     /// Spatial index manager for 2D and 3D spatial operations (R*-tree based)
     pub spatial_index: SpatialIndexManager,
-    /// Append-only file for persistence
+    /// Persistence log for durability (pluggable backend)
     #[cfg(feature = "aof")]
-    pub aof_file: Option<AOFFile>,
+    pub aof_file: Option<parking_lot::Mutex<Box<dyn PersistenceLog>>>,
     #[cfg(feature = "snapshot")]
     /// Snapshot file for persistence
     pub snapshot_file: Option<SnapshotFile>,
@@ -96,11 +96,12 @@ impl DB {
 
         #[cfg(feature = "aof")]
         {
+            use crate::storage::persistence::AOFFile; // default in-core impl for BC
             let is_memory = path.to_str() == Some(":memory:");
             if !is_memory {
                 let mut aof_file = AOFFile::open(path)?;
                 inner.load_from_aof(&mut aof_file)?;
-                inner.aof_file = Some(aof_file);
+                inner.aof_file = Some(parking_lot::Mutex::new(Box::new(aof_file)));
             }
         }
 
@@ -183,16 +184,11 @@ impl DB {
 
         let key_bytes = Bytes::copy_from_slice(key.as_ref());
 
-        if let Some(item) = self.inner.get_item(&key_bytes) {
-            if item.is_expired() {
-                // Lazy expiration: treat as non-existent without physically deleting
-                // (get() is immutable, cannot modify storage)
-                return Ok(None);
-            }
-            return Ok(Some(item.value.clone()));
-        }
-
-        Ok(None)
+        Ok(self
+            .inner
+            .get_item(&key_bytes)
+            .filter(|item| !item.is_expired())
+            .map(|item| item.value.clone()))
     }
 
     /// Delete a key.
@@ -231,8 +227,9 @@ impl DB {
         #[cfg(feature = "aof")]
         {
             let sync_mode = self.inner.config.sync_mode;
-            if let Some(ref mut aof_file) = self.inner.aof_file {
-                aof_file.sync_with_mode(sync_mode)?;
+            if let Some(ref aof_file) = self.inner.aof_file {
+                let mut log = aof_file.lock();
+                log.sync_with_mode(sync_mode)?;
                 self.inner.sync_ops_since_flush = 0;
             }
         }
@@ -280,18 +277,35 @@ impl DB {
 
     /// Check if expired items exceed threshold and log warning if needed.
     ///
-    /// Note: This performs a full scan of keys, so it's only called periodically
-    /// (every 1000 operations) to minimize performance impact.
+    /// Uses sampling to avoid O(n) scans on hot paths.
     fn check_expired_threshold(&self) {
         const WARNING_THRESHOLD: f64 = 0.25; // 25%
+        const SAMPLE_SIZE: usize = 100;
 
-        let stats = self.expired_stats();
-        if stats.expired_ratio > WARNING_THRESHOLD {
+        let total = self.inner.keys.len();
+        if total == 0 {
+            return;
+        }
+
+        let now = SystemTime::now();
+        let mut sample_expired = 0usize;
+        let mut sampled = 0usize;
+        for (_, item) in self.inner.keys.iter().take(SAMPLE_SIZE) {
+            sampled += 1;
+            if item.is_expired_at(now) {
+                sample_expired += 1;
+            }
+        }
+        if sampled == 0 {
+            return;
+        }
+        let estimated_ratio = sample_expired as f64 / sampled as f64;
+        if estimated_ratio > WARNING_THRESHOLD {
             log::warn!(
-                "High expired items ratio: {:.1}% ({}/{} keys). Consider calling cleanup_expired() to reclaim memory.",
-                stats.expired_ratio * 100.0,
-                stats.expired_keys,
-                stats.total_keys
+                "Estimated high expired items ratio: ~{:.1}% (sampled {} of {} keys). Consider calling cleanup_expired().",
+                estimated_ratio * 100.0,
+                sampled,
+                total
             );
         }
     }
@@ -308,8 +322,9 @@ impl DB {
         #[cfg(feature = "aof")]
         {
             let sync_mode = self.inner.config.sync_mode;
-            if let Some(ref mut aof_file) = self.inner.aof_file {
-                aof_file.sync_with_mode(sync_mode)?;
+            if let Some(ref aof_file) = self.inner.aof_file {
+                let mut log = aof_file.lock();
+                log.sync_with_mode(sync_mode)?;
                 self.inner.sync_ops_since_flush = 0;
             }
         }
@@ -390,8 +405,8 @@ impl Drop for DB {
         #[cfg(feature = "aof")]
         {
             let sync_mode = self.inner.config.sync_mode;
-            if let Some(ref mut aof_file) = self.inner.aof_file
-                && aof_file.sync_with_mode(sync_mode).is_ok()
+            if let Some(ref aof_file) = self.inner.aof_file
+                && aof_file.lock().sync_with_mode(sync_mode).is_ok()
             {
                 self.inner.sync_ops_since_flush = 0;
             }
