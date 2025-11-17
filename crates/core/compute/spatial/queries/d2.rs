@@ -26,13 +26,7 @@ impl DB {
     /// # }
     /// ```
     ///
-    /// # Key Format
-    ///
-    /// This method generates auto-incrementing keys in the format:
-    /// `prefix:lat_hex:lon_hex:z_hex:timestamp_hex:counter_hex`
-    ///
-    /// Each call creates a new entry, even for the same coordinates.
-    /// For updating existing objects by ID, use [`upsert_point`](Self::upsert_point) instead.
+    /// Generates auto-incrementing keys. Use [`upsert_point`](Self::upsert_point) to update by ID.
     pub fn insert_point(
         &mut self,
         prefix: &str,
@@ -40,7 +34,6 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        // Validate once here; inner unchecked path assumes trusted/pre-validated data
         validate_geographic_point(point)?;
         self.insert_point_unchecked(prefix, point, value, opts)
     }
@@ -61,8 +54,6 @@ impl DB {
         let data_ref = Bytes::copy_from_slice(value);
         let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
-
-        // Clone data only once for spatial index
         let data_for_index = item.value.clone();
 
         DBInner::validate_timestamp(created_at)?;
@@ -92,12 +83,7 @@ impl DB {
     ///
     /// Returns the previous data if the object existed.
     ///
-    /// # Key Format
-    ///
-    /// This method uses stable keys in the format: `prefix:object_id`
-    ///
-    /// This is intentionally different from `insert_point`'s auto-generated keys,
-    /// allowing deterministic updates to the same logical object.
+    /// Uses stable keys in the format: `prefix:object_id`
     ///
     /// # Examples
     ///
@@ -124,14 +110,11 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<Option<Bytes>> {
-        // Validate geographic coordinates first
         validate_geographic_point(point)?;
 
         let data_ref = Bytes::copy_from_slice(value);
         let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
-
-        // Clone data only once for spatial index
         let data_for_index = item.value.clone();
 
         let key = format!("{}:{}", prefix, object_id);
@@ -163,16 +146,6 @@ impl DB {
     }
 
     /// Find nearby points within a radius.
-    ///
-    /// Uses spatial indexing for efficient queries. Results are ordered
-    /// by distance from the query point.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `center` - Center point for the search
-    /// * `radius_meters` - Search radius in meters
-    /// * `limit` - Maximum number of results to return
     ///
     /// # Examples
     ///
@@ -364,22 +337,7 @@ impl DB {
         Ok(distance_between(point1, point2, metric))
     }
 
-    /// Find the K nearest points to a query point within a namespace.
-    ///
-    /// This performs a K-nearest-neighbor search using the spatial index.
-    /// It first queries a radius, then refines to the K nearest points.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `center` - Query point
-    /// * `k` - Number of nearest neighbors to return
-    /// * `max_radius` - Maximum search radius in meters
-    /// * `metric` - Distance metric to use
-    ///
-    /// # Returns
-    ///
-    /// Vector of (Point, Bytes, distance) tuples sorted by distance (nearest first)
+    /// Find K nearest points using spatial index.
     ///
     /// # Examples
     ///
@@ -432,20 +390,6 @@ impl DB {
     }
 
     /// Query points within a polygon boundary.
-    ///
-    /// This finds all points that are contained within the given polygon.
-    /// It uses the polygon's bounding box for initial filtering via the
-    /// spatial index, then performs precise point-in-polygon tests.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Namespace to search in
-    /// * `polygon` - The polygon boundary
-    /// * `limit` - Maximum number of results to return
-    ///
-    /// # Returns
-    ///
-    /// Vector of (Point, Bytes) tuples for points within the polygon
     ///
     /// # Examples
     ///
@@ -509,15 +453,6 @@ impl DB {
 
     /// Query all points within a bounding box.
     ///
-    /// Returns all spatial points that fall within the specified 2D bounding box,
-    /// ordered by their distance from the box's center.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Optional key prefix to filter results
-    /// * `bbox` - The bounding box to search within
-    /// * `limit` - Maximum number of results to return
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -569,15 +504,6 @@ impl DB {
 
     /// Store a bounding box with a key.
     ///
-    /// Serializes and stores a bounding box, making it retrievable later.
-    /// Useful for storing geographic regions, service areas, or zones.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to store the bounding box under
-    /// * `bbox` - The bounding box to store
-    /// * `opts` - Optional settings like TTL
-    ///
     /// # Examples
     ///
     /// ```rust
@@ -605,12 +531,6 @@ impl DB {
     }
 
     /// Retrieve a bounding box by key.
-    ///
-    /// Deserializes and returns a previously stored bounding box.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The key to retrieve
     ///
     /// # Examples
     ///
@@ -642,14 +562,6 @@ impl DB {
     }
 
     /// Find all bounding boxes that intersect with a given bounding box.
-    ///
-    /// Returns all stored bounding boxes (with the specified prefix) that
-    /// intersect with the query bounding box.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - Key prefix to filter results (e.g., "zones:")
-    /// * `bbox` - The bounding box to check for intersections
     ///
     /// # Examples
     ///

@@ -252,8 +252,7 @@ pub struct NamespaceManager {
 impl NamespaceManager {
     /// Create a new namespace manager with the default separator
     pub fn new() -> Self {
-        Self::with_separator(Namespace::DEFAULT_SEPARATOR)
-            .expect("DEFAULT_SEPARATOR is a valid constant and cannot fail")
+        Self::with_separator(Namespace::DEFAULT_SEPARATOR).unwrap()
     }
 
     /// Create a new namespace manager with a custom separator

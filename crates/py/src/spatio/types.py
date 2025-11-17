@@ -58,7 +58,6 @@ class ConfigurationError(SpatioError):
     pass
 
 
-# Utility functions for validation
 def validate_latitude(lat: float) -> None:
     """Validate latitude coordinate."""
     if not (MIN_LATITUDE <= lat <= MAX_LATITUDE):

@@ -29,14 +29,11 @@ impl DB {
         value: &[u8],
         opts: Option<SetOptions>,
     ) -> Result<()> {
-        // Validate 3D geographic coordinates first
         validate_geographic_point_3d(point)?;
 
         let data_ref = Bytes::copy_from_slice(value);
         let item = crate::config::DbItem::from_options(data_ref, opts.as_ref());
         let created_at = item.created_at;
-
-        // Clone data only once for spatial index
         let data_for_index = item.value.clone();
 
         DBInner::validate_timestamp(created_at)?;

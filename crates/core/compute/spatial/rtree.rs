@@ -115,14 +115,6 @@ impl SpatialIndexManager {
         self.insert_point(prefix, x, y, 0.0, key, data);
     }
 
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace for this point
-    /// * `x` - X coordinate (longitude)
-    /// * `y` - Y coordinate (latitude)
-    /// * `z` - Z coordinate (altitude/elevation)
-    /// * `key` - Unique key for this point
-    /// * `data` - Associated data
     pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String, data: Bytes) {
         let point = IndexedPoint3D::new(x, y, z, key, data);
 
@@ -133,21 +125,6 @@ impl SpatialIndexManager {
     }
 
     /// Query points within a 3D spherical volume using envelope-based pruning.
-    ///
-    /// This method uses R*-tree AABB envelope intersection to efficiently prune
-    /// the search space before computing expensive Haversine distances.
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Compute minimal AABB that contains the sphere
-    /// 2. Use R*-tree to find points intersecting the AABB (O(log n))
-    /// 3. Filter candidates by exact 3D Haversine distance
-    /// 4. Sort by distance and apply limit
-    ///
-    /// # Performance
-    ///
-    /// For a localized query on 10k points, this examines ~100-500 candidates
-    /// instead of all 10k points, achieving 95-99% reduction in distance calculations.
     ///
     /// # Arguments
     ///
@@ -288,17 +265,7 @@ impl SpatialIndexManager {
             .collect()
     }
 
-    /// Query points within a 2D bounding box (rectangle).
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `min_x`, `min_y` - Minimum coordinates of the bounding box
-    /// * `max_x`, `max_y` - Maximum coordinates of the bounding box
-    ///
-    /// # Returns
-    ///
-    /// Vector of (key, data) tuples within the bounding box.
+    /// Query points within a 2D bounding box.
     pub fn query_within_bbox_2d(
         &self,
         prefix: &str,
@@ -426,19 +393,7 @@ impl SpatialIndexManager {
             .collect()
     }
 
-    /// Find the k nearest neighbors in 2D space with optional max distance filter.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `x` - Query point X coordinate
-    /// * `y` - Query point Y coordinate
-    /// * `k` - Number of nearest neighbors to find
-    /// * `max_distance` - Optional maximum distance in meters
-    ///
-    /// # Returns
-    ///
-    /// Vector of (x, y, key, data, distance) tuples for the k nearest points within max_distance.
+    /// Find k nearest neighbors in 2D with optional max distance filter.
     pub fn knn_2d_with_max_distance(
         &self,
         prefix: &str,
@@ -481,24 +436,7 @@ impl SpatialIndexManager {
             .collect()
     }
 
-    /// Query points within a cylindrical volume.
-    ///
-    /// This is useful for altitude-constrained radius queries, such as finding
-    /// all aircraft within a certain horizontal distance and altitude range.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `center_x` - Center X coordinate
-    /// * `center_y` - Center Y coordinate
-    /// * `min_z` - Minimum altitude
-    /// * `max_z` - Maximum altitude
-    /// * `horizontal_radius` - Horizontal radius in meters
-    /// * `limit` - Maximum number of results
-    ///
-    /// # Returns
-    ///
-    /// Vector of (key, data, horizontal_distance) tuples within the cylinder, sorted by distance.
+    /// Query points within a cylindrical volume (altitude-constrained radius query).
     pub fn query_within_cylinder(
         &self,
         prefix: &str,
@@ -551,33 +489,7 @@ impl SpatialIndexManager {
         results
     }
 
-    /// Find the k nearest neighbors in 3D space using R*-tree spatial indexing.
-    ///
-    /// This method uses the R*-tree's optimized nearest neighbor iterator,
-    /// which traverses the tree efficiently without examining all points.
-    ///
-    /// # Note on Distance Metrics
-    ///
-    /// The R*-tree internally uses Euclidean distance in coordinate space for
-    /// ordering. The returned Haversine distances are computed afterward and
-    /// may not perfectly match the R*-tree's ordering. This is expected behavior
-    /// for geographic KNN queries where coordinate space differs from geodesic space.
-    ///
-    /// # Performance
-    ///
-    /// O(log n + k log k) complexity using R*-tree's spatial indexing.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace to search
-    /// * `x` - Query point X coordinate (longitude)
-    /// * `y` - Query point Y coordinate (latitude)
-    /// * `z` - Query point Z coordinate (altitude in meters)
-    /// * `k` - Number of nearest neighbors to find
-    ///
-    /// # Returns
-    ///
-    /// Vector of (key, data, distance) tuples for the k nearest points.
+    /// Find k nearest neighbors in 3D space.
     pub fn knn_3d(
         &self,
         prefix: &str,
@@ -634,11 +546,6 @@ impl SpatialIndexManager {
     }
 
     /// Remove a point from the index.
-    ///
-    /// # Arguments
-    ///
-    /// * `prefix` - The prefix/namespace
-    /// * `key` - The key of the point to remove
     pub fn remove_entry(&mut self, prefix: &str, key: &str) -> bool {
         let Some(tree) = self.indexes.get_mut(prefix) else {
             return false;
@@ -695,36 +602,6 @@ pub struct SpatialIndexStats {
 }
 
 /// Compute AABB envelope for a spherical query volume.
-///
-/// Creates a minimal axis-aligned bounding box that fully contains a sphere
-/// defined by a center point and radius. The envelope accounts for Earth's
-/// curvature by scaling longitude based on latitude.
-///
-/// # Algorithm
-///
-/// 1. Convert radius to angular degrees (latitude/longitude)
-/// 2. Apply latitude-dependent longitude scaling (cos correction)
-/// 3. Create AABB with ±radius in all dimensions
-///
-/// # Spatial Pruning Effectiveness
-///
-/// For a localized query, the envelope typically contains:
-/// - Target points (true positives)
-/// - Nearby points requiring distance check (false positives)
-/// - Excludes distant points entirely (true negatives - the optimization)
-///
-/// Pruning effectiveness: ~95-99% for small radius / large dataset ratio.
-///
-/// # Arguments
-///
-/// * `center_x` - Center longitude
-/// * `center_y` - Center latitude
-/// * `center_z` - Center altitude in meters
-/// * `radius` - Radius in meters
-///
-/// # Returns
-///
-/// AABB envelope that bounds the spherical volume
 #[inline]
 fn compute_spherical_envelope(
     center_x: f64,
@@ -750,37 +627,6 @@ fn compute_spherical_envelope(
 }
 
 /// Compute AABB envelope for a cylindrical query volume.
-///
-/// Creates a minimal AABB for altitude-constrained radius queries. The envelope
-/// uses exact altitude bounds and geographic bounds based on horizontal radius.
-///
-/// # Algorithm
-///
-/// 1. Convert horizontal radius to angular degrees
-/// 2. Apply latitude-dependent longitude scaling
-/// 3. Use exact [min_z, max_z] altitude bounds
-///
-/// # Altitude Pruning
-///
-/// Unlike spherical queries, cylindrical envelopes provide exact altitude
-/// filtering. Points outside [min_z, max_z] are eliminated by envelope
-/// intersection before any distance calculations occur.
-///
-/// This is particularly effective for queries like "find aircraft between
-/// 2000m and 5000m altitude" where altitude pruning alone eliminates
-/// large portions of the dataset.
-///
-/// # Arguments
-///
-/// * `center_x` - Center longitude
-/// * `center_y` - Center latitude
-/// * `min_z` - Minimum altitude in meters
-/// * `max_z` - Maximum altitude in meters
-/// * `radius` - Horizontal radius in meters
-///
-/// # Returns
-///
-/// AABB envelope that bounds the cylindrical volume
 #[inline]
 fn compute_cylindrical_envelope(
     center_x: f64,
@@ -804,14 +650,7 @@ fn compute_cylindrical_envelope(
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
-/// Calculate 3D haversine distance between two points.
-///
-/// Uses haversine formula for horizontal distance and Pythagorean theorem
-/// to incorporate altitude difference.
-///
-/// # Returns
-///
-/// Distance in meters.
+/// Calculate 3D haversine distance between two points (meters).
 #[inline]
 fn haversine_3d_distance(lon1: f64, lat1: f64, alt1: f64, lon2: f64, lat2: f64, alt2: f64) -> f64 {
     let p1 = GeoPoint::new(lon1, lat1);
@@ -821,11 +660,7 @@ fn haversine_3d_distance(lon1: f64, lat1: f64, alt1: f64, lon2: f64, lat2: f64, 
     (horizontal.powi(2) + vertical.powi(2)).sqrt()
 }
 
-/// Calculate 2D haversine distance between two points.
-///
-/// # Returns
-///
-/// Distance in meters.
+/// Calculate 2D haversine distance between two points (meters).
 #[inline]
 fn haversine_2d_distance(lon1: f64, lat1: f64, lon2: f64, lat2: f64) -> f64 {
     let p1 = GeoPoint::new(lon1, lat1);
