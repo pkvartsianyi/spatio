@@ -49,7 +49,6 @@ impl DB {
     ///
     /// Safety: The caller must ensure that `point` has valid geographic coordinates.
     /// Prefer using `insert_point` unless you have validated at a higher level
-    /// (e.g., batch validation) and want to avoid repeated checks in the hot path.
     pub fn insert_point_unchecked(
         &mut self,
         prefix: &str,

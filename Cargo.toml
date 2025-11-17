@@ -13,8 +13,6 @@ license = "MIT"
 repository = "https://github.com/pkvartsianyi/spatio"
 authors = ["Petro Kvartsianyi"]
 
-# Enable serde support in bincode v2 across the workspace so we can use
-# bincode::serde::{encode_to_vec, decode_from_slice} with serde types.
 [workspace.dependencies]
 # Spatial and geometric types
 geo = "0.31.0"

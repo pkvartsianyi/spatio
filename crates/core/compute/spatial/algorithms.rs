@@ -103,7 +103,6 @@ pub fn knn<T: Clone>(
     }
 
     // Convert the max-heap to ascending results by popping then reversing.
-    // This avoids the extra O(k log k) inside into_sorted_vec and keeps cloning to O(k).
     let mut results = Vec::with_capacity(heap.len());
     while let Some(entry) = heap.pop() {
         results.push((entry.point, entry.distance, entry.data.clone()));

@@ -1,4 +1,4 @@
-//! Persistence interfaces and AOF (Append-Only File) implementation for Spatio (feature `aof`).
+//! Persistence interfaces implementation for Spatio (feature `aof`).
 //!
 //! Provides simplified AOF file management, rewrite logic, and command
 //! serialization used when durability is enabled.
@@ -41,13 +41,13 @@ pub struct AOFFile {
     profile: AOFProfile,
 }
 
-/// Initial scratch buffer size (8KB) - sized for typical key-value pairs
+/// Initial scratch buffer size (8KB)
 const SCRATCH_INITIAL_CAPACITY: usize = 8 * 1024;
-/// Shrink threshold (128KB) - 16x initial capacity to avoid thrashing
+/// Shrink threshold (128KB)
 const SCRATCH_SHRINK_THRESHOLD: usize = 128 * 1024;
 /// Decay threshold for consecutive small writes before shrinking
 const SCRATCH_SHRINK_DECAY_FACTOR: usize = 4;
-/// 64KB buffer for BufWriter (amortizes syscalls while keeping latency reasonable)
+/// 64KB buffer for BufWriter
 const AOF_BUFFER_SIZE: usize = 64 * 1024;
 
 #[cfg(feature = "bench-prof")]
@@ -77,7 +77,7 @@ pub enum AOFCommand {
 ///
 /// Implementors can provide custom persistence backends (e.g., AOF, snapshotting logs,
 /// databases) by implementing this trait. The default in-repo implementation is AOFFile.
-pub trait PersistenceLog: Send {
+pub trait PersistenceLog: Send + Sync {
     /// Append a Set record to the log.
     fn write_set(
         &mut self,
@@ -213,13 +213,10 @@ impl AOFFile {
         }
         self.size += written_len as u64;
 
-        // Adaptive scratch buffer shrink: use exponential decay to avoid thrashing.
         if self.scratch.capacity() > SCRATCH_SHRINK_THRESHOLD {
             if written_len <= SCRATCH_INITIAL_CAPACITY {
-                // Sustained small writes increment the counter
                 self.scratch_small_write_count = self.scratch_small_write_count.saturating_add(1);
                 if self.scratch_small_write_count >= SCRATCH_SHRINK_DECAY_FACTOR {
-                    // Shrink gradually by half, but never below initial capacity
                     let mut new_cap = self.scratch.capacity() / 2;
                     if new_cap < SCRATCH_INITIAL_CAPACITY {
                         new_cap = SCRATCH_INITIAL_CAPACITY;
@@ -227,11 +224,9 @@ impl AOFFile {
                     if new_cap < self.scratch.capacity() {
                         self.scratch = BytesMut::with_capacity(new_cap);
                     }
-                    // Reduce the counter to require sustained small writes again
                     self.scratch_small_write_count /= 2;
                 }
             } else {
-                // Large write observed; decay the small-write counter
                 self.scratch_small_write_count /= 2;
             }
         }
@@ -310,7 +305,6 @@ impl AOFFile {
             self.file.sync_all()?;
 
             // Atomically replace the target with the rewritten file on supported platforms.
-            // Keep the existing file handles intact until rename succeeds and we can reopen.
             std::fs::rename(&rewrite_path, &target_path)?;
             Self::sync_parent_dir(&target_path)?;
 
@@ -325,7 +319,6 @@ impl AOFFile {
             let writer_file = new_file.try_clone()?;
             let new_writer = BufWriter::with_capacity(AOF_BUFFER_SIZE, writer_file);
 
-            // Atomically swap internal handles only after new ones are confirmed working
             self.file = new_file;
             self.writer = new_writer;
             self.size = new_size;

@@ -16,7 +16,7 @@ pub mod persistence;
 mod snapshot;
 
 pub use backends::MemoryBackend;
-// Re-export persistence interface and default AOF types
+
 pub use persistence::{AOFCommand, PersistenceLog};
 #[cfg(feature = "snapshot")]
 pub use snapshot::{SnapshotConfig, SnapshotFile};
