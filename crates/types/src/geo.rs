@@ -292,6 +292,72 @@ impl Polygon {
         }
     }
 
+    /// Create a new polygon from coordinate arrays without requiring `geo::LineString`.
+    ///
+    /// This is a convenience method that allows creating polygons from raw coordinates
+    /// without needing to import types from the `geo` crate.
+    ///
+    /// # Arguments
+    ///
+    /// * `exterior` - Coordinates for the outer boundary [(lon, lat), ...]
+    /// * `interiors` - Optional holes within the polygon, each as [(lon, lat), ...]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use spatio_types::geo::Polygon;
+    ///
+    /// // Create a simple rectangle
+    /// let polygon = Polygon::from_coords(
+    ///     &[
+    ///         (-80.0, 35.0),
+    ///         (-70.0, 35.0),
+    ///         (-70.0, 45.0),
+    ///         (-80.0, 45.0),
+    ///         (-80.0, 35.0),  // Close the ring
+    ///     ],
+    ///     vec![],
+    /// );
+    ///
+    /// // Create a polygon with a hole
+    /// let polygon_with_hole = Polygon::from_coords(
+    ///     &[
+    ///         (-80.0, 35.0),
+    ///         (-70.0, 35.0),
+    ///         (-70.0, 45.0),
+    ///         (-80.0, 45.0),
+    ///         (-80.0, 35.0),
+    ///     ],
+    ///     vec![
+    ///         vec![
+    ///             (-75.0, 38.0),
+    ///             (-74.0, 38.0),
+    ///             (-74.0, 40.0),
+    ///             (-75.0, 40.0),
+    ///             (-75.0, 38.0),
+    ///         ]
+    ///     ],
+    /// );
+    /// ```
+    pub fn from_coords(exterior: &[(f64, f64)], interiors: Vec<Vec<(f64, f64)>>) -> Self {
+        let exterior_coords: Vec<geo::Coord> =
+            exterior.iter().map(|&(x, y)| geo::Coord { x, y }).collect();
+        let exterior_line = geo::LineString::from(exterior_coords);
+
+        let interior_lines: Vec<geo::LineString<f64>> = interiors
+            .into_iter()
+            .map(|interior| {
+                let coords: Vec<geo::Coord> = interior
+                    .into_iter()
+                    .map(|(x, y)| geo::Coord { x, y })
+                    .collect();
+                geo::LineString::from(coords)
+            })
+            .collect();
+
+        Self::new(exterior_line, interior_lines)
+    }
+
     /// Get a reference to the exterior ring.
     #[inline]
     pub fn exterior(&self) -> &geo::LineString<f64> {
