@@ -171,13 +171,10 @@ impl DB {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        let results = self.inner.spatial_index.query_within_radius_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-            limit,
-        );
+        let results =
+            self.inner
+                .spatial_index
+                .query_within_radius_2d(prefix, center, radius_meters, limit);
 
         let points: Vec<(Point, Bytes, f64)> = results
             .into_iter()
@@ -205,12 +202,10 @@ impl DB {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        Ok(self.inner.spatial_index.contains_point_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-        ))
+        Ok(self
+            .inner
+            .spatial_index
+            .contains_point_2d(prefix, center, radius_meters))
     }
 
     /// Check if any points exist within a bounding box.
@@ -266,12 +261,10 @@ impl DB {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        Ok(self.inner.spatial_index.count_within_radius_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-        ))
+        Ok(self
+            .inner
+            .spatial_index
+            .count_within_radius_2d(prefix, center, radius_meters))
     }
 
     /// Find all points within a bounding box.
@@ -369,8 +362,7 @@ impl DB {
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let results = self.inner.spatial_index.knn_2d_with_max_distance(
             prefix,
-            center.x(),
-            center.y(),
+            center,
             k * 2,
             Some(max_radius),
         );

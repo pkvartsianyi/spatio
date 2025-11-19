@@ -6,6 +6,7 @@ use crate::config::{BoundingBox3D, Point3d, SetOptions};
 use crate::db::{DB, DBInner};
 use crate::error::Result;
 use bytes::Bytes;
+use spatio_types::geo::Point as GeoPoint;
 
 impl DB {
     /// Insert a 3D point with altitude into the database.
@@ -86,14 +87,10 @@ impl DB {
         validate_geographic_point_3d(center)?;
         crate::compute::validation::validate_radius(radius)?;
 
-        let results = self.inner.spatial_index.query_within_sphere(
-            prefix,
-            center.x(),
-            center.y(),
-            center.z(),
-            radius,
-            limit,
-        );
+        let results = self
+            .inner
+            .spatial_index
+            .query_within_sphere(prefix, center, radius, limit);
 
         Ok(Self::results_to_point3d_with_distance(
             &self.inner,
@@ -185,8 +182,7 @@ impl DB {
         let results = self.inner.spatial_index.query_within_cylinder(
             prefix,
             CylinderQuery {
-                center_x: center.x(),
-                center_y: center.y(),
+                center: GeoPoint::new(center.x(), center.y()),
                 min_z: min_altitude,
                 max_z: max_altitude,
                 radius: horizontal_radius,
@@ -224,10 +220,7 @@ impl DB {
         point: &Point3d,
         k: usize,
     ) -> Result<Vec<(Point3d, Bytes, f64)>> {
-        let results = self
-            .inner
-            .spatial_index
-            .knn_3d(prefix, point.x(), point.y(), point.z(), k);
+        let results = self.inner.spatial_index.knn_3d(prefix, point, k);
 
         Ok(Self::results_to_point3d_with_distance(
             &self.inner,

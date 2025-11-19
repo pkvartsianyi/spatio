@@ -85,7 +85,8 @@ pub mod prelude {
     #[cfg(feature = "sync")]
     pub use crate::SyncDB;
 
-    pub use geo::{Point, Polygon, Rect};
+    pub use crate::{Point, Polygon};
+    pub use geo::Rect;
 
     pub use crate::{Config, SetOptions, SyncPolicy};
 
