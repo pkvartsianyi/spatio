@@ -399,8 +399,16 @@ impl PySpatio {
     }
 
     /// Check if any points exist within a radius
-    fn contains_point(&self, prefix: &str, center: &PyPoint, radius_meters: f64) -> PyResult<bool> {
-        handle_error(self.db.contains_point(prefix, &center.inner, radius_meters))
+    fn intersects_radius(
+        &self,
+        prefix: &str,
+        center: &PyPoint,
+        radius_meters: f64,
+    ) -> PyResult<bool> {
+        handle_error(
+            self.db
+                .intersects_radius(prefix, &center.inner, radius_meters),
+        )
     }
 
     /// Count points within a distance

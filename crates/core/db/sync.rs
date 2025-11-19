@@ -174,10 +174,15 @@ impl SyncDB {
     }
 
     /// Checks if there are any points within a radius.
-    pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
+    pub fn intersects_radius(
+        &self,
+        prefix: &str,
+        center: &Point,
+        radius_meters: f64,
+    ) -> Result<bool> {
         self.inner
             .read()
-            .contains_point(prefix, center, radius_meters)
+            .intersects_radius(prefix, center, radius_meters)
     }
 
     /// Counts points within a radius.

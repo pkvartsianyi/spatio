@@ -64,20 +64,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("2. Existence Checks (contains_point)");
     println!("-------------------------------------");
 
-    let has_nearby_500km = db.contains_point("world_cities", &london, 500_000.0)?;
-    let has_nearby_100km = db.contains_point("world_cities", &london, 100_000.0)?;
+    let has_nearby_500km = db.intersects_radius("world_cities", &london, 500_000.0)?;
+    let has_nearby_100km = db.intersects_radius("world_cities", &london, 100_000.0)?;
 
     println!("   Any cities within 500km of London? {}", has_nearby_500km);
     println!("   Any cities within 100km of London? {}", has_nearby_100km);
-
-    // Check empty ocean location
-    let middle_of_ocean = Point::new(-30.0, 30.0);
-    let has_nearby_ocean = db.contains_point("world_cities", &middle_of_ocean, 1_000_000.0)?;
-    println!(
-        "   Any cities within 1000km of mid-ocean point? {}",
-        has_nearby_ocean
-    );
-    println!();
 
     // === 3. COUNTING POINTS ===
     println!("3. Counting Points (count_within_radius)");

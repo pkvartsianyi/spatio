@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("------------------------");
 
     // Check if any points exist within radius
-    let has_nearby = db.contains_point("cities", &paris, 1_000_000.0)?;
+    let has_nearby = db.intersects_radius("cities", &paris, 1_000_000.0)?;
     println!("   Cities within 1000km of Paris: {}", has_nearby);
 
     // Count points within radius

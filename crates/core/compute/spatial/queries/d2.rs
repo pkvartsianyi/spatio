@@ -186,6 +186,9 @@ impl DB {
 
     /// Check if any points exist within a circular radius.
     ///
+    /// Returns `true` if at least one point exists within the specified radius
+    /// of the center point, `false` otherwise.
+    ///
     /// # Examples
     ///
     /// ```rust
@@ -194,18 +197,23 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
-    /// let has_nearby = db.contains_point("cities", &center, 50_000.0)?;
+    /// let has_nearby = db.intersects_radius("cities", &center, 50_000.0)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
+    pub fn intersects_radius(
+        &self,
+        prefix: &str,
+        center: &Point,
+        radius_meters: f64,
+    ) -> Result<bool> {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
         Ok(self
             .inner
             .spatial_index
-            .contains_point_2d(prefix, center, radius_meters))
+            .intersects_radius_2d(prefix, center, radius_meters))
     }
 
     /// Check if any points exist within a bounding box.

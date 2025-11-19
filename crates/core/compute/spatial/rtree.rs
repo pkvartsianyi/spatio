@@ -199,7 +199,24 @@ impl SpatialIndexManager {
             .insert(indexed_bbox);
     }
 
-    /// Query points within a 3D spherical volume using envelope-based pruning.
+    /// Query points within a 3D spherical volume using hybrid distance metric.
+    ///
+    /// Uses envelope-based pruning followed by exact distance filtering.
+    ///
+    /// # Distance Metric
+    ///
+    /// Hybrid 3D distance: `√(haversine_horizontal² + euclidean_vertical²)`
+    ///
+    /// # Assumptions
+    ///
+    /// This internal function assumes the caller has validated:
+    /// - `center` coordinates are valid (lon: ±180°, lat: ±90°, alt: reasonable range)
+    /// - `radius` is positive and finite
+    /// - Public APIs perform validation
+    ///
+    /// # Limitations
+    ///
+    /// Not recommended for queries above ±80° latitude due to envelope expansion.
     pub fn query_within_sphere(
         &self,
         prefix: &str,
@@ -215,11 +232,13 @@ impl SpatialIndexManager {
         let mut heap = BinaryHeap::with_capacity(limit);
 
         for point in tree.locate_in_envelope_intersecting(&envelope) {
-            let distance = haversine_3d_distance(center, point.x, point.y, point.z);
+            let p2 = Point3d::new(point.x, point.y, point.z);
+            let distance = geographic_3d_distance(center, &p2);
 
             if distance.is_finite() && distance <= radius {
                 if heap.len() < limit {
                     heap.push(QueryCandidate {
+                        // TODO: Performance optimization: Avoid cloning here?
                         point: point.clone(),
                         distance,
                     });
@@ -248,6 +267,20 @@ impl SpatialIndexManager {
         results
     }
 
+    /// Query 2D points within a circular radius (internal, assumes validated input).
+    ///
+    /// Returns points sorted by distance (ascending) up to the specified limit.
+    ///
+    /// # Assumptions
+    ///
+    /// This internal function assumes the caller has validated:
+    /// - `center` has valid geographic coordinates (lon: ±180°, lat: ±90°)
+    /// - `radius` is positive and finite
+    /// - Public APIs use `validate_geographic_point()` and `validate_radius()`
+    ///
+    /// # Performance
+    ///
+    /// Uses envelope-based pruning to avoid computing distances for distant points.
     pub fn query_within_radius_2d(
         &self,
         prefix: &str,
@@ -297,13 +330,16 @@ impl SpatialIndexManager {
         results
     }
 
+    /// Query points within a 3D bounding box.
+    ///
+    /// - Returns empty result if coordinates are non-finite.
     pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String, Bytes)> {
-        let mut min_x = query.min_x;
-        let mut min_y = query.min_y;
-        let mut min_z = query.min_z;
-        let mut max_x = query.max_x;
-        let mut max_y = query.max_y;
-        let mut max_z = query.max_z;
+        let min_x = query.min_x;
+        let min_y = query.min_y;
+        let min_z = query.min_z;
+        let max_x = query.max_x;
+        let max_y = query.max_y;
+        let max_z = query.max_z;
 
         if ![min_x, min_y, min_z, max_x, max_y, max_z]
             .iter()
@@ -311,16 +347,6 @@ impl SpatialIndexManager {
         {
             log::warn!("Rejecting bounding box query with non-finite coordinates");
             return Vec::new();
-        }
-
-        if min_x > max_x {
-            std::mem::swap(&mut min_x, &mut max_x);
-        }
-        if min_y > max_y {
-            std::mem::swap(&mut min_y, &mut max_y);
-        }
-        if min_z > max_z {
-            std::mem::swap(&mut min_z, &mut max_z);
         }
 
         let Some(tree) = self.indexes.get(prefix) else {
@@ -374,7 +400,11 @@ impl SpatialIndexManager {
             .count()
     }
 
-    pub fn contains_point_2d(&self, prefix: &str, center: &GeoPoint, radius: f64) -> bool {
+    /// Check if any points exist within a circular radius.
+    ///
+    /// Returns `true` if at least one point in the spatial index falls within
+    /// the specified radius of the center point.
+    pub fn intersects_radius_2d(&self, prefix: &str, center: &GeoPoint, radius: f64) -> bool {
         let Some(tree) = self.indexes.get(prefix) else {
             return false;
         };
@@ -540,7 +570,8 @@ impl SpatialIndexManager {
         tree.nearest_neighbor_iter(&query_point)
             .take(k)
             .filter_map(|point| {
-                let distance = haversine_3d_distance(center, point.x, point.y, point.z);
+                let p2 = Point3d::new(point.x, point.y, point.z);
+                let distance = geographic_3d_distance(center, &p2);
                 if distance.is_finite() {
                     Some((point.key.clone(), point.data.clone(), distance))
                 } else {
@@ -675,11 +706,33 @@ pub struct SpatialIndexStats {
     pub total_points: usize,
 }
 
+/// Compute approximate lat/lon degrees for a given radius at a latitude.
+///
+/// Uses geodesic approximations:
+/// - Latitude: Simple linear (1° ≈ 111 km everywhere)
+/// - Longitude: Cosine-corrected based on latitude
+///
+/// # Polar Region Handling
+///
+/// Near the poles, longitude degrees per meter increases dramatically as cos(latitude) → 0.
+/// To prevent extreme expansion or division by zero:
+/// - Latitude is clamped to ±89.9° for calculations
+/// - At 89.9°, cos(lat) ≈ 0.00175, giving ~6.4° longitude per km
+/// - Queries at exactly ±90° are handled safely
+///
+/// **Not recommended for queries above ±80° latitude** due to large envelope sizes.
 fn compute_lat_lon_degrees(lat: f64, radius: f64) -> (f64, f64) {
     let lat_degrees = (radius / HaversineMeasure::GRS80_MEAN_RADIUS.radius()).to_degrees();
+
+    // Clamp latitude to avoid extreme expansion near poles
+    // At 89.9°, cos(lat) ≈ 0.00175 (conservative but prevents issues)
+    // At exactly 90°, cos would be 0 (division by zero)
+    let safe_lat = lat.abs().min(89.9);
+
     let lon_degrees = (radius
-        / (HaversineMeasure::GRS80_MEAN_RADIUS.radius() * lat.to_radians().cos()))
+        / (HaversineMeasure::GRS80_MEAN_RADIUS.radius() * safe_lat.to_radians().cos()))
     .to_degrees();
+
     (lat_degrees, lon_degrees)
 }
 
@@ -699,6 +752,27 @@ fn compute_2d_envelope(center: &GeoPoint, radius: f64) -> rstar::AABB<IndexedPoi
 }
 
 /// Compute AABB envelope for a spherical query volume.
+///
+/// # Distance Metric
+///
+/// This creates an envelope for a **hybrid 3D distance** query:
+/// - Horizontal: Geodesic (haversine) distance on Earth's surface
+/// - Vertical: Euclidean (straight-line) altitude difference
+/// - Combined: `√(horizontal² + vertical²)`
+///
+/// # Envelope Approximation
+///
+/// The envelope uses ±radius for altitude bounds, which is an **over-approximation**:
+/// - A point at `(center.lon, center.lat, center.alt ± radius)` has distance exactly `radius`
+/// - But envelope also includes points far horizontally that are within altitude range
+/// - All candidates are filtered by actual distance calculation
+///
+/// This ensures no false negatives while accepting some false positives in the envelope.
+///
+/// # Limitations
+///
+/// - Not recommended for queries above ±80° latitude (use cylindrical queries instead)
+/// - Envelope may include many points that will be filtered out by distance check
 #[inline]
 fn compute_spherical_envelope(center: &Point3d, radius: f64) -> rstar::AABB<IndexedPoint3D> {
     let (lat_degrees, lon_degrees) = compute_lat_lon_degrees(center.y(), radius);
@@ -735,13 +809,19 @@ fn compute_cylindrical_envelope(
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
-/// Calculate 3D haversine distance between two points (meters).
+/// Calculate hybrid 3D distance between two points (meters).
+///
+/// - **Horizontal distance:** Haversine formula on Earth's surface (geodesic)
+/// - **Vertical distance:** Euclidean distance (straight-line altitude difference)
+///
+/// The result is the Euclidean combination of these two components:
+/// `sqrt(horizontal² + vertical²)`
 #[inline]
-fn haversine_3d_distance(p1: &Point3d, lon2: f64, lat2: f64, alt2: f64) -> f64 {
+fn geographic_3d_distance(p1: &Point3d, p2: &Point3d) -> f64 {
     let p1_geo = GeoPoint::new(p1.x(), p1.y());
-    let p2_geo = GeoPoint::new(lon2, lat2);
+    let p2_geo = GeoPoint::new(p2.x(), p2.y());
     let horizontal = p1_geo.haversine_distance(&p2_geo);
-    let vertical = (alt2 - p1.z()).abs();
+    let vertical = (p2.z() - p1.z()).abs();
     (horizontal.powi(2) + vertical.powi(2)).sqrt()
 }
 
@@ -888,5 +968,70 @@ mod tests {
         let query_miss = BoundingBox2D::new(-75.0, 41.0, -74.9, 41.1);
         let results_miss = index.find_intersecting_bboxes("zones", &query_miss);
         assert_eq!(results_miss.len(), 0);
+    }
+
+    #[test]
+    fn test_polar_region_query_doesnt_panic() {
+        // Test near North Pole
+        let mut index = SpatialIndexManager::new();
+
+        // Insert a point near the North Pole
+        index.insert_point(
+            "arctic",
+            0.0,
+            89.5,
+            1000.0,
+            "station1".to_string(),
+            Bytes::from("arctic_station"),
+        );
+
+        // Query near pole should not panic or produce invalid envelopes
+        let center = Point3d::new(0.0, 89.5, 1000.0);
+        let results = index.query_within_sphere("arctic", &center, 5000.0, 10);
+
+        // Should find the station
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "station1");
+    }
+
+    #[test]
+    fn test_exactly_at_pole() {
+        let mut index = SpatialIndexManager::new();
+
+        // Insert at exactly 90° (North Pole)
+        index.insert_point(
+            "pole",
+            0.0,
+            90.0,
+            0.0,
+            "north_pole".to_string(),
+            Bytes::from("pole_marker"),
+        );
+
+        // Query at pole should not panic (latitude is clamped internally)
+        let center = Point3d::new(0.0, 90.0, 0.0);
+        let results = index.query_within_sphere("pole", &center, 1000.0, 10);
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_high_latitude_2d_query() {
+        let mut index = SpatialIndexManager::new();
+
+        // Insert points at high latitude
+        index.insert_point_2d(
+            "scandinavia",
+            10.0,
+            70.0,
+            "tromso".to_string(),
+            Bytes::from("norway"),
+        );
+
+        let center = GeoPoint::new(10.0, 70.0);
+        let results = index.query_within_radius_2d("scandinavia", &center, 50_000.0, 10);
+
+        // Should work without panic
+        assert_eq!(results.len(), 1);
     }
 }
