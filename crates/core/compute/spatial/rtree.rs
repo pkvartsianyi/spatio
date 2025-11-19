@@ -575,7 +575,6 @@ impl SpatialIndexManager {
 
     /// Remove a point from the index.
     pub fn remove_entry(&mut self, prefix: &str, key: &str) -> bool {
-        // Fast removal using key map
         let Some(points) = self.key_map.remove(key) else {
             return false;
         };
