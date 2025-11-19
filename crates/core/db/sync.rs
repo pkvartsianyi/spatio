@@ -142,11 +142,11 @@ impl SyncDB {
         prefix: &str,
         center: &Point,
         radius_meters: f64,
-        max_results: usize,
-    ) -> Result<Vec<(Point, Bytes)>> {
+        limit: usize,
+    ) -> Result<Vec<(Point, Bytes, f64)>> {
         self.inner
             .read()
-            .query_within_radius(prefix, center, radius_meters, max_results)
+            .query_within_radius(prefix, center, radius_meters, limit)
     }
 
     /// Queries points within a bounding box.

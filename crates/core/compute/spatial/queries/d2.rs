@@ -167,7 +167,7 @@ impl DB {
         center: &Point,
         radius_meters: f64,
         limit: usize,
-    ) -> Result<Vec<(Point, Bytes)>> {
+    ) -> Result<Vec<(Point, Bytes, f64)>> {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
@@ -179,9 +179,9 @@ impl DB {
             limit,
         );
 
-        let points: Vec<(Point, Bytes)> = results
+        let points: Vec<(Point, Bytes, f64)> = results
             .into_iter()
-            .map(|(x, y, _key, data, _distance)| (Point::new(x, y), data))
+            .map(|(x, y, _key, data, distance)| (Point::new(x, y), data, distance))
             .collect();
 
         Ok(points)
@@ -490,7 +490,7 @@ impl DB {
         let candidates = self.query_within_radius(prefix, &center, radius_meters, limit * 2)?;
 
         let mut results = Vec::new();
-        for (point, data) in candidates {
+        for (point, data, _distance) in candidates {
             if bbox.contains_point(&point) {
                 results.push((point, data));
                 if results.len() >= limit {

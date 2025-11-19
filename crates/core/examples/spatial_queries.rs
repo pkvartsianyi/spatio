@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Find cities within 500km of London
     let nearby_500km = db.query_within_radius("world_cities", &london, 500_000.0, 10)?;
     println!("   Cities within 500km of London: {}", nearby_500km.len());
-    for (_, data) in &nearby_500km {
+    for (_, data, _) in &nearby_500km {
         println!("     - {}", String::from_utf8_lossy(data));
     }
 
@@ -48,14 +48,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "\n   Cities within 2000km of London: {}",
         nearby_2000km.len()
     );
-    for (_, data) in &nearby_2000km {
+    for (_, data, _) in &nearby_2000km {
         println!("     - {}", String::from_utf8_lossy(data));
     }
 
     // Use limit to get only closest N cities
     let closest_3 = db.query_within_radius("world_cities", &london, f64::INFINITY, 3)?;
     println!("\n   Closest 3 cities to London:");
-    for (i, (_, data)) in closest_3.iter().enumerate() {
+    for (i, (_, data, _)) in closest_3.iter().enumerate() {
         println!("     {}. {}", i + 1, String::from_utf8_lossy(data));
     }
     println!();
@@ -167,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n   Landmarks within 2km:");
     let close_landmarks = db.query_within_radius("landmarks", &center_london, 2_000.0, 10)?;
-    for (_, data) in &close_landmarks {
+    for (_, data, _) in &close_landmarks {
         println!("     - {}", String::from_utf8_lossy(data));
     }
     println!();

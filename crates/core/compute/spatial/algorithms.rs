@@ -171,18 +171,28 @@ pub fn bboxes_intersect(bbox1: &Rect, bbox2: &Rect) -> bool {
 }
 
 pub fn expand_bbox(bbox: &Rect, distance_meters: f64) -> Rect {
+    // 1 degree of latitude is approximately 111km everywhere
     let lat_offset = distance_meters / 111_000.0;
-    let avg_lat = (bbox.min().y + bbox.max().y) / 2.0;
-    let lon_offset = distance_meters / (111_000.0 * avg_lat.to_radians().cos());
+
+    let min_y = (bbox.min().y - lat_offset).max(-90.0);
+    let max_y = (bbox.max().y + lat_offset).min(90.0);
+
+    // Longitude expansion depends on latitude. We use the latitude closest to the pole
+    // (max absolute latitude) to be conservative (larger expansion).
+    let max_abs_lat = bbox.min().y.abs().max(bbox.max().y.abs());
+    // Clamp to avoid division by zero or extreme expansion near poles
+    let calc_lat = max_abs_lat.min(89.9);
+
+    let lon_offset = distance_meters / (111_000.0 * calc_lat.to_radians().cos());
 
     Rect::new(
         geo::coord! {
             x: bbox.min().x - lon_offset,
-            y: bbox.min().y - lat_offset
+            y: min_y
         },
         geo::coord! {
             x: bbox.max().x + lon_offset,
-            y: bbox.max().y + lat_offset
+            y: max_y
         },
     )
 }

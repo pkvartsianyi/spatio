@@ -313,30 +313,24 @@ impl PySpatio {
     }
 
     /// Find nearby points within a radius
+    #[pyo3(signature = (prefix, center, radius, limit=100))]
     fn query_within_radius(
         &self,
         prefix: &str,
         center: &PyPoint,
-        radius_meters: f64,
+        radius: f64,
         limit: usize,
-    ) -> PyResult<Py<PyList>> {
+    ) -> PyResult<Vec<(PyPoint, Vec<u8>, f64)>> {
         let results =
             handle_error(
                 self.db
-                    .query_within_radius(prefix, &center.inner, radius_meters, limit),
+                    .query_within_radius(prefix, &center.inner, radius, limit),
             )?;
 
-        Python::attach(|py| {
-            let py_list = PyList::empty(py);
-            for (point, value) in results {
-                let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new(py, &value);
-                let distance = Haversine.distance(center.inner.into_inner(), point.into_inner());
-                let tuple = (py_point, py_value, distance).into_pyobject(py)?;
-                py_list.append(tuple)?;
-            }
-            Ok(py_list.unbind())
-        })
+        Ok(results
+            .into_iter()
+            .map(|(point, data, distance)| (PyPoint { inner: point }, data.to_vec(), distance))
+            .collect())
     }
 
     /// Insert trajectory data for an object

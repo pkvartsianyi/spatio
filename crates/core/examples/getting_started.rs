@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Find nearby cities within radius (in meters)
     let nearby = db.query_within_radius("cities", &london, 500_000.0, 10)?;
     println!("   Found {} cities within 500km of London:", nearby.len());
-    for (_, data) in &nearby {
+    for (_, data, _) in &nearby {
         println!("     - {}", String::from_utf8_lossy(data));
     }
     println!();
@@ -59,10 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Cities within 6000km of NYC: {}", count);
 
     // Find points within bounding box (min_lon, min_lat, max_lon, max_lat)
-    let europe = db.find_within_bounds("cities", -10.0, 40.0, 10.0, 55.0, 10)?;
-    println!("   Cities in European bounding box: {}", europe.len());
-    for (_, data) in &europe {
-        println!("     - {}", String::from_utf8_lossy(data));
+    let results = db.find_within_bounds("cities", -10.0, 40.0, 10.0, 55.0, 10)?;
+    println!("   Cities in European bounding box: {}", results.len());
+    for (_point, data) in results {
+        println!("     - {}", String::from_utf8_lossy(&data));
     }
     println!();
 
