@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let london = Point::new(-0.1278, 51.5074);
     let nearby = db.query_within_radius("cities", &london, 1_000_000.0, 10)?;
     println!("   Cities within 1000km of London: {}", nearby.len());
-    for (_, data) in &nearby {
+    for (_, data, _) in &nearby {
         println!("     - {}", String::from_utf8_lossy(data));
     }
     println!();
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("------------------------");
 
     // Existence check
-    let has_nearby = db.contains_point("cities", &london, 500_000.0)?;
+    let has_nearby = db.intersects_radius("cities", &london, 500_000.0)?;
     println!("   Cities within 500km of London exist: {}", has_nearby);
 
     // Count points
@@ -86,8 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Bounding box query (Europe)
     let europe = db.find_within_bounds("cities", -10.0, 40.0, 20.0, 60.0, 10)?;
     println!("   Cities in European bounding box: {}", europe.len());
-    for (_, data) in &europe {
-        println!("     - {}", String::from_utf8_lossy(data));
+    for (_point, data) in europe {
+        println!("     - {}", String::from_utf8_lossy(&data));
     }
     println!();
 
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "   Landmarks within 5km of London: {}",
         nearby_landmarks.len()
     );
-    for (_, data) in &nearby_landmarks {
+    for (_, data, _) in &nearby_landmarks {
         println!("     - {}", String::from_utf8_lossy(data));
     }
     println!();

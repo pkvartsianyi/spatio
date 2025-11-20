@@ -165,7 +165,7 @@ fn demo_spatial_persistence() -> Result<(), Box<dyn std::error::Error>> {
             "  ✓ Found {} cities within 500km of New York:",
             nearby.len()
         );
-        for (point, data) in nearby {
+        for (point, data, _distance) in nearby {
             let name = String::from_utf8_lossy(&data);
             println!("    - {} at ({:.4}, {:.4})", name, point.y(), point.x());
         }

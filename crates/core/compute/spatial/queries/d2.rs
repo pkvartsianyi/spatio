@@ -167,27 +167,27 @@ impl DB {
         center: &Point,
         radius_meters: f64,
         limit: usize,
-    ) -> Result<Vec<(Point, Bytes)>> {
+    ) -> Result<Vec<(Point, Bytes, f64)>> {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        let results = self.inner.spatial_index.query_within_radius_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-            limit,
-        );
+        let results =
+            self.inner
+                .spatial_index
+                .query_within_radius_2d(prefix, center, radius_meters, limit);
 
-        let points: Vec<(Point, Bytes)> = results
+        let points: Vec<(Point, Bytes, f64)> = results
             .into_iter()
-            .map(|(x, y, _key, data, _distance)| (Point::new(x, y), data))
+            .map(|(x, y, _key, data, distance)| (Point::new(x, y), data, distance))
             .collect();
 
         Ok(points)
     }
 
     /// Check if any points exist within a circular radius.
+    ///
+    /// Returns `true` if at least one point exists within the specified radius
+    /// of the center point, `false` otherwise.
     ///
     /// # Examples
     ///
@@ -197,20 +197,23 @@ impl DB {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut db = Spatio::memory()?;
     /// let center = Point::new(-74.0060, 40.7128);
-    /// let has_nearby = db.contains_point("cities", &center, 50_000.0)?;
+    /// let has_nearby = db.intersects_radius("cities", &center, 50_000.0)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn contains_point(&self, prefix: &str, center: &Point, radius_meters: f64) -> Result<bool> {
+    pub fn intersects_radius(
+        &self,
+        prefix: &str,
+        center: &Point,
+        radius_meters: f64,
+    ) -> Result<bool> {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        Ok(self.inner.spatial_index.contains_point_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-        ))
+        Ok(self
+            .inner
+            .spatial_index
+            .intersects_radius_2d(prefix, center, radius_meters))
     }
 
     /// Check if any points exist within a bounding box.
@@ -266,12 +269,10 @@ impl DB {
         validate_geographic_point(center)?;
         crate::compute::validation::validate_radius(radius_meters)?;
 
-        Ok(self.inner.spatial_index.count_within_radius_2d(
-            prefix,
-            center.x(),
-            center.y(),
-            radius_meters,
-        ))
+        Ok(self
+            .inner
+            .spatial_index
+            .count_within_radius_2d(prefix, center, radius_meters))
     }
 
     /// Find all points within a bounding box.
@@ -369,8 +370,7 @@ impl DB {
     ) -> Result<Vec<(Point, Bytes, f64)>> {
         let results = self.inner.spatial_index.knn_2d_with_max_distance(
             prefix,
-            center.x(),
-            center.y(),
+            center,
             k * 2,
             Some(max_radius),
         );
@@ -490,7 +490,7 @@ impl DB {
         let candidates = self.query_within_radius(prefix, &center, radius_meters, limit * 2)?;
 
         let mut results = Vec::new();
-        for (point, data) in candidates {
+        for (point, data, _distance) in candidates {
             if bbox.contains_point(&point) {
                 results.push((point, data));
                 if results.len() >= limit {

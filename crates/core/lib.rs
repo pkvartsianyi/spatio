@@ -69,6 +69,7 @@ pub use db::{AtomicBatch, ExpiredStats, Namespace, NamespaceManager};
 pub use compute::geojson;
 pub use compute::validation;
 
+#[cfg(feature = "aof")]
 pub use storage::{AOFCommand, PersistenceLog};
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 
@@ -85,7 +86,8 @@ pub mod prelude {
     #[cfg(feature = "sync")]
     pub use crate::SyncDB;
 
-    pub use geo::{Point, Polygon, Rect};
+    pub use crate::{Point, Polygon};
+    pub use geo::Rect;
 
     pub use crate::{Config, SetOptions, SyncPolicy};
 

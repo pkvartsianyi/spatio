@@ -1,4 +1,4 @@
-//! Atomic batch operations.
+// Atomic batch operations.
 
 use super::DBInner;
 use crate::config::SetOptions;

@@ -74,6 +74,20 @@ impl Config {
     }
 
     pub fn with_default_ttl(mut self, ttl: Duration) -> Self {
+        let ttl_secs = ttl.as_secs();
+
+        if ttl_secs > 365 * 24 * 3600 {
+            log::warn!(
+                "TTL of {} days is very large. This may indicate a misconfiguration.",
+                ttl_secs / (24 * 3600)
+            );
+        } else if ttl_secs < 60 {
+            log::warn!(
+                "TTL of {} seconds is very short. Consider if this is intentional.",
+                ttl_secs
+            );
+        }
+
         self.default_ttl_seconds = Some(ttl.as_secs_f64());
         self
     }
@@ -97,6 +111,15 @@ impl Config {
     #[cfg(feature = "time-index")]
     pub fn with_history_capacity(mut self, capacity: usize) -> Self {
         assert!(capacity > 0, "History capacity must be greater than zero");
+
+        if capacity > 100_000 {
+            log::warn!(
+                "History capacity of {} is very large and may consume significant memory. \
+                Each entry stores key + value + timestamp.",
+                capacity
+            );
+        }
+
         self.history_capacity = Some(capacity);
         self
     }

@@ -9,9 +9,9 @@ use crate::config::{Config, DbItem, DbStats, SetOptions};
 use crate::config::{HistoryEntry, HistoryEventKind};
 use crate::error::{Result, SpatioError};
 #[cfg(feature = "aof")]
-use crate::storage::PersistenceLog;
+use crate::storage::persistence::PersistenceLog;
 #[cfg(feature = "snapshot")]
-use crate::storage::SnapshotFile;
+use crate::storage::persistence::SnapshotFile;
 use bytes::Bytes;
 use std::collections::BTreeMap;
 #[cfg(feature = "time-index")]
@@ -96,7 +96,7 @@ impl DB {
 
         #[cfg(feature = "aof")]
         {
-            use crate::storage::persistence::AOFFile; // default in-core impl for BC
+            use crate::storage::persistence::AOFFile;
             let is_memory = path.to_str() == Some(":memory:");
             if !is_memory {
                 let mut aof_file = AOFFile::open(path)?;

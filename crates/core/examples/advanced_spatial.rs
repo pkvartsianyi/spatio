@@ -172,13 +172,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Cities within 1000km of NYC: {}", count);
 
     // Check if any cities exist within 100km
-    let has_nearby = db.contains_point("world_cities", &new_york, 100_000.0)?;
+    let has_nearby = db.intersects_radius("world_cities", &new_york, 100_000.0)?;
     println!("Has cities within 100km of NYC: {}", has_nearby);
 
     // Query with radius
     let nearby = db.query_within_radius("world_cities", &new_york, 200_000.0, 10)?;
     println!("\nCities within 200km of NYC:");
-    for (point, data) in &nearby {
+    for (point, data, _distance) in &nearby {
         let city_info = String::from_utf8_lossy(data);
         let dist = distance_between(&new_york, point, DistanceMetric::Haversine);
         println!("  - {} ({:.2} km)", city_info, dist / 1000.0);

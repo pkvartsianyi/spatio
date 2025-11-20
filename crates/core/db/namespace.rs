@@ -208,6 +208,8 @@ impl Namespace {
     /// # Arguments
     ///
     /// * `namespaced_key` - A key that belongs to this namespace
+    ///   The original key without the namespace prefix, or None if the key
+    ///   doesn't belong to this namespace
     ///
     /// # Returns
     ///
@@ -263,7 +265,6 @@ impl NamespaceManager {
         }
         Ok(Self { separator })
     }
-
     /// Get the separator used by this manager
     pub fn separator(&self) -> &str {
         &self.separator

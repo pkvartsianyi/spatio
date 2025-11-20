@@ -4,12 +4,13 @@
 //! It exposes the core functionality including database operations, spatio-temporal queries,
 //! and trajectory tracking.
 
-use geo::{Distance, Haversine, Polygon as GeoPolygon};
+// All geo types are now accessed through spatio wrappers
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::Point as RustPoint;
+use spatio::Polygon as RustPolygon;
 use spatio::{
     SyncDB as RustDB,
     config::{Config as RustConfig, SetOptions as RustSetOptions},
@@ -101,7 +102,7 @@ impl PyPoint {
 
     /// Calculate distance to another point in meters using Haversine formula
     fn distance_to(&self, other: &PyPoint) -> f64 {
-        Haversine.distance(self.inner.into_inner(), other.inner.into_inner())
+        self.inner.haversine_distance(&other.inner)
     }
 }
 
@@ -313,30 +314,24 @@ impl PySpatio {
     }
 
     /// Find nearby points within a radius
+    #[pyo3(signature = (prefix, center, radius, limit=100))]
     fn query_within_radius(
         &self,
         prefix: &str,
         center: &PyPoint,
-        radius_meters: f64,
+        radius: f64,
         limit: usize,
-    ) -> PyResult<Py<PyList>> {
+    ) -> PyResult<Vec<(PyPoint, Vec<u8>, f64)>> {
         let results =
             handle_error(
                 self.db
-                    .query_within_radius(prefix, &center.inner, radius_meters, limit),
+                    .query_within_radius(prefix, &center.inner, radius, limit),
             )?;
 
-        Python::attach(|py| {
-            let py_list = PyList::empty(py);
-            for (point, value) in results {
-                let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new(py, &value);
-                let distance = Haversine.distance(center.inner.into_inner(), point.into_inner());
-                let tuple = (py_point, py_value, distance).into_pyobject(py)?;
-                py_list.append(tuple)?;
-            }
-            Ok(py_list.unbind())
-        })
+        Ok(results
+            .into_iter()
+            .map(|(point, data, distance)| (PyPoint { inner: point }, data.to_vec(), distance))
+            .collect())
     }
 
     /// Insert trajectory data for an object
@@ -404,8 +399,16 @@ impl PySpatio {
     }
 
     /// Check if any points exist within a radius
-    fn contains_point(&self, prefix: &str, center: &PyPoint, radius_meters: f64) -> PyResult<bool> {
-        handle_error(self.db.contains_point(prefix, &center.inner, radius_meters))
+    fn intersects_radius(
+        &self,
+        prefix: &str,
+        center: &PyPoint,
+        radius_meters: f64,
+    ) -> PyResult<bool> {
+        handle_error(
+            self.db
+                .intersects_radius(prefix, &center.inner, radius_meters),
+        )
     }
 
     /// Count points within a distance
@@ -530,11 +533,11 @@ impl PySpatio {
             ));
         }
 
-        // Create polygon
-        let polygon = GeoPolygon::new(geo::LineString::from(coords), vec![]);
-        let spatio_polygon: spatio::Polygon = polygon.into();
+        // Create polygon using from_coords to avoid geo::LineString exposure
+        let coord_tuples: Vec<(f64, f64)> = coords.into_iter().map(|c| (c.x, c.y)).collect();
+        let polygon = RustPolygon::from_coords(&coord_tuples, vec![]);
 
-        let results = handle_error(self.db.query_within_polygon(prefix, &spatio_polygon, limit))?;
+        let results = handle_error(self.db.query_within_polygon(prefix, &polygon, limit))?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
@@ -566,10 +569,9 @@ impl PySpatio {
         })
     }
 
-    /// Close the database
-    fn close(&mut self) -> PyResult<()> {
-        // For now, this is a no-op since DB doesn't implement mutable close
-        Ok(())
+    /// Close the database and sync all pending writes
+    fn close(&self) -> PyResult<()> {
+        handle_error(self.db.close())
     }
 
     fn __repr__(&self) -> String {
