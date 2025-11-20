@@ -69,6 +69,7 @@ pub use db::{AtomicBatch, ExpiredStats, Namespace, NamespaceManager};
 pub use compute::geojson;
 pub use compute::validation;
 
+#[cfg(feature = "aof")]
 pub use storage::{AOFCommand, PersistenceLog};
 pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
 

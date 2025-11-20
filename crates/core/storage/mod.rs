@@ -9,17 +9,16 @@ use bytes::Bytes;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
-pub mod backends;
-/// Persistence interface to allow pluggable backends
+mod memory;
+#[cfg(any(feature = "aof", feature = "snapshot"))]
 pub mod persistence;
-#[cfg(feature = "snapshot")]
-mod snapshot;
 
-pub use backends::MemoryBackend;
+pub use memory::MemoryBackend;
 
-pub use persistence::{AOFCommand, PersistenceLog};
+#[cfg(feature = "aof")]
+pub use persistence::{AOFBackend, AOFCommand, AOFConfig, AOFFile, PersistenceLog};
 #[cfg(feature = "snapshot")]
-pub use snapshot::{SnapshotConfig, SnapshotFile};
+pub use persistence::{SnapshotConfig, SnapshotFile};
 
 /// Trait for storage backend implementations
 ///

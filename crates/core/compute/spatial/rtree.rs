@@ -667,28 +667,6 @@ impl SpatialIndexManager {
         self.key_map.clear();
         self.bbox_indexes.clear();
     }
-
-    /// Remove an entire index for a prefix.
-    pub fn remove_index(&mut self, prefix: &str) -> bool {
-        let removed_points = self.indexes.remove(prefix).is_some();
-        let removed_bboxes = self.bbox_indexes.remove(prefix).is_some();
-
-        // Cleanup key_map is expensive (O(K)), so we might want to leave it
-        // or iterate all keys. Since this is a rare operation, iteration is fine.
-        // But to be safe and consistent:
-        self.key_map.retain(|_, _points| {
-            // This is still tricky because we don't know which prefix a key belongs to
-            // just from the key string unless we parse it or store it.
-            // The original implementation didn't have this side index.
-            // For now, we'll accept that key_map might have stale entries for deleted indexes,
-            // or we can do a full scan.
-            // Given the constraints, let's leave it for now as it's a "remove_index" op.
-            // Ideally IndexedPoint3D should store prefix or we store (prefix, key) -> points.
-            true
-        });
-
-        removed_points || removed_bboxes
-    }
 }
 
 impl Default for SpatialIndexManager {
