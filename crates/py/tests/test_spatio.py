@@ -291,8 +291,8 @@ class TestSpatio:
         db.insert_point("cities", nyc, b"New York")
         db.insert_point("cities", brooklyn, b"Brooklyn")
 
-        # Test contains_point
-        has_nearby = db.contains_point("cities", nyc, 50000.0)
+        # Test intersects_radius
+        has_nearby = db.intersects_radius("cities", nyc, 50000.0)
         assert has_nearby
 
         # Test count_within_radius
@@ -395,14 +395,13 @@ class TestErrorHandling:
     """Test error handling and edge cases"""
 
     def test_operations_on_closed_database(self, gc_collect):
-        """Test operations on a closed database still work (limitation)"""
+        """Test that operations fail on a closed database"""
         db = spatio.Spatio.memory()
         db.close()
 
-        # Current implementation allows operations after close
-        # This is a limitation of the current API
-        db.insert(b"key", b"value")  # Should still work
-        assert db.get(b"key") == b"value"
+        # Operations should now fail after close
+        with pytest.raises(RuntimeError, match=r"Database is closed"):
+            db.insert(b"key", b"value")
 
     def test_invalid_trajectory_data(self):
         """Test invalid trajectory data"""

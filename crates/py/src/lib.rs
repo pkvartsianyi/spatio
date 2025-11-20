@@ -569,10 +569,9 @@ impl PySpatio {
         })
     }
 
-    /// Close the database
-    fn close(&mut self) -> PyResult<()> {
-        // For now, this is a no-op since DB doesn't implement mutable close
-        Ok(())
+    /// Close the database and sync all pending writes
+    fn close(&self) -> PyResult<()> {
+        handle_error(self.db.close())
     }
 
     fn __repr__(&self) -> String {
