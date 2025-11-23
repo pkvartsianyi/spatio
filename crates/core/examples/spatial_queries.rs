@@ -27,7 +27,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, point) in &cities {
         // Using name as object_id for simplicity
         let object_id = name.to_lowercase().replace(" ", "_");
-        db.update_location("world_cities", &object_id, point.clone(), serde_json::json!({"name": name}))?;
+        db.update_location(
+            "world_cities",
+            &object_id,
+            point.clone(),
+            serde_json::json!({"name": name}),
+        )?;
     }
     println!("   Added {} cities to spatial index\n", cities.len());
 
@@ -41,7 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nearby_500km = db.query_current_within_radius("world_cities", &london, 500_000.0, 10)?;
     println!("   Cities within 500km of London: {}", nearby_500km.len());
     for loc in &nearby_500km {
-        println!("     - {}", loc.metadata.to_string());
+        println!("     - {}", loc.metadata);
     }
 
     // Find cities within 2000km of London
@@ -51,14 +56,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nearby_2000km.len()
     );
     for loc in &nearby_2000km {
-        println!("     - {}", loc.metadata.to_string());
+        println!("     - {}", loc.metadata);
     }
 
     // Use limit to get only closest N cities
     let closest_3 = db.query_current_within_radius("world_cities", &london, f64::INFINITY, 3)?;
     println!("\n   Closest 3 cities to London:");
     for (i, loc) in closest_3.iter().enumerate() {
-        println!("     {}. {}", i + 1, loc.metadata.to_string());
+        println!("     {}. {}", i + 1, loc.metadata);
     }
     println!();
 
@@ -89,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for loc in &europe_cities {
         println!(
             "       - {} at ({:.2}°, {:.2}°)",
-            loc.metadata.to_string(),
+            loc.metadata,
             loc.position.x(),
             loc.position.y()
         );
@@ -100,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let asia_cities = db.query_current_within_bbox("world_cities", 70.0, -40.0, 180.0, 40.0, 20)?;
     println!("     Found {} cities:", asia_cities.len());
     for loc in &asia_cities {
-        println!("       - {}", loc.metadata.to_string());
+        println!("       - {}", loc.metadata);
     }
 
     // Americas region
@@ -109,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.query_current_within_bbox("world_cities", -130.0, -60.0, -30.0, 60.0, 20)?;
     println!("     Found {} cities:", americas_cities.len());
     for loc in &americas_cities {
-        println!("       - {}", loc.metadata.to_string());
+        println!("       - {}", loc.metadata);
     }
     println!();
 
@@ -142,7 +147,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (name, point) in &london_landmarks {
         let object_id = name.to_lowercase().replace(" ", "_");
-        db.update_location("landmarks", &object_id, point.clone(), serde_json::json!({"name": name}))?;
+        db.update_location(
+            "landmarks",
+            &object_id,
+            point.clone(),
+            serde_json::json!({"name": name}),
+        )?;
     }
 
     println!("   Added {} London landmarks", london_landmarks.len());
@@ -163,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let close_landmarks =
         db.query_current_within_radius("landmarks", &center_london, 2_000.0, 10)?;
     for loc in &close_landmarks {
-        println!("     - {}", loc.metadata.to_string());
+        println!("     - {}", loc.metadata);
     }
     println!();
 

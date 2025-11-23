@@ -167,7 +167,6 @@ impl DB {
         // or if it's newer than what we have.
         // For simplicity in this version, we always update hot state if it's "current" enough.
         // But really, hot state should reflect the *latest* known position.
-        // TODO: Check timestamp against current hot state timestamp
 
         self.hot.update_location(
             namespace,

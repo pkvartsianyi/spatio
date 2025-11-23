@@ -22,16 +22,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paris = Point3d::new(2.3522, 48.8566, 0.0);
 
     // Update current locations
-    db.update_location("cities", "nyc", nyc.clone(), serde_json::json!({"data": "New York"}))?;
-    db.update_location("cities", "london", london.clone(), serde_json::json!({"data": "London"}))?;
-    db.update_location("cities", "paris", paris.clone(), serde_json::json!({"data": "Paris"}))?;
+    db.update_location(
+        "cities",
+        "nyc",
+        nyc.clone(),
+        serde_json::json!({"data": "New York"}),
+    )?;
+    db.update_location(
+        "cities",
+        "london",
+        london.clone(),
+        serde_json::json!({"data": "London"}),
+    )?;
+    db.update_location(
+        "cities",
+        "paris",
+        paris.clone(),
+        serde_json::json!({"data": "Paris"}),
+    )?;
     println!("   Stored 3 cities with automatic spatial indexing");
 
     // Find nearby cities within radius (in meters)
     let nearby = db.query_current_within_radius("cities", &london, 500_000.0, 10)?;
     println!("   Found {} cities within 500km of London:", nearby.len());
     for loc in &nearby {
-        println!("     - {}", loc.metadata.to_string());
+        println!("Found nearby: {} at {:?}", loc.metadata, loc.position);
     }
     println!();
 

@@ -57,7 +57,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (id, lon, lat, alt, description) in &drones {
         let position = Point3d::new(*lon, *lat, *alt);
-        db.update_location("drones", id, position, serde_json::json!({"description": description}))?;
+        db.update_location(
+            "drones",
+            id,
+            position,
+            serde_json::json!({"description": description}),
+        )?;
         println!("   ✓ Registered {}: altitude {}m", id, alt);
     }
     println!();
@@ -209,7 +214,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (flight, lon, lat, alt, route) in &flights {
         let position = Point3d::new(*lon, *lat, *alt);
         let info = format!("{} - {}", flight, route);
-        db.update_location("aircraft", flight, position, serde_json::json!({"info": info}))?;
+        db.update_location(
+            "aircraft",
+            flight,
+            position,
+            serde_json::json!({"info": info}),
+        )?;
         println!("   ✓ Tracking {}: {}m altitude", flight, alt);
     }
     println!();
@@ -281,7 +291,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         let sensor_id = format!("sensor-floor-{:02}", floor);
         let position = Point3d::new(-74.0060, 40.7128, altitude);
         let info = format!("Temperature sensor - Floor {}", floor);
-        db.update_location("building-sensors", &sensor_id, position, serde_json::json!({"info": info}))?;
+        db.update_location(
+            "building-sensors",
+            &sensor_id,
+            position,
+            serde_json::json!({"info": info}),
+        )?;
     }
 
     // Query sensors on floors 3-7

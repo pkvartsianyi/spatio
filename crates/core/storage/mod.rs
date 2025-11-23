@@ -89,16 +89,3 @@ pub struct StorageStats {
     /// Number of operations performed
     pub operations_count: u64,
 }
-
-/// Computes the upper bound for a prefix scan.
-pub(crate) fn calculate_prefix_end(prefix: &[u8]) -> Vec<u8> {
-    let mut prefix_end = prefix.to_vec();
-
-    while let Some(last_byte) = prefix_end.pop() {
-        if last_byte < 255 {
-            prefix_end.push(last_byte + 1);
-            break;
-        }
-    }
-    prefix_end
-}

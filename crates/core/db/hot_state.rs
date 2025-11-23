@@ -79,23 +79,53 @@ impl HotState {
         let pos_z = new_location.position.z();
 
         // Atomic update in main map (DashMap handles concurrency)
-        let old_location = self
-            .current_locations
-            .insert(full_key.clone(), new_location);
-
-        // Update spatial index
-        // Remove old position if exists
-        if let Some(ref _old) = old_location {
-            let old_key = Self::make_key(namespace, object_id);
-            let mut spatial_idx = self.spatial_index.write();
-            spatial_idx.remove_entry(namespace, &old_key);
+        // We only update if the new timestamp is newer than or equal to existing
+        enum UpdateAction {
+            Updated(CurrentLocation),
+            Inserted,
+            Ignored,
         }
 
-        // Insert new position
-        let mut spatial_idx = self.spatial_index.write();
-        spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+        let action = match self.current_locations.entry(full_key.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                if entry.get().last_updated <= timestamp {
+                    let old = entry.insert(new_location);
+                    UpdateAction::Updated(old)
+                } else {
+                    UpdateAction::Ignored
+                }
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                entry.insert(new_location);
+                UpdateAction::Inserted
+            }
+        };
 
-        Ok(old_location)
+        match action {
+            UpdateAction::Updated(old_location) => {
+                // Update spatial index
+                // Remove old position
+                let old_key = Self::make_key(namespace, object_id);
+                let mut spatial_idx = self.spatial_index.write();
+                spatial_idx.remove_entry(namespace, &old_key);
+
+                // Insert new position
+                spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+
+                Ok(Some(old_location))
+            }
+            UpdateAction::Inserted => {
+                // Insert new position
+                let mut spatial_idx = self.spatial_index.write();
+                spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+                Ok(None)
+            }
+            UpdateAction::Ignored => {
+                // Return None to indicate no change (or we could return the current value?)
+                // For now, None mimics "no old value replaced" which is technically true
+                Ok(None)
+            }
+        }
     }
 
     /// Get current location of an object

@@ -100,8 +100,13 @@ mod tests {
     fn test_builder_in_memory() {
         let db = DBBuilder::new().in_memory().build().unwrap();
         // Verify basic operation
-        db.update_location("ns", "obj", Point3d::new(0.0, 0.0, 0.0),serde_json::json!({}))
-            .unwrap();
+        db.update_location(
+            "ns",
+            "obj",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({}),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -112,8 +117,13 @@ mod tests {
         // ColdState::new takes a path. If it's a file path, it uses it.
 
         let db = DBBuilder::new().path(&path).build().unwrap();
-        db.update_location("ns", "obj", Point3d::new(0.0, 0.0, 0.0),serde_json::json!({}))
-            .unwrap();
+        db.update_location(
+            "ns",
+            "obj",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({}),
+        )
+        .unwrap();
 
         // Cleanup
         if path.is_dir() {

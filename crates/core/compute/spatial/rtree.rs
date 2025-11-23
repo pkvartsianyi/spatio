@@ -236,7 +236,6 @@ impl SpatialIndexManager {
             if distance.is_finite() && distance <= radius {
                 if heap.len() < limit {
                     heap.push(QueryCandidate {
-                        // TODO: Performance optimization: Avoid cloning here?
                         point: point.clone(),
                         distance,
                     });

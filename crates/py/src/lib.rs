@@ -357,6 +357,7 @@ impl PySpatio {
 #[pyclass(name = "SetOptions")]
 #[derive(Clone, Debug)]
 pub struct PySetOptions {
+    #[allow(dead_code)]
     inner: spatio::config::SetOptions,
 }
 
