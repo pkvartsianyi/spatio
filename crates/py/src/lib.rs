@@ -7,15 +7,11 @@
 // All geo types are now accessed through spatio wrappers
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyList};
 use spatio::DistanceMetric as RustDistanceMetric;
-use spatio::Point as RustPoint;
-use spatio::Polygon as RustPolygon;
-use spatio::{
-    SyncDB as RustDB,
-    config::{Config as RustConfig, SetOptions as RustSetOptions},
-    error::Result as RustResult,
-};
+use spatio::{Point3d, Spatio};
+use spatio::{config::Config as RustConfig, error::Result as RustResult};
+use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 /// Convert Rust Result to Python Result
@@ -23,77 +19,69 @@ fn handle_error<T>(result: RustResult<T>) -> PyResult<T> {
     result.map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
-/// Python wrapper for geographic Point (2D only - altitude not currently supported)
-///
-/// Note: The `alt` parameter is accepted for API compatibility but ignored,
-/// as the underlying geo::Point type is 2D.
+/// Python wrapper for geographic Point (3D)
 #[pyclass(name = "Point")]
 #[derive(Clone, Debug)]
 pub struct PyPoint {
-    inner: RustPoint,
+    inner: Point3d,
 }
 
 #[pymethods]
 impl PyPoint {
-    /// Create a new Point with latitude and longitude.
+    /// Create a new Point with x, y, and optional z coordinates.
     ///
     /// # Args
-    ///     lon: Longitude in degrees (-180 to 180) - x-coordinate
-    ///     lat: Latitude in degrees (-90 to 90) - y-coordinate
-    ///     alt: Optional altitude (ignored - see struct documentation)
-    ///
-    /// # Note
-    ///     Uses (longitude, latitude) order to match GeoJSON standard and the Rust API.
-    ///     This is the mathematical (x, y) convention used by most GIS libraries.
-    ///
-    /// # Returns
-    ///     A new Point instance
-    ///
-    /// # Raises
-    ///     ValueError: If latitude or longitude are out of valid range
+    ///     x: X coordinate (Longitude)
+    ///     y: Y coordinate (Latitude)
+    ///     z: Z coordinate (Altitude), defaults to 0.0
     #[new]
-    #[pyo3(signature = (lon, lat, alt=None))]
-    fn new(lon: f64, lat: f64, alt: Option<f64>) -> PyResult<Self> {
-        if !(-90.0..=90.0).contains(&lat) {
-            return Err(PyValueError::new_err("Latitude must be between -90 and 90"));
-        }
-        if !(-180.0..=180.0).contains(&lon) {
-            return Err(PyValueError::new_err(
-                "Longitude must be between -180 and 180",
-            ));
-        }
-
-        let point = RustPoint::new(lon, lat);
-        // Altitude parameter is silently ignored (see struct documentation)
-        let _ = alt;
-
-        Ok(PyPoint { inner: point })
+    #[pyo3(signature = (x, y, z=None))]
+    fn new(x: f64, y: f64, z: Option<f64>) -> PyResult<Self> {
+        Ok(PyPoint {
+            inner: Point3d::new(x, y, z.unwrap_or(0.0)),
+        })
     }
 
     #[getter]
-    fn lat(&self) -> f64 {
+    fn x(&self) -> f64 {
+        self.inner.x()
+    }
+
+    #[getter]
+    fn y(&self) -> f64 {
         self.inner.y()
     }
 
+    #[getter]
+    fn z(&self) -> f64 {
+        self.inner.z()
+    }
+
+    /// Alias for x (Longitude)
     #[getter]
     fn lon(&self) -> f64 {
         self.inner.x()
     }
 
-    /// Get the altitude of the point.
-    ///
-    /// Always returns None (altitude not supported).
+    /// Alias for y (Latitude)
     #[getter]
-    fn alt(&self) -> Option<f64> {
-        None
+    fn lat(&self) -> f64 {
+        self.inner.y()
+    }
+
+    /// Alias for z (Altitude)
+    #[getter]
+    fn alt(&self) -> f64 {
+        self.inner.z()
     }
 
     fn __repr__(&self) -> String {
-        if let Some(alt) = self.alt() {
-            format!("Point(lon={}, lat={}, alt={})", self.lon(), self.lat(), alt)
-        } else {
-            format!("Point(lon={}, lat={})", self.lon(), self.lat())
-        }
+        format!(
+            "Point(x={:.4}, y={:.4}, z={:.4})",
+            self.inner.x(),
+            self.inner.y(),
+            self.inner.z()
+        )
     }
 
     fn __str__(&self) -> String {
@@ -102,7 +90,16 @@ impl PyPoint {
 
     /// Calculate distance to another point in meters using Haversine formula
     fn distance_to(&self, other: &PyPoint) -> f64 {
-        self.inner.haversine_distance(&other.inner)
+        let r = 6371000.0; // Earth radius in meters
+        let d_lat = (other.lat() - self.lat()).to_radians();
+        let d_lon = (other.lon() - self.lon()).to_radians();
+        let lat1 = self.lat().to_radians();
+        let lat2 = other.lat().to_radians();
+
+        let a = (d_lat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (d_lon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+        r * c
     }
 }
 
@@ -145,65 +142,6 @@ impl PyDistanceMetric {
     }
 }
 
-/// Python wrapper for SetOptions
-#[pyclass(name = "SetOptions")]
-#[derive(Clone, Debug)]
-pub struct PySetOptions {
-    inner: RustSetOptions,
-}
-
-#[pymethods]
-impl PySetOptions {
-    #[new]
-    fn new() -> Self {
-        PySetOptions {
-            inner: RustSetOptions::default(),
-        }
-    }
-
-    /// Create SetOptions with TTL in seconds
-    #[staticmethod]
-    fn with_ttl(ttl_seconds: f64) -> PyResult<Self> {
-        if !ttl_seconds.is_finite() {
-            return Err(PyValueError::new_err(
-                "TTL must be finite (not NaN or infinity)",
-            ));
-        }
-        if ttl_seconds <= 0.0 {
-            return Err(PyValueError::new_err("TTL must be positive"));
-        }
-        if ttl_seconds > u64::MAX as f64 {
-            return Err(PyValueError::new_err("TTL is too large"));
-        }
-
-        let duration = Duration::from_secs_f64(ttl_seconds);
-        Ok(PySetOptions {
-            inner: RustSetOptions::with_ttl(duration),
-        })
-    }
-
-    /// Create SetOptions with absolute expiration timestamp
-    #[staticmethod]
-    fn with_expiration(timestamp: f64) -> PyResult<Self> {
-        if !timestamp.is_finite() {
-            return Err(PyValueError::new_err(
-                "Timestamp must be finite (not NaN or infinity)",
-            ));
-        }
-        if timestamp < 0.0 {
-            return Err(PyValueError::new_err("Timestamp must be non-negative"));
-        }
-        if timestamp > u64::MAX as f64 {
-            return Err(PyValueError::new_err("Timestamp is too large"));
-        }
-
-        let system_time = UNIX_EPOCH + Duration::from_secs_f64(timestamp);
-        Ok(PySetOptions {
-            inner: RustSetOptions::with_expiration(system_time),
-        })
-    }
-}
-
 /// Python wrapper for database Config
 #[pyclass(name = "Config")]
 #[derive(Clone, Debug)]
@@ -224,7 +162,7 @@ impl PyConfig {
 /// Main Spatio database class
 #[pyclass(name = "Spatio")]
 pub struct PySpatio {
-    db: RustDB,
+    db: Arc<Spatio>,
 }
 
 #[pymethods]
@@ -232,29 +170,41 @@ impl PySpatio {
     /// Create an in-memory Spatio database
     #[staticmethod]
     fn memory() -> PyResult<Self> {
-        let db = handle_error(RustDB::memory())?;
-        Ok(PySpatio { db })
+        let db = Spatio::builder()
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PySpatio { db: Arc::new(db) })
     }
 
     /// Create an in-memory database with custom configuration
     #[staticmethod]
     fn memory_with_config(config: &PyConfig) -> PyResult<Self> {
-        let db = handle_error(RustDB::memory_with_config(config.inner.clone()))?;
-        Ok(PySpatio { db })
+        let db = Spatio::builder()
+            .config(config.inner.clone())
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PySpatio { db: Arc::new(db) })
     }
 
     /// Open a persistent Spatio database from file
     #[staticmethod]
     fn open(path: &str) -> PyResult<Self> {
-        let db = handle_error(RustDB::open(path))?;
-        Ok(PySpatio { db })
+        let db = Spatio::builder()
+            .path(path)
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PySpatio { db: Arc::new(db) })
     }
 
     /// Open a persistent database with custom configuration
     #[staticmethod]
     fn open_with_config(path: &str, config: &PyConfig) -> PyResult<Self> {
-        let db = handle_error(RustDB::open_with_config(path, config.inner.clone()))?;
-        Ok(PySpatio { db })
+        let db = Spatio::builder()
+            .path(path)
+            .config(config.inner.clone())
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PySpatio { db: Arc::new(db) })
     }
 
     /// Update an object's location
@@ -267,7 +217,7 @@ impl PySpatio {
         metadata: Option<&Bound<'_, PyBytes>>,
     ) -> PyResult<()> {
         let meta_bytes = metadata.map(|b| b.as_bytes()).unwrap_or(&[]);
-        let pos = spatio::Point3d::new(point.lon(), point.lat(), point.alt().unwrap_or(0.0));
+        let pos = point.inner.clone();
 
         handle_error(
             self.db
@@ -284,8 +234,7 @@ impl PySpatio {
         radius: f64,
         limit: usize,
     ) -> PyResult<Py<PyList>> {
-        let center_pos =
-            spatio::Point3d::new(center.lon(), center.lat(), center.alt().unwrap_or(0.0));
+        let center_pos = center.inner.clone();
         let results = handle_error(self.db.query_current_within_radius(
             namespace,
             &center_pos,
@@ -297,7 +246,7 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: RustPoint::new(loc.position.x, loc.position.y), // TODO: Support 3D in PyPoint
+                    inner: loc.position,
                 };
                 let py_meta = PyBytes::new(py, &loc.metadata);
                 // (object_id, point, metadata)
@@ -326,7 +275,7 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: RustPoint::new(loc.position.x, loc.position.y),
+                    inner: loc.position,
                 };
                 let py_meta = PyBytes::new(py, &loc.metadata);
                 let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
@@ -358,7 +307,7 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for update in results {
                 let py_point = PyPoint {
-                    inner: RustPoint::new(update.position.x, update.position.y),
+                    inner: update.position,
                 };
                 let py_meta = PyBytes::new(py, &update.metadata);
                 let ts = update
@@ -404,7 +353,6 @@ impl PySpatio {
 fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpatio>()?;
     m.add_class::<PyPoint>()?;
-    m.add_class::<PySetOptions>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;
 

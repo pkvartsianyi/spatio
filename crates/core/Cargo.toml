@@ -68,11 +68,11 @@ name = "spatial_queries"
 name = "trajectory_tracking"
 
 [[example]]
-name = "comprehensive_demo"
-
-[[example]]
 name = "persistence_lifecycle"
 required-features = ["aof"]
+
+[[example]]
+name = "3d_spatial_tracking"
 
 [[test]]
 name = "aof_rewrite_test"

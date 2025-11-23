@@ -15,6 +15,7 @@ pub struct AtomicBatch<'a> {
 }
 
 impl<'a> AtomicBatch<'a> {
+    #[allow(dead_code)]
     pub(crate) fn new(db: &'a mut DB) -> Self {
         Self { _db: db }
     }
@@ -36,6 +37,7 @@ impl<'a> AtomicBatch<'a> {
         ))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn commit(self) -> Result<()> {
         Ok(())
     }

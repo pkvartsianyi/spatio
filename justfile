@@ -123,7 +123,7 @@ test-examples:
     cargo run -p spatio --example getting_started
     cargo run -p spatio --example spatial_queries
     cargo run -p spatio --example trajectory_tracking
-    cargo run -p spatio --example comprehensive_demo
+    cargo run -p spatio --example 3d_spatial_tracking
     cd crates/py && just examples
 
 # Combined commands

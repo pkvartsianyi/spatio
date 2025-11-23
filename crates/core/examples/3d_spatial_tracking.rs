@@ -3,14 +3,14 @@
 //! This example demonstrates Spatio's 3D spatial indexing capabilities for
 //! altitude-aware applications like drone tracking, aviation, and multi-floor navigation.
 
-use spatio::{BoundingBox3D, Point3d, Spatio};
+use spatio::{Point3d, Spatio};
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("=== 3D Spatial Tracking with Spatio ===\n");
 
     // Create an in-memory database
-    let mut db = Spatio::memory()?;
+    let db = Spatio::memory()?;
 
     // === Example 1: Drone Fleet Tracking ===
     println!("1. Drone Fleet Tracking");
@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (id, lon, lat, alt, description) in &drones {
         let position = Point3d::new(*lon, *lat, *alt);
-        db.insert_point_3d("drones", &position, description.as_bytes(), None)?;
+        db.update_location("drones", id, position, description.as_bytes())?;
         println!("   ✓ Registered {}: altitude {}m", id, alt);
     }
     println!();
@@ -69,7 +69,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let control_center = Point3d::new(-74.0065, 40.7133, 100.0);
     let search_radius = 200.0; // 200 meters in 3D space
 
-    let nearby_drones = db.query_within_sphere_3d("drones", &control_center, search_radius, 10)?;
+    // Note: query_current_within_radius uses 3D distance if points are 3D
+    let nearby_drones =
+        db.query_current_within_radius("drones", &control_center, search_radius, 10)?;
 
     println!(
         "   Control center: ({:.4}, {:.4}, {}m)",
@@ -80,14 +82,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Search radius: {}m (3D)\n", search_radius);
     println!("   Found {} drones within range:", nearby_drones.len());
 
-    for (point, data, distance) in &nearby_drones {
-        let description = String::from_utf8_lossy(data);
+    for loc in &nearby_drones {
+        let description = String::from_utf8_lossy(&loc.metadata);
+        // Calculate distance manually for display
+        let distance = control_center.distance_3d(&loc.position);
         println!(
             "   - {} at ({:.4}, {:.4}, {}m) - distance: {:.1}m",
             description,
-            point.x(),
-            point.y(),
-            point.z(),
+            loc.position.x(),
+            loc.position.y(),
+            loc.position.z(),
             distance
         );
     }
@@ -97,14 +101,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("3. Cylindrical Query");
     println!("   Finding drones in specific altitude corridor\n");
 
-    let airspace_center = Point3d::new(-74.0065, 40.7133, 0.0);
+    let airspace_center = spatio_types::geo::Point::new(-74.0065, 40.7133);
     let min_altitude = 60.0;
     let max_altitude = 120.0;
     let horizontal_radius = 5000.0; // 5km horizontal
 
-    let corridor_drones = db.query_within_cylinder_3d(
+    let corridor_drones = db.query_within_cylinder(
         "drones",
-        &airspace_center,
+        airspace_center,
         min_altitude,
         max_altitude,
         horizontal_radius,
@@ -118,12 +122,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Horizontal radius: {}m\n", horizontal_radius);
     println!("   Found {} drones in corridor:", corridor_drones.len());
 
-    for (point, data, h_dist) in &corridor_drones {
-        let description = String::from_utf8_lossy(data);
+    for (loc, h_dist) in &corridor_drones {
+        let description = String::from_utf8_lossy(&loc.metadata);
         println!(
             "   - {} at altitude {}m (horizontal: {:.1}m)",
             description,
-            point.z(),
+            loc.position.z(),
             h_dist
         );
     }
@@ -134,27 +138,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Searching within a 3D volume\n");
 
     // Define a 3D box covering a specific area and altitude range
-    let bbox = BoundingBox3D::new(
-        -74.0080, 40.7120, 40.0, // min x, y, z
-        -74.0050, 40.7150, 110.0, // max x, y, z
-    );
+    let min_x = -74.0080;
+    let min_y = 40.7120;
+    let min_z = 40.0;
+    let max_x = -74.0050;
+    let max_y = 40.7150;
+    let max_z = 110.0;
 
-    let boxed_drones = db.query_within_bbox_3d("drones", &bbox, 100)?;
+    let boxed_drones =
+        db.query_within_bbox_3d("drones", min_x, min_y, min_z, max_x, max_y, max_z, 100)?;
 
     println!("   Bounding box:");
-    println!("   - X: {:.4} to {:.4}", bbox.min_x, bbox.max_x);
-    println!("   - Y: {:.4} to {:.4}", bbox.min_y, bbox.max_y);
-    println!("   - Z: {}m to {}m\n", bbox.min_z, bbox.max_z);
+    println!("   - X: {:.4} to {:.4}", min_x, max_x);
+    println!("   - Y: {:.4} to {:.4}", min_y, max_y);
+    println!("   - Z: {}m to {}m\n", min_z, max_z);
     println!("   Found {} drones in volume:", boxed_drones.len());
 
-    for (point, data) in &boxed_drones {
-        let description = String::from_utf8_lossy(data);
+    for loc in &boxed_drones {
+        let description = String::from_utf8_lossy(&loc.metadata);
         println!(
             "   - {} at ({:.4}, {:.4}, {}m)",
             description,
-            point.x(),
-            point.y(),
-            point.z()
+            loc.position.x(),
+            loc.position.y(),
+            loc.position.z()
         );
     }
     println!();
@@ -176,14 +183,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!("   Finding {} nearest drones:\n", k);
 
-    for (i, (point, data, distance)) in nearest.iter().enumerate() {
-        let description = String::from_utf8_lossy(data);
+    for (i, (loc, distance)) in nearest.iter().enumerate() {
+        let description = String::from_utf8_lossy(&loc.metadata);
         println!("   {}. {} - {:.1}m away", i + 1, description, distance);
         println!(
             "      Position: ({:.4}, {:.4}, {}m)",
-            point.x(),
-            point.y(),
-            point.z()
+            loc.position.x(),
+            loc.position.y(),
+            loc.position.z()
         );
     }
     println!();
@@ -202,29 +209,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (flight, lon, lat, alt, route) in &flights {
         let position = Point3d::new(*lon, *lat, *alt);
         let info = format!("{} - {}", flight, route);
-        db.insert_point_3d("aircraft", &position, info.as_bytes(), None)?;
+        db.update_location("aircraft", flight, position, info.as_bytes())?;
         println!("   ✓ Tracking {}: {}m altitude", flight, alt);
     }
     println!();
 
     // Query aircraft in specific flight level
-    let fl_center = Point3d::new(-74.0150, 40.7250, 0.0);
+    let fl_center = spatio_types::geo::Point::new(-74.0150, 40.7250);
     let fl_min = 9500.0; // Flight level 310 (approx)
     let fl_max = 10500.0; // Flight level 345 (approx)
     let radar_range = 50000.0; // 50km
 
     let tracked_flights =
-        db.query_within_cylinder_3d("aircraft", &fl_center, fl_min, fl_max, radar_range, 20)?;
+        db.query_within_cylinder("aircraft", fl_center, fl_min, fl_max, radar_range, 20)?;
 
     println!("   Air traffic in flight levels FL310-FL345:");
     println!("   Radar range: {}km\n", radar_range / 1000.0);
 
-    for (point, data, h_dist) in &tracked_flights {
-        let info = String::from_utf8_lossy(data);
+    for (loc, h_dist) in &tracked_flights {
+        let info = String::from_utf8_lossy(&loc.metadata);
         println!(
             "   - {} at FL{:.0} ({}km away)",
             info,
-            point.z() / 30.48 / 100.0,
+            loc.position.z() / 30.48 / 100.0,
             h_dist / 1000.0
         );
     }
@@ -237,9 +244,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let point_a = Point3d::new(-74.0060, 40.7128, 100.0);
     let point_b = Point3d::new(-74.0070, 40.7138, 200.0);
 
-    let dist_3d = db.distance_between_3d(&point_a, &point_b)?;
-    let horizontal_dist = point_a.haversine_2d(&point_b);
-    let altitude_diff = point_a.altitude_difference(&point_b);
+    // Use Point3d methods directly
+    let dist_3d = point_a.distance_3d(&point_b);
+    // Convert to GeoPoint for haversine
+    let geo_a = spatio_types::geo::Point::new(point_a.x(), point_a.y());
+    let geo_b = spatio_types::geo::Point::new(point_b.x(), point_b.y());
+    let horizontal_dist = geo_a.haversine_distance(&geo_b);
+    let altitude_diff = (point_a.z() - point_b.z()).abs();
 
     println!(
         "   Point A: ({:.4}, {:.4}, {}m)",
@@ -267,20 +278,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Each floor is ~3 meters tall
     for floor in 0..10 {
         let altitude = floor as f64 * 3.0;
-        let _sensor_id = format!("sensor-floor-{:02}", floor);
+        let sensor_id = format!("sensor-floor-{:02}", floor);
         let position = Point3d::new(-74.0060, 40.7128, altitude);
         let info = format!("Temperature sensor - Floor {}", floor);
-        db.insert_point_3d("building-sensors", &position, info.as_bytes(), None)?;
+        db.update_location("building-sensors", &sensor_id, position, info.as_bytes())?;
     }
 
     // Query sensors on floors 3-7
-    let building_location = Point3d::new(-74.0060, 40.7128, 0.0);
+    let building_location = spatio_types::geo::Point::new(-74.0060, 40.7128);
     let floor_3_altitude = 3.0 * 3.0;
     let floor_7_altitude = 7.0 * 3.0;
 
-    let mid_floor_sensors = db.query_within_cylinder_3d(
+    let mid_floor_sensors = db.query_within_cylinder(
         "building-sensors",
-        &building_location,
+        building_location,
         floor_3_altitude,
         floor_7_altitude,
         10.0, // 10m horizontal tolerance (same building)
@@ -288,9 +299,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     println!("   Building sensors on floors 3-7:");
-    for (point, data, _) in &mid_floor_sensors {
-        let info = String::from_utf8_lossy(data);
-        let floor = (point.z() / 3.0).round() as i32;
+    for (loc, _) in &mid_floor_sensors {
+        let info = String::from_utf8_lossy(&loc.metadata);
+        let floor = (loc.position.z() / 3.0).round() as i32;
         println!("   - Floor {}: {}", floor, info);
     }
     println!();

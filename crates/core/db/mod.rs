@@ -3,7 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
+use crate::config::{Config, DbStats, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use bytes::Bytes;
 use std::path::Path;
@@ -41,7 +41,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct DB {
     pub(crate) hot: Arc<HotState>,
     pub(crate) cold: Arc<ColdState>,
-    pub(crate) config: Config,
     pub(crate) closed: Arc<AtomicBool>,
 }
 
@@ -51,8 +50,12 @@ impl DB {
         Self::open_with_config(path, Config::default())
     }
 
+    pub fn builder() -> crate::DBBuilder {
+        crate::DBBuilder::new()
+    }
+
     /// Open or create a database with custom configuration.
-    pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
+    pub fn open_with_config<P: AsRef<Path>>(path: P, _config: Config) -> Result<Self> {
         let path = path.as_ref();
         let hot = Arc::new(HotState::new());
 
@@ -67,7 +70,6 @@ impl DB {
         Ok(Self {
             hot,
             cold,
-            config,
             closed: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -126,21 +128,26 @@ impl DB {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let metadata_bytes = Bytes::copy_from_slice(metadata.as_ref());
+        let meta_bytes = Bytes::copy_from_slice(metadata.as_ref());
 
-        // 1. Update hot state
-        // TODO: Only update if newer? For now, last write wins.
+        // 1. Update Hot State (Current Location)
+        // We only update hot state if this is a recent update (e.g. within last minute)
+        // or if it's newer than what we have.
+        // For simplicity in this version, we always update hot state if it's "current" enough.
+        // But really, hot state should reflect the *latest* known position.
+        // TODO: Check timestamp against current hot state timestamp
+
         self.hot.update_location(
             namespace,
             object_id,
             position.clone(),
-            metadata_bytes.clone(),
+            meta_bytes.clone(),
             timestamp,
         )?;
 
-        // 2. Append to cold state
+        // 2. Append to Cold State (History)
         self.cold
-            .append_update(namespace, object_id, position, metadata_bytes, timestamp)?;
+            .append_update(namespace, object_id, position, meta_bytes, timestamp)?;
 
         Ok(())
     }
@@ -154,7 +161,7 @@ impl DB {
     ) -> Result<()> {
         for tp in trajectory {
             let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
-            self.update_location_at(namespace, object_id, pos, &[], tp.timestamp)?;
+            self.update_location_at(namespace, object_id, pos, [], tp.timestamp)?;
         }
         Ok(())
     }
@@ -173,6 +180,76 @@ impl DB {
         Ok(self
             .hot
             .query_within_radius(namespace, center, radius, limit))
+    }
+
+    /// Query current locations within a 2D bounding box (HOT PATH)
+    pub fn query_current_within_bbox(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> Result<Vec<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self
+            .hot
+            .query_within_bbox(namespace, min_x, min_y, max_x, max_y, limit))
+    }
+
+    /// Query objects within a cylindrical volume (HOT PATH)
+    pub fn query_within_cylinder(
+        &self,
+        namespace: &str,
+        center: spatio_types::geo::Point,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self
+            .hot
+            .query_within_cylinder(namespace, center, min_z, max_z, radius, limit))
+    }
+
+    /// Find k nearest neighbors in 3D (HOT PATH)
+    pub fn knn_3d(
+        &self,
+        namespace: &str,
+        center: &spatio_types::point::Point3d,
+        k: usize,
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.knn_3d(namespace, center, k))
+    }
+
+    /// Query objects within a 3D bounding box (HOT PATH)
+    #[allow(clippy::too_many_arguments)]
+    pub fn query_within_bbox_3d(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+        limit: usize,
+    ) -> Result<Vec<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self
+            .hot
+            .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit))
     }
 
     /// Query objects near another object (relative query)
@@ -277,7 +354,7 @@ mod tests {
         db.update_location(namespace, "car1", car1_pos, b"")
             .unwrap();
 
-        let car2_pos = Point3d::new(1.0, 0.0, 0.0); // 1 unit away
+        let car2_pos = Point3d::new(0.00001, 0.0, 0.0); // ~1 meter away
         db.update_location(namespace, "car2", car2_pos, b"")
             .unwrap();
 
@@ -333,9 +410,10 @@ mod tests {
             .query_trajectory(namespace, object_id, start_time, end_time, 10)
             .unwrap();
         assert_eq!(trajectory.len(), 3);
-        assert_eq!(trajectory[0].position, Point3d::new(0.0, 0.0, 0.0));
+        // Results are newest first
+        assert_eq!(trajectory[0].position, Point3d::new(20.0, 20.0, 2000.0));
         assert_eq!(trajectory[1].position, Point3d::new(10.0, 10.0, 1000.0));
-        assert_eq!(trajectory[2].position, Point3d::new(20.0, 20.0, 2000.0));
+        assert_eq!(trajectory[2].position, Point3d::new(0.0, 0.0, 0.0));
 
         // Test limit
         let limited_trajectory = db

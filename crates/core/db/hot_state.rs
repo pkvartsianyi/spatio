@@ -132,6 +132,26 @@ impl HotState {
             .collect()
     }
 
+    /// Query objects within a 2D bounding box
+    pub fn query_within_bbox(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> Vec<CurrentLocation> {
+        let spatial_idx = self.spatial_index.read();
+        let results =
+            spatial_idx.query_within_bbox_2d_points(namespace, min_x, min_y, max_x, max_y, limit);
+
+        results
+            .into_iter()
+            .filter_map(|(_x, _y, key, _data)| self.current_locations.get(&key).map(|v| v.clone()))
+            .collect()
+    }
+
     /// Remove an object
     pub fn remove_object(&self, namespace: &str, object_id: &str) -> Option<CurrentLocation> {
         let key = Self::make_key(namespace, object_id);
@@ -146,6 +166,82 @@ impl HotState {
         }
 
         removed
+    }
+
+    /// Query objects within a cylindrical volume
+    pub fn query_within_cylinder(
+        &self,
+        namespace: &str,
+        center: spatio_types::geo::Point,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> Vec<(CurrentLocation, f64)> {
+        let spatial_idx = self.spatial_index.read();
+        let query = crate::compute::spatial::rtree::CylinderQuery {
+            center,
+            min_z,
+            max_z,
+            radius,
+        };
+        let results = spatial_idx.query_within_cylinder(namespace, query, limit);
+
+        results
+            .into_iter()
+            .filter_map(|(key, _data, dist)| {
+                self.current_locations.get(&key).map(|v| (v.clone(), dist))
+            })
+            .collect()
+    }
+
+    /// Find k nearest neighbors in 3D
+    pub fn knn_3d(
+        &self,
+        namespace: &str,
+        center: &Point3d,
+        k: usize,
+    ) -> Vec<(CurrentLocation, f64)> {
+        let spatial_idx = self.spatial_index.read();
+        let results = spatial_idx.knn_3d(namespace, center, k);
+
+        results
+            .into_iter()
+            .filter_map(|(key, _data, dist)| {
+                self.current_locations.get(&key).map(|v| (v.clone(), dist))
+            })
+            .collect()
+    }
+
+    /// Query objects within a 3D bounding box
+    #[allow(clippy::too_many_arguments)]
+    pub fn query_within_bbox_3d(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+        limit: usize,
+    ) -> Vec<CurrentLocation> {
+        let spatial_idx = self.spatial_index.read();
+        let query = crate::compute::spatial::rtree::BBoxQuery {
+            min_x,
+            min_y,
+            min_z,
+            max_x,
+            max_y,
+            max_z,
+        };
+        let results = spatial_idx.query_within_bbox(namespace, query);
+
+        results
+            .into_iter()
+            .take(limit)
+            .filter_map(|(key, _data)| self.current_locations.get(&key).map(|v| v.clone()))
+            .collect()
     }
 
     /// Get total number of tracked objects

@@ -12,7 +12,7 @@ use spatio_types::point::Point3d;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Result, SpatioError};
@@ -82,10 +82,7 @@ impl ColdState {
 
         // 2. Add to recent buffer (concurrent via DashMap)
         let full_key = Self::make_key(namespace, object_id);
-        let mut buffer = self
-            .recent_buffer
-            .entry(full_key)
-            .or_insert_with(VecDeque::new);
+        let mut buffer = self.recent_buffer.entry(full_key).or_default();
 
         buffer.push_back(update);
 
@@ -137,7 +134,6 @@ impl ColdState {
 /// Trajectory log format management
 struct TrajectoryLog {
     writer: BufWriter<File>,
-    path: PathBuf,
 }
 
 impl TrajectoryLog {
@@ -146,7 +142,6 @@ impl TrajectoryLog {
 
         Ok(Self {
             writer: BufWriter::new(file),
-            path: path.to_path_buf(),
         })
     }
 

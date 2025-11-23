@@ -13,24 +13,15 @@
 //! - Items remain in storage until overwritten or manually cleaned with `cleanup_expired()`
 //! - No automatic background cleanup or deletion on insert
 //!
-//! ```rust
-//! use spatio::{Point, Spatio, SetOptions};
-//! use std::time::Duration;
+//! use spatio::{Point3d, Spatio};
 //!
-//! let mut db = Spatio::memory()?;
-//! db.insert("key", b"value", None)?;
-//!
-//! // TTL example (lazy expiration)
-//! let opts = SetOptions::with_ttl(Duration::from_secs(60));
-//! db.insert("temp", b"expires_soon", Some(opts))?;
+//! let db = Spatio::memory()?;
 //!
 //! // Spatial example
-//! let point = Point::new(-74.0060, 40.7128);
-//! db.insert_point("cities", &point, b"NYC", None)?;
-//! let nearby = db.query_within_radius("cities", &point, 1000.0, 10)?;
+//! let point = Point3d::new(-74.0060, 40.7128, 0.0);
+//! db.update_location("cities", "nyc", point.clone(), b"NYC")?;
+//! let nearby = db.query_current_within_radius("cities", &point, 1000.0, 10)?;
 //!
-//! // Manual cleanup of expired items
-//! let removed = db.cleanup_expired()?;
 //! # Ok::<(), spatio::SpatioError>(())
 //! ```
 

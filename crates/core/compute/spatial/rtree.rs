@@ -12,12 +12,12 @@
 //! use spatio::Spatio;
 //! use spatio::Point3d;
 //!
-//! let mut db = Spatio::memory().unwrap();
+//! let db = Spatio::memory().unwrap();
 //! let point = Point3d::new(-74.0, 40.7, 5000.0);
-//! db.insert_point_3d("aircraft", &point, b"data", None).unwrap();
+//! db.update_location("aircraft", "id1", point.clone(), b"data").unwrap();
 //!
 //! let center = Point3d::new(-74.0, 40.0, 5000.0);
-//! let results = db.query_within_sphere_3d("aircraft", &center, 10000.0, 100).unwrap();
+//! let results = db.query_current_within_radius("aircraft", &center, 10000.0, 100).unwrap();
 //! ```
 
 use crate::config::BoundingBox2D;
@@ -328,6 +328,31 @@ impl SpatialIndexManager {
         }
         results.reverse();
         results
+    }
+
+    /// Query points within a 2D bounding box, returning coordinates.
+    pub fn query_within_bbox_2d_points(
+        &self,
+        prefix: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> Vec<(f64, f64, String, Bytes)> {
+        let Some(tree) = self.indexes.get(prefix) else {
+            return Vec::new();
+        };
+
+        let envelope = AABB::from_corners(
+            IndexedPoint3D::new(min_x, min_y, f64::NEG_INFINITY, String::new(), Bytes::new()),
+            IndexedPoint3D::new(max_x, max_y, f64::INFINITY, String::new(), Bytes::new()),
+        );
+
+        tree.locate_in_envelope(&envelope)
+            .take(limit)
+            .map(|p| (p.x, p.y, p.key.clone(), p.data.clone()))
+            .collect()
     }
 
     /// Query points within a 3D bounding box.
