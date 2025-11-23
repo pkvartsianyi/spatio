@@ -67,8 +67,16 @@ impl ColdState {
         metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
+        // Truncate timestamp to microseconds to match disk storage precision
+        // This prevents duplicates when merging buffer and disk results
+        let micros = timestamp
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros();
+        let timestamp_truncated = UNIX_EPOCH + std::time::Duration::from_micros(micros as u64);
+
         let update = LocationUpdate {
-            timestamp,
+            timestamp: timestamp_truncated,
             position,
             metadata,
         };

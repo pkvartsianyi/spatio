@@ -14,7 +14,7 @@
 //!
 //! let db = Spatio::memory().unwrap();
 //! let point = Point3d::new(-74.0, 40.7, 5000.0);
-//! db.update_location("aircraft", "id1", point.clone(), b"data").unwrap();
+//! db.update_location("aircraft", "id1", point.clone(), serde_json::json!({"data": "data"})).unwrap();
 //!
 //! let center = Point3d::new(-74.0, 40.0, 5000.0);
 //! let results = db.query_current_within_radius("aircraft", &center, 10000.0, 100).unwrap();
