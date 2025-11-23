@@ -23,7 +23,8 @@ s2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 geojson.workspace = true
-bytes.workspace = true
+bytes = { workspace = true, features = ["serde"] }
+dashmap.workspace = true
 log.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true

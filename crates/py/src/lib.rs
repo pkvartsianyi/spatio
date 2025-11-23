@@ -257,303 +257,122 @@ impl PySpatio {
         Ok(PySpatio { db })
     }
 
-    /// Insert a key-value pair
-    #[pyo3(signature = (key, value, options=None))]
-    fn insert(
+    /// Update an object's location
+    #[pyo3(signature = (namespace, object_id, point, metadata=None))]
+    fn update_location(
         &self,
-        key: &Bound<'_, PyBytes>,
-        value: &Bound<'_, PyBytes>,
-        options: Option<&PySetOptions>,
-    ) -> PyResult<()> {
-        let key_bytes = key.as_bytes();
-        let value_bytes = value.as_bytes();
-        let opts = options.map(|o| o.inner.clone());
-
-        handle_error(self.db.insert(key_bytes, value_bytes, opts))?;
-        Ok(())
-    }
-
-    /// Get a value by key, returns None if not found
-    fn get(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
-        let key_bytes = key.as_bytes();
-        let result = handle_error(self.db.get(key_bytes))?;
-
-        Python::attach(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).unbind())),
-            None => Ok(None),
-        })
-    }
-
-    /// Delete a key, returns the old value if it existed
-    fn delete(&self, key: &Bound<'_, PyBytes>) -> PyResult<Option<Py<PyBytes>>> {
-        let key_bytes = key.as_bytes();
-        let result = handle_error(self.db.delete(key_bytes))?;
-
-        Python::attach(|py| match result {
-            Some(bytes) => Ok(Some(PyBytes::new(py, &bytes).unbind())),
-            None => Ok(None),
-        })
-    }
-
-    /// Insert a geographic point with automatic spatial indexing
-    #[pyo3(signature = (prefix, point, value, options=None))]
-    fn insert_point(
-        &self,
-        prefix: &str,
+        namespace: &str,
+        object_id: &str,
         point: &PyPoint,
-        value: &Bound<'_, PyBytes>,
-        options: Option<&PySetOptions>,
+        metadata: Option<&Bound<'_, PyBytes>>,
     ) -> PyResult<()> {
-        let value_bytes = value.as_bytes();
-        let opts = options.map(|o| o.inner.clone());
+        let meta_bytes = metadata.map(|b| b.as_bytes()).unwrap_or(&[]);
+        let pos = spatio::Point3d::new(point.lon(), point.lat(), point.alt().unwrap_or(0.0));
 
         handle_error(
             self.db
-                .insert_point(prefix, &point.inner, value_bytes, opts),
+                .update_location(namespace, object_id, pos, meta_bytes),
         )
     }
 
-    /// Find nearby points within a radius
-    #[pyo3(signature = (prefix, center, radius, limit=100))]
-    fn query_within_radius(
+    /// Query current locations within radius
+    #[pyo3(signature = (namespace, center, radius, limit=100))]
+    fn query_current_within_radius(
         &self,
-        prefix: &str,
+        namespace: &str,
         center: &PyPoint,
         radius: f64,
         limit: usize,
-    ) -> PyResult<Vec<(PyPoint, Vec<u8>, f64)>> {
-        let results =
-            handle_error(
-                self.db
-                    .query_within_radius(prefix, &center.inner, radius, limit),
-            )?;
-
-        Ok(results
-            .into_iter()
-            .map(|(point, data, distance)| (PyPoint { inner: point }, data.to_vec(), distance))
-            .collect())
-    }
-
-    /// Insert trajectory data for an object
-    #[pyo3(signature = (object_id, trajectory, options=None))]
-    fn insert_trajectory(
-        &self,
-        object_id: &str,
-        trajectory: &Bound<'_, PyList>,
-        options: Option<&PySetOptions>,
-    ) -> PyResult<()> {
-        let mut rust_trajectory = Vec::new();
-
-        for item in trajectory.iter() {
-            let tuple = item.cast::<PyTuple>()?;
-            if tuple.len() != 2 {
-                return Err(PyValueError::new_err(
-                    "Trajectory items must be (Point, timestamp) tuples",
-                ));
-            }
-
-            let point_ref: PyRef<PyPoint> = tuple.get_item(0)?.extract()?;
-            let point = point_ref.clone();
-            let timestamp_f64: f64 = tuple.get_item(1)?.extract()?;
-            let timestamp = UNIX_EPOCH + Duration::from_secs(timestamp_f64 as u64);
-
-            rust_trajectory.push(spatio::config::TemporalPoint {
-                point: point.inner,
-                timestamp,
-            });
-        }
-
-        let opts = options.map(|o| o.inner.clone());
-        handle_error(self.db.insert_trajectory(object_id, &rust_trajectory, opts))
-    }
-
-    /// Query trajectory data for a time range
-    fn query_trajectory(
-        &self,
-        object_id: &str,
-        start_time: f64,
-        end_time: f64,
     ) -> PyResult<Py<PyList>> {
-        let results = handle_error(self.db.query_trajectory(
-            object_id,
-            start_time as u64,
-            end_time as u64,
+        let center_pos =
+            spatio::Point3d::new(center.lon(), center.lat(), center.alt().unwrap_or(0.0));
+        let results = handle_error(self.db.query_current_within_radius(
+            namespace,
+            &center_pos,
+            radius,
+            limit,
         ))?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
-            for temporal_point in results {
+            for loc in results {
                 let py_point = PyPoint {
-                    inner: temporal_point.point,
+                    inner: RustPoint::new(loc.position.x, loc.position.y), // TODO: Support 3D in PyPoint
                 };
-                let timestamp_f64 = temporal_point
-                    .timestamp
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
-                    .as_secs_f64();
-                let tuple = (py_point, timestamp_f64).into_pyobject(py)?;
+                let py_meta = PyBytes::new(py, &loc.metadata);
+                // (object_id, point, metadata)
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
         })
     }
 
-    /// Check if any points exist within a radius
-    fn intersects_radius(
+    /// Query objects near another object
+    #[pyo3(signature = (namespace, object_id, radius, limit=100))]
+    fn query_near_object(
         &self,
-        prefix: &str,
-        center: &PyPoint,
-        radius_meters: f64,
-    ) -> PyResult<bool> {
-        handle_error(
-            self.db
-                .intersects_radius(prefix, &center.inner, radius_meters),
-        )
-    }
-
-    /// Count points within a distance
-    fn count_within_radius(
-        &self,
-        prefix: &str,
-        center: &PyPoint,
-        radius_meters: f64,
-    ) -> PyResult<usize> {
-        handle_error(
-            self.db
-                .count_within_radius(prefix, &center.inner, radius_meters),
-        )
-    }
-
-    /// Check if any points exist within a bounding box
-    fn intersects_bounds(
-        &self,
-        prefix: &str,
-        min_lat: f64,
-        min_lon: f64,
-        max_lat: f64,
-        max_lon: f64,
-    ) -> PyResult<bool> {
-        handle_error(
-            self.db
-                .intersects_bounds(prefix, min_lat, min_lon, max_lat, max_lon),
-        )
-    }
-
-    /// Find all points within a bounding box
-    fn find_within_bounds(
-        &self,
-        prefix: &str,
-        min_lat: f64,
-        min_lon: f64,
-        max_lat: f64,
-        max_lon: f64,
+        namespace: &str,
+        object_id: &str,
+        radius: f64,
         limit: usize,
     ) -> PyResult<Py<PyList>> {
         let results = handle_error(
             self.db
-                .find_within_bounds(prefix, min_lat, min_lon, max_lat, max_lon, limit),
+                .query_near_object(namespace, object_id, radius, limit),
         )?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
-            for (point, value) in results {
-                let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new(py, &value);
-                let tuple = (py_point, py_value).into_pyobject(py)?;
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: RustPoint::new(loc.position.x, loc.position.y),
+                };
+                let py_meta = PyBytes::new(py, &loc.metadata);
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
         })
     }
 
-    /// Calculate distance between two points using a specified metric
-    fn distance_between(
+    /// Query trajectory
+    #[pyo3(signature = (namespace, object_id, start_time, end_time, limit=100))]
+    fn query_trajectory(
         &self,
-        point1: &PyPoint,
-        point2: &PyPoint,
-        metric: &PyDistanceMetric,
-    ) -> PyResult<f64> {
-        handle_error(
-            self.db
-                .distance_between(&point1.inner, &point2.inner, metric.inner),
-        )
-    }
-
-    /// Find K nearest neighbors to a query point
-    fn knn(
-        &self,
-        prefix: &str,
-        center: &PyPoint,
-        k: usize,
-        max_radius: f64,
-        metric: &PyDistanceMetric,
-    ) -> PyResult<Py<PyList>> {
-        let results =
-            handle_error(
-                self.db
-                    .knn(prefix, &center.inner, k, max_radius, metric.inner),
-            )?;
-
-        Python::attach(|py| {
-            let py_list = PyList::empty(py);
-            for (point, value, distance) in results {
-                let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new(py, &value);
-                let tuple = (py_point, py_value, distance).into_pyobject(py)?;
-                py_list.append(tuple)?;
-            }
-            Ok(py_list.unbind())
-        })
-    }
-
-    /// Query points within a polygon boundary
-    fn query_within_polygon(
-        &self,
-        prefix: &str,
-        polygon_coords: &Bound<'_, PyList>,
+        namespace: &str,
+        object_id: &str,
+        start_time: f64,
+        end_time: f64,
         limit: usize,
     ) -> PyResult<Py<PyList>> {
-        // Parse polygon coordinates from list of (lon, lat) tuples
-        let mut coords = Vec::new();
-        for item in polygon_coords.iter() {
-            let tuple = item.cast::<PyTuple>()?;
-            if tuple.len() != 2 {
-                return Err(PyValueError::new_err(
-                    "Polygon coordinates must be (lon, lat) tuples",
-                ));
-            }
-            let lon: f64 = tuple.get_item(0)?.extract()?;
-            let lat: f64 = tuple.get_item(1)?.extract()?;
-            coords.push(geo::coord! { x: lon, y: lat });
-        }
+        let start = UNIX_EPOCH + Duration::from_secs_f64(start_time);
+        let end = UNIX_EPOCH + Duration::from_secs_f64(end_time);
 
-        if coords.len() < 3 {
-            return Err(PyValueError::new_err(
-                "Polygon must have at least 3 coordinates",
-            ));
-        }
-
-        // Create polygon using from_coords to avoid geo::LineString exposure
-        let coord_tuples: Vec<(f64, f64)> = coords.into_iter().map(|c| (c.x, c.y)).collect();
-        let polygon = RustPolygon::from_coords(&coord_tuples, vec![]);
-
-        let results = handle_error(self.db.query_within_polygon(prefix, &polygon, limit))?;
+        let results = handle_error(
+            self.db
+                .query_trajectory(namespace, object_id, start, end, limit),
+        )?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
-            for (point, value) in results {
-                let py_point = PyPoint { inner: point };
-                let py_value = PyBytes::new(py, &value);
-                let tuple = (py_point, py_value).into_pyobject(py)?;
+            for update in results {
+                let py_point = PyPoint {
+                    inner: RustPoint::new(update.position.x, update.position.y),
+                };
+                let py_meta = PyBytes::new(py, &update.metadata);
+                let ts = update
+                    .timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+
+                // (point, metadata, timestamp)
+                let tuple = (py_point, py_meta, ts).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
         })
-    }
-
-    /// Force sync to disk
-    fn sync(&self) -> PyResult<()> {
-        handle_error(self.db.sync())
     }
 
     /// Get database statistics
@@ -562,6 +381,7 @@ impl PySpatio {
 
         Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
+            // TODO: Update stats fields when DbStats is updated
             dict.set_item("key_count", stats.key_count)?;
             dict.set_item("expired_count", stats.expired_count)?;
             dict.set_item("operations_count", stats.operations_count)?;
@@ -569,7 +389,7 @@ impl PySpatio {
         })
     }
 
-    /// Close the database and sync all pending writes
+    /// Close the database
     fn close(&self) -> PyResult<()> {
         handle_error(self.db.close())
     }
