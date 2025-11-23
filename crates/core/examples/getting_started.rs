@@ -22,16 +22,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paris = Point3d::new(2.3522, 48.8566, 0.0);
 
     // Update current locations
-    db.update_location("cities", "nyc", nyc.clone(), b"New York")?;
-    db.update_location("cities", "london", london.clone(), b"London")?;
-    db.update_location("cities", "paris", paris.clone(), b"Paris")?;
+    db.update_location("cities", "nyc", nyc.clone(), serde_json::json!({"data": "New York"}))?;
+    db.update_location("cities", "london", london.clone(), serde_json::json!({"data": "London"}))?;
+    db.update_location("cities", "paris", paris.clone(), serde_json::json!({"data": "Paris"}))?;
     println!("   Stored 3 cities with automatic spatial indexing");
 
     // Find nearby cities within radius (in meters)
     let nearby = db.query_current_within_radius("cities", &london, 500_000.0, 10)?;
     println!("   Found {} cities within 500km of London:", nearby.len());
     for loc in &nearby {
-        println!("     - {}", String::from_utf8_lossy(&loc.metadata));
+        println!("     - {}", loc.metadata.to_string());
     }
     println!();
 
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "fleet",
         "old_truck",
         past_pos,
-        b"Historical Data",
+        serde_json::json!({"data": "Historical Data"}),
         past_time,
     )?;
     println!("   Ingested historical data point\n");

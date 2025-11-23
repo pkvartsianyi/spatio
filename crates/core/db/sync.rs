@@ -56,7 +56,7 @@ impl SyncDB {
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
-        metadata: impl AsRef<[u8]>,
+        metadata: serde_json::Value,
     ) -> Result<()> {
         self.inner
             .update_location(namespace, object_id, position, metadata)

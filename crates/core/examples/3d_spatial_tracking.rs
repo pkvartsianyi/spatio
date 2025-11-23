@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (id, lon, lat, alt, description) in &drones {
         let position = Point3d::new(*lon, *lat, *alt);
-        db.update_location("drones", id, position, description.as_bytes())?;
+        db.update_location("drones", id, position, serde_json::json!({"description": description}))?;
         println!("   ✓ Registered {}: altitude {}m", id, alt);
     }
     println!();
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Found {} drones within range:", nearby_drones.len());
 
     for loc in &nearby_drones {
-        let description = String::from_utf8_lossy(&loc.metadata);
+        let description = loc.metadata.to_string();
         // Calculate distance manually for display
         let distance = control_center.distance_3d(&loc.position);
         println!(
@@ -123,7 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Found {} drones in corridor:", corridor_drones.len());
 
     for (loc, h_dist) in &corridor_drones {
-        let description = String::from_utf8_lossy(&loc.metadata);
+        let description = loc.metadata.to_string();
         println!(
             "   - {} at altitude {}m (horizontal: {:.1}m)",
             description,
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Found {} drones in volume:", boxed_drones.len());
 
     for loc in &boxed_drones {
-        let description = String::from_utf8_lossy(&loc.metadata);
+        let description = loc.metadata.to_string();
         println!(
             "   - {} at ({:.4}, {:.4}, {}m)",
             description,
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Finding {} nearest drones:\n", k);
 
     for (i, (loc, distance)) in nearest.iter().enumerate() {
-        let description = String::from_utf8_lossy(&loc.metadata);
+        let description = loc.metadata.to_string();
         println!("   {}. {} - {:.1}m away", i + 1, description, distance);
         println!(
             "      Position: ({:.4}, {:.4}, {}m)",
@@ -209,7 +209,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (flight, lon, lat, alt, route) in &flights {
         let position = Point3d::new(*lon, *lat, *alt);
         let info = format!("{} - {}", flight, route);
-        db.update_location("aircraft", flight, position, info.as_bytes())?;
+        db.update_location("aircraft", flight, position, serde_json::json!({"info": info}))?;
         println!("   ✓ Tracking {}: {}m altitude", flight, alt);
     }
     println!();
@@ -227,7 +227,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Radar range: {}km\n", radar_range / 1000.0);
 
     for (loc, h_dist) in &tracked_flights {
-        let info = String::from_utf8_lossy(&loc.metadata);
+        let info = loc.metadata.to_string();
         println!(
             "   - {} at FL{:.0} ({}km away)",
             info,
@@ -281,7 +281,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let sensor_id = format!("sensor-floor-{:02}", floor);
         let position = Point3d::new(-74.0060, 40.7128, altitude);
         let info = format!("Temperature sensor - Floor {}", floor);
-        db.update_location("building-sensors", &sensor_id, position, info.as_bytes())?;
+        db.update_location("building-sensors", &sensor_id, position, serde_json::json!({"info": info}))?;
     }
 
     // Query sensors on floors 3-7
@@ -300,7 +300,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("   Building sensors on floors 3-7:");
     for (loc, _) in &mid_floor_sensors {
-        let info = String::from_utf8_lossy(&loc.metadata);
+        let info = loc.metadata.to_string();
         let floor = (loc.position.z() / 3.0).round() as i32;
         println!("   - Floor {}: {}", floor, info);
     }

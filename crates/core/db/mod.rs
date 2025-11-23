@@ -5,7 +5,6 @@
 
 use crate::config::{Config, DbStats, TemporalPoint};
 use crate::error::{Result, SpatioError};
-use bytes::Bytes;
 use std::path::Path;
 
 use std::time::SystemTime;
@@ -58,10 +57,10 @@ impl DB {
 
     /// Open or create a database with custom configuration.
     pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
-        let path = path.as_ref();
+        let path_ref = path.as_ref();
         let hot = Arc::new(HotState::new());
 
-        let cold = if path.to_str() == Some(":memory:") {
+        let cold = if path_ref.to_str() == Some(":memory:") {
             let temp_dir =
                 std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
             Arc::new(ColdState::new(
@@ -69,11 +68,11 @@ impl DB {
                 config.buffer_capacity,
             )?)
         } else {
-            Arc::new(ColdState::new(path, config.buffer_capacity)?)
+            Arc::new(ColdState::new(path_ref, config.buffer_capacity)?)
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
-        if path.to_str() != Some(":memory:") {
+        if path_ref.to_str() != Some(":memory:") {
             match cold.recover_current_locations() {
                 Ok(recovered) => {
                     for (key, update) in recovered {
@@ -126,13 +125,12 @@ impl DB {
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
-        metadata: impl AsRef<[u8]>,
+        metadata: serde_json::Value,
     ) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let metadata_bytes = Bytes::copy_from_slice(metadata.as_ref());
         let timestamp = SystemTime::now();
 
         // 1. Update hot state (replaces old position)
@@ -140,13 +138,13 @@ impl DB {
             namespace,
             object_id,
             position.clone(),
-            metadata_bytes.clone(),
+            metadata.clone(),
             timestamp,
         )?;
 
         // 2. Append to cold state
         self.cold
-            .append_update(namespace, object_id, position, metadata_bytes, timestamp)?;
+            .append_update(namespace, object_id, position, metadata, timestamp)?;
 
         Ok(())
     }
@@ -157,14 +155,12 @@ impl DB {
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
-        metadata: impl AsRef<[u8]>,
+        metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
-
-        let meta_bytes = Bytes::copy_from_slice(metadata.as_ref());
 
         // 1. Update Hot State (Current Location)
         // We only update hot state if this is a recent update (e.g. within last minute)
@@ -177,13 +173,13 @@ impl DB {
             namespace,
             object_id,
             position.clone(),
-            meta_bytes.clone(),
+            metadata.clone(),
             timestamp,
         )?;
 
         // 2. Append to Cold State (History)
         self.cold
-            .append_update(namespace, object_id, position, meta_bytes, timestamp)?;
+            .append_update(namespace, object_id, position, metadata, timestamp)?;
 
         Ok(())
     }
@@ -197,7 +193,13 @@ impl DB {
     ) -> Result<()> {
         for tp in trajectory {
             let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
-            self.update_location_at(namespace, object_id, pos, [], tp.timestamp)?;
+            self.update_location_at(
+                namespace,
+                object_id,
+                pos,
+                serde_json::json!({}),
+                tp.timestamp,
+            )?;
         }
         Ok(())
     }
@@ -354,9 +356,9 @@ mod tests {
         let namespace = "vehicles";
         let object_id = "car1";
         let pos1 = Point3d::new(10.0, 20.0, 0.0);
-        let metadata1 = b"engine_on";
+        let metadata1 = serde_json::json!({"engine": "on"});
 
-        db.update_location(namespace, object_id, pos1.clone(), metadata1)
+        db.update_location(namespace, object_id, pos1.clone(), metadata1.clone())
             .unwrap();
 
         let results = db
@@ -365,11 +367,11 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].object_id, object_id);
         assert_eq!(results[0].position, pos1);
-        assert_eq!(results[0].metadata.as_ref(), metadata1);
+        assert_eq!(results[0].metadata, metadata1);
 
         let pos2 = Point3d::new(10.1, 20.1, 0.0);
-        let metadata2 = b"engine_off";
-        db.update_location(namespace, object_id, pos2.clone(), metadata2)
+        let metadata2 = serde_json::json!({"engine": "off"});
+        db.update_location(namespace, object_id, pos2.clone(), metadata2.clone())
             .unwrap();
 
         let results = db
@@ -378,7 +380,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].object_id, object_id);
         assert_eq!(results[0].position, pos2); // Should be updated to pos2
-        assert_eq!(results[0].metadata.as_ref(), metadata2);
+        assert_eq!(results[0].metadata, metadata2);
     }
 
     #[test]
@@ -387,15 +389,15 @@ mod tests {
         let namespace = "vehicles";
 
         let car1_pos = Point3d::new(0.0, 0.0, 0.0);
-        db.update_location(namespace, "car1", car1_pos, b"")
+        db.update_location(namespace, "car1", car1_pos, serde_json::json!({}))
             .unwrap();
 
         let car2_pos = Point3d::new(0.00001, 0.0, 0.0); // ~1 meter away
-        db.update_location(namespace, "car2", car2_pos, b"")
+        db.update_location(namespace, "car2", car2_pos, serde_json::json!({}))
             .unwrap();
 
         let car3_pos = Point3d::new(10.0, 0.0, 0.0); // 10 units away
-        db.update_location(namespace, "car3", car3_pos, b"")
+        db.update_location(namespace, "car3", car3_pos, serde_json::json!({}))
             .unwrap();
 
         let near_car1 = db.query_near_object(namespace, "car1", 1.5, 10).unwrap();
@@ -420,7 +422,7 @@ mod tests {
             namespace,
             object_id,
             Point3d::new(0.0, 0.0, 0.0),
-            b"takeoff",
+            serde_json::json!({"status": "takeoff"}),
         )
         .unwrap();
         sleep(Duration::from_millis(10));
@@ -428,7 +430,7 @@ mod tests {
             namespace,
             object_id,
             Point3d::new(10.0, 10.0, 1000.0),
-            b"climb",
+            serde_json::json!({"status": "climb"}),
         )
         .unwrap();
         sleep(Duration::from_millis(10));
@@ -436,7 +438,7 @@ mod tests {
             namespace,
             object_id,
             Point3d::new(20.0, 20.0, 2000.0),
-            b"cruise",
+            serde_json::json!({"status": "cruise"}),
         )
         .unwrap();
         sleep(Duration::from_millis(10));
@@ -466,7 +468,7 @@ mod tests {
         let namespace = "test";
         let object_id = "obj1";
         let pos = Point3d::new(0.0, 0.0, 0.0);
-        let metadata = b"data";
+        let metadata = serde_json::json!({"data": "data"});
 
         assert!(
             db.update_location(namespace, object_id, pos.clone(), metadata)

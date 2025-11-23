@@ -7,7 +7,7 @@
 // All geo types are now accessed through spatio wrappers
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList};
+use pyo3::types::PyList;
 use spatio::DistanceMetric as RustDistanceMetric;
 use spatio::{Point3d, Spatio};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
@@ -214,14 +214,19 @@ impl PySpatio {
         namespace: &str,
         object_id: &str,
         point: &PyPoint,
-        metadata: Option<&Bound<'_, PyBytes>>,
+        metadata: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let meta_bytes = metadata.map(|b| b.as_bytes()).unwrap_or(&[]);
         let pos = point.inner.clone();
+
+        let metadata_value = if let Some(meta) = metadata {
+            pythonize::depythonize(meta).map_err(|e| PyValueError::new_err(e.to_string()))?
+        } else {
+            serde_json::Value::Null
+        };
 
         handle_error(
             self.db
-                .update_location(namespace, object_id, pos, meta_bytes),
+                .update_location(namespace, object_id, pos, metadata_value),
         )
     }
 
@@ -242,13 +247,13 @@ impl PySpatio {
             limit,
         ))?;
 
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
                     inner: loc.position,
                 };
-                let py_meta = PyBytes::new(py, &loc.metadata);
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata)
                 let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
@@ -271,13 +276,13 @@ impl PySpatio {
                 .query_near_object(namespace, object_id, radius, limit),
         )?;
 
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
                     inner: loc.position,
                 };
-                let py_meta = PyBytes::new(py, &loc.metadata);
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
@@ -303,13 +308,13 @@ impl PySpatio {
                 .query_trajectory(namespace, object_id, start, end, limit),
         )?;
 
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             let py_list = PyList::empty(py);
             for update in results {
                 let py_point = PyPoint {
                     inner: update.position,
                 };
-                let py_meta = PyBytes::new(py, &update.metadata);
+                let py_meta = pythonize::pythonize(py, &update.metadata)?;
                 let ts = update
                     .timestamp
                     .duration_since(UNIX_EPOCH)
@@ -328,7 +333,7 @@ impl PySpatio {
     fn stats(&self) -> PyResult<Py<PyAny>> {
         let stats = self.db.stats();
 
-        Python::attach(|py| {
+        Python::with_gil(|py| {
             let dict = pyo3::types::PyDict::new(py);
             // TODO: Update stats fields when DbStats is updated
             dict.set_item("key_count", stats.key_count)?;
@@ -348,6 +353,23 @@ impl PySpatio {
     }
 }
 
+/// Python wrapper for SetOptions
+#[pyclass(name = "SetOptions")]
+#[derive(Clone, Debug)]
+pub struct PySetOptions {
+    inner: spatio::config::SetOptions,
+}
+
+#[pymethods]
+impl PySetOptions {
+    #[new]
+    fn new() -> Self {
+        PySetOptions {
+            inner: spatio::config::SetOptions::default(),
+        }
+    }
+}
+
 /// Python module definition
 #[pymodule]
 fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -355,6 +377,7 @@ fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPoint>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;
+    m.add_class::<PySetOptions>()?;
 
     // Add version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

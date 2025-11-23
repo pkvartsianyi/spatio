@@ -4,7 +4,6 @@
 //! append-only writes and time-range queries. It uses a persistent log for
 //! durability and a memory buffer for recent history access.
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -15,14 +14,14 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{Result, SpatioError};
+use crate::error::Result;
 
 /// Single location update in history
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationUpdate {
     pub timestamp: SystemTime,
     pub position: Point3d,
-    pub metadata: Bytes,
+    pub metadata: serde_json::Value,
 }
 
 /// Cold state: historical trajectories
@@ -65,13 +64,13 @@ impl ColdState {
         namespace: &str,
         object_id: &str,
         position: Point3d,
-        metadata: Bytes,
+        metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
         let update = LocationUpdate {
             timestamp,
             position,
-            metadata: metadata.clone(),
+            metadata,
         };
 
         // 1. Write to persistent log (serialized via Mutex)
@@ -187,11 +186,9 @@ impl ColdState {
                 Err(_) => continue,
             };
 
-            // Decode metadata
-            let metadata = match hex_decode(parts[7]) {
-                Ok(data) => Bytes::from(data),
-                Err(_) => continue,
-            };
+            // Parse JSON metadata
+            let metadata: serde_json::Value =
+                serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
 
             from_disk.push(LocationUpdate {
                 timestamp,
@@ -244,7 +241,7 @@ impl ColdState {
                 }
             };
 
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|hex_metadata
+            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
             let parts: Vec<&str> = line.split('|').collect();
             if parts.len() != 8 {
                 eprintln!(
@@ -255,64 +252,58 @@ impl ColdState {
                 continue;
             }
 
-            // Parse fields
+            // Parse timestamp
             let timestamp_micros: u128 = match parts[0].parse() {
                 Ok(t) => t,
-                Err(_) => {
-                    eprintln!("Warning: Invalid timestamp at line {}", line_num + 1);
+                Err(e) => {
+                    eprintln!("Warning: Invalid timestamp on line {}: {}", line_num + 1, e);
                     continue;
                 }
             };
+            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
 
             let namespace = parts[1];
             let object_id = parts[2];
 
+            // Parse position
             let lat: f64 = match parts[3].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid latitude at line {}", line_num + 1);
+                    eprintln!("Warning: Invalid latitude on line {}", line_num + 1);
                     continue;
                 }
             };
-
             let lon: f64 = match parts[4].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid longitude at line {}", line_num + 1);
+                    eprintln!("Warning: Invalid longitude on line {}", line_num + 1);
                     continue;
                 }
             };
-
             let alt: f64 = match parts[5].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid altitude at line {}", line_num + 1);
+                    eprintln!("Warning: Invalid altitude on line {}", line_num + 1);
                     continue;
                 }
             };
 
-            // Decode hex metadata
-            let metadata = match hex_decode(parts[7]) {
-                Ok(data) => Bytes::from(data),
-                Err(_) => {
-                    eprintln!("Warning: Invalid metadata at line {}", line_num + 1);
-                    continue;
-                }
-            };
+            // Parse JSON metadata
+            let metadata: serde_json::Value = serde_json::from_str(parts[7]).unwrap_or_else(|e| {
+                eprintln!("Warning: Invalid metadata on line {}: {}", line_num + 1, e);
+                serde_json::Value::Null
+            });
 
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
-            let position = Point3d::new(lon, lat, alt);
-
-            let key = Self::make_key(namespace, object_id);
+            let full_key = format!("{}::{}", namespace, object_id);
             let update = LocationUpdate {
                 timestamp,
-                position,
+                position: Point3d::new(lon, lat, alt),
                 metadata,
             };
 
-            // Keep only the latest timestamp for each object
+            // Keep only the latest update for each object
             latest_positions
-                .entry(key)
+                .entry(full_key)
                 .and_modify(|existing| {
                     if update.timestamp > existing.timestamp {
                         *existing = update.clone();
@@ -351,8 +342,12 @@ impl TrajectoryLog {
         let micros = update
             .timestamp
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| SpatioError::InvalidTimestamp)?
+            .unwrap_or_default()
             .as_micros();
+
+        // Serialize metadata to JSON string
+        let json_str =
+            serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
 
         // We use a simple pipe-separated format
         // Note: This assumes namespace and object_id don't contain pipes.
@@ -366,8 +361,8 @@ impl TrajectoryLog {
             update.position.y(), // lat
             update.position.x(), // lon
             update.position.z(), // alt
-            update.metadata.len(),
-            base64_encode(&update.metadata),
+            json_str.len(),
+            json_str,
         )?;
 
         // Flush periodically or on every write?
@@ -377,26 +372,6 @@ impl TrajectoryLog {
 
         Ok(())
     }
-}
-
-// Simple base64 encoder to avoid another dependency if possible,
-// but better to use the crate if we added it.
-// Since we didn't add base64 crate yet, let's use a placeholder or hex.
-// Hex is standard in Rust std lib (via fmt).
-fn base64_encode(data: &[u8]) -> String {
-    // Using hex encoding for simplicity without extra deps
-    data.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn hex_decode(s: &str) -> std::result::Result<Vec<u8>, ()> {
-    if !s.len().is_multiple_of(2) {
-        return Err(());
-    }
-
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
-        .collect()
 }
 
 #[cfg(test)]
@@ -417,10 +392,22 @@ mod tests {
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);
 
-        cold.append_update("vehicles", "truck_001", pos1, Bytes::from("m1"), t1)
-            .unwrap();
-        cold.append_update("vehicles", "truck_001", pos2, Bytes::from("m2"), t2)
-            .unwrap();
+        cold.append_update(
+            "vehicles",
+            "truck_001",
+            pos1,
+            serde_json::json!({"msg": "m1"}),
+            t1,
+        )
+        .unwrap();
+        cold.append_update(
+            "vehicles",
+            "truck_001",
+            pos2,
+            serde_json::json!({"msg": "m2"}),
+            t2,
+        )
+        .unwrap();
 
         let history = cold
             .query_trajectory(
@@ -447,7 +434,7 @@ mod tests {
 
         for i in 0..5 {
             let t = UNIX_EPOCH + Duration::from_secs(i);
-            cold.append_update("v", "o", pos.clone(), Bytes::from(vec![i as u8]), t)
+            cold.append_update("v", "o", pos.clone(), serde_json::json!({"id": i}), t)
                 .unwrap();
         }
 
@@ -489,7 +476,7 @@ mod tests {
             "vehicles",
             "truck_001",
             Point3d::new(-74.0, 40.0, 100.0),
-            Bytes::from("old"),
+            serde_json::json!({"data": "old"}),
             t1,
         )
         .unwrap();
@@ -498,7 +485,7 @@ mod tests {
             "vehicles",
             "truck_001",
             Point3d::new(-74.1, 40.1, 200.0),
-            Bytes::from("new"),
+            serde_json::json!({"data": "new"}),
             t2,
         )
         .unwrap();
@@ -508,7 +495,7 @@ mod tests {
             "aircraft",
             "plane_001",
             Point3d::new(-75.0, 41.0, 5000.0),
-            Bytes::from("flight"),
+            serde_json::json!({"type": "flight"}),
             t3,
         )
         .unwrap();
@@ -524,7 +511,7 @@ mod tests {
         assert_eq!(truck.position.x(), -74.1);
         assert_eq!(truck.position.y(), 40.1);
         assert_eq!(truck.timestamp, t2);
-        assert_eq!(truck.metadata, Bytes::from("new"));
+        assert_eq!(truck.metadata, serde_json::json!({"data": "new"}));
 
         // Check plane
         let plane_key = "aircraft::plane_001";
@@ -552,7 +539,7 @@ mod tests {
                 "vehicles",
                 "truck_001",
                 Point3d::new(-74.0 + i as f64 * 0.1, 40.0, 0.0),
-                Bytes::from(format!("data_{}", i)),
+                serde_json::json!({"data": format!("data_{}", i)}),
                 *t,
             )
             .unwrap();

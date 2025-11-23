@@ -17,7 +17,7 @@ mod tests {
                 "vehicles",
                 "truck_001",
                 Point3d::new(-74.0, 40.0, 0.0),
-                b"metadata1",
+                serde_json::json!({"v": 1}),
             )
             .unwrap();
 
@@ -25,7 +25,7 @@ mod tests {
                 "vehicles",
                 "truck_002",
                 Point3d::new(-74.1, 40.1, 0.0),
-                b"metadata2",
+                serde_json::json!({"v": 2}),
             )
             .unwrap();
 
@@ -33,7 +33,7 @@ mod tests {
                 "aircraft",
                 "plane_001",
                 Point3d::new(-75.0, 41.0, 5000.0),
-                b"flight_data",
+                serde_json::json!({"type": "flight"}),
             )
             .unwrap();
 

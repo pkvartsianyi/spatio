@@ -4,7 +4,6 @@
 //! frequent updates and spatial queries. Each object has exactly one current
 //! position, which replaces the previous position on update.
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use spatio_types::point::Point3d;
 use std::time::SystemTime;
@@ -19,7 +18,7 @@ pub struct CurrentLocation {
     pub object_id: String,
     pub namespace: String,
     pub position: Point3d,
-    pub metadata: Bytes,
+    pub metadata: serde_json::Value,
     pub last_updated: SystemTime,
 }
 
@@ -55,19 +54,13 @@ impl HotState {
     }
 
     /// Update object's current location (replaces old position)
-    ///
-    /// This is the main write path for the hot state. It:
-    /// 1. Updates the current_locations map (atomic via DashMap)
-    /// 2. Removes old position from spatial index
-    /// 3. Inserts new position into spatial index
-    ///
-    /// Returns the previous location if it existed.
+    /// Update an object's current location
     pub fn update_location(
         &self,
         namespace: &str,
         object_id: &str,
         position: Point3d,
-        metadata: Bytes,
+        metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<Option<CurrentLocation>> {
         let full_key = Self::make_key(namespace, object_id);
@@ -100,7 +93,7 @@ impl HotState {
 
         // Insert new position
         let mut spatial_idx = self.spatial_index.write();
-        spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key, metadata);
+        spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
 
         Ok(old_location)
     }
@@ -128,7 +121,7 @@ impl HotState {
 
         results
             .into_iter()
-            .filter_map(|(key, _data, _dist)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(key, _dist)| self.current_locations.get(&key).map(|v| v.clone()))
             .collect()
     }
 
@@ -148,7 +141,8 @@ impl HotState {
 
         results
             .into_iter()
-            .filter_map(|(_x, _y, key, _data)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(_x, _y, key)| self.current_locations.get(&key).map(|v| v.clone()))
+            .take(limit)
             .collect()
     }
 
@@ -189,9 +183,7 @@ impl HotState {
 
         results
             .into_iter()
-            .filter_map(|(key, _data, dist)| {
-                self.current_locations.get(&key).map(|v| (v.clone(), dist))
-            })
+            .filter_map(|(key, dist)| self.current_locations.get(&key).map(|v| (v.clone(), dist)))
             .collect()
     }
 
@@ -202,13 +194,12 @@ impl HotState {
         center: &Point3d,
         k: usize,
     ) -> Vec<(CurrentLocation, f64)> {
-        let spatial_idx = self.spatial_index.read();
-        let results = spatial_idx.knn_3d(namespace, center, k);
-
-        results
-            .into_iter()
-            .filter_map(|(key, _data, dist)| {
-                self.current_locations.get(&key).map(|v| (v.clone(), dist))
+        let keys = self.spatial_index.read().knn_3d(namespace, center, k);
+        keys.into_iter()
+            .filter_map(|(key, distance)| {
+                self.current_locations
+                    .get(&key)
+                    .map(|v| (v.clone(), distance))
             })
             .collect()
     }
@@ -240,7 +231,7 @@ impl HotState {
         results
             .into_iter()
             .take(limit)
-            .filter_map(|(key, _data)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(key,)| self.current_locations.get(&key).map(|v| v.clone()))
             .collect()
     }
 
@@ -289,7 +280,7 @@ mod tests {
                 "vehicles",
                 "truck_001",
                 pos1,
-                Bytes::from("meta1"),
+                serde_json::json!({"meta": "meta1"}),
                 SystemTime::now(),
             )
             .unwrap();
@@ -301,7 +292,7 @@ mod tests {
                 "vehicles",
                 "truck_001",
                 pos2,
-                Bytes::from("meta2"),
+                serde_json::json!({"meta": "meta2"}),
                 SystemTime::now(),
             )
             .unwrap();
@@ -315,7 +306,7 @@ mod tests {
         let current = hot.get_current_location("vehicles", "truck_001").unwrap();
         assert_eq!(current.position.x(), -74.1);
         assert_eq!(current.position.y(), 40.8);
-        assert_eq!(current.metadata.as_ref(), b"meta2");
+        assert_eq!(current.metadata, serde_json::json!({"meta": "meta2"}));
     }
 
     #[test]
@@ -335,7 +326,7 @@ mod tests {
                             "vehicles",
                             &format!("truck_{:03}", i),
                             pos,
-                            Bytes::from(format!("data_{}", j)),
+                            serde_json::json!({"data": format!("data_{}", j)}),
                             SystemTime::now(),
                         )
                         .unwrap();
@@ -356,7 +347,7 @@ mod tests {
             let loc = hot
                 .get_current_location("vehicles", &format!("truck_{:03}", i))
                 .unwrap();
-            assert_eq!(loc.metadata.as_ref(), b"data_99");
+            assert_eq!(loc.metadata, serde_json::json!({"data": "data_99"}));
         }
     }
 
@@ -369,7 +360,7 @@ mod tests {
             "vehicles",
             "truck_001",
             pos.clone(),
-            Bytes::from("v1"),
+            serde_json::json!({"v": "v1"}),
             SystemTime::now(),
         )
         .unwrap();
@@ -377,7 +368,7 @@ mod tests {
             "drones",
             "truck_001",
             pos,
-            Bytes::from("d1"),
+            serde_json::json!({"d": "d1"}),
             SystemTime::now(),
         )
         .unwrap();
@@ -388,8 +379,8 @@ mod tests {
 
         assert_eq!(vehicle.namespace, "vehicles");
         assert_eq!(drone.namespace, "drones");
-        assert_eq!(vehicle.metadata.as_ref(), b"v1");
-        assert_eq!(drone.metadata.as_ref(), b"d1");
+        assert_eq!(vehicle.metadata, serde_json::json!({"v": "v1"}));
+        assert_eq!(drone.metadata, serde_json::json!({"d": "d1"}));
     }
 
     #[test]
@@ -401,7 +392,7 @@ mod tests {
             "vehicles",
             "truck_001",
             pos,
-            Bytes::from("data"),
+            serde_json::json!({"data": "data"}),
             SystemTime::now(),
         )
         .unwrap();
@@ -425,7 +416,7 @@ mod tests {
             "vehicles",
             "truck_001",
             Point3d::new(-74.0, 40.7, 0.0),
-            Bytes::from("near"),
+            serde_json::json!({"type": "near"}),
             SystemTime::now(),
         )
         .unwrap();
@@ -434,7 +425,7 @@ mod tests {
             "vehicles",
             "truck_002",
             Point3d::new(-74.001, 40.701, 0.0), // ~150m away
-            Bytes::from("near"),
+            serde_json::json!({"type": "near"}),
             SystemTime::now(),
         )
         .unwrap();
@@ -443,7 +434,7 @@ mod tests {
             "vehicles",
             "truck_003",
             Point3d::new(-75.0, 41.0, 0.0), // ~100km away
-            Bytes::from("far"),
+            serde_json::json!({"type": "far"}),
             SystemTime::now(),
         )
         .unwrap();
