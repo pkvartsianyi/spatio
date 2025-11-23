@@ -42,6 +42,8 @@ pub struct DB {
     pub(crate) hot: Arc<HotState>,
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
+    #[allow(dead_code)] // Will be used for snapshot checkpoints
+    pub(crate) config: Config,
 }
 
 impl DB {
@@ -55,22 +57,56 @@ impl DB {
     }
 
     /// Open or create a database with custom configuration.
-    pub fn open_with_config<P: AsRef<Path>>(path: P, _config: Config) -> Result<Self> {
+    pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
         let path = path.as_ref();
         let hot = Arc::new(HotState::new());
 
         let cold = if path.to_str() == Some(":memory:") {
             let temp_dir =
                 std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
-            Arc::new(ColdState::new(&temp_dir.join("traj.log"), 100)?)
+            Arc::new(ColdState::new(
+                &temp_dir.join("traj.log"),
+                config.buffer_capacity,
+            )?)
         } else {
-            Arc::new(ColdState::new(path, 100)?)
+            Arc::new(ColdState::new(path, config.buffer_capacity)?)
         };
+
+        // Recover current locations from cold storage (skip for :memory: mode)
+        if path.to_str() != Some(":memory:") {
+            match cold.recover_current_locations() {
+                Ok(recovered) => {
+                    for (key, update) in recovered {
+                        // Parse namespace and object_id from key "namespace::object_id"
+                        if let Some(separator_idx) = key.find("::") {
+                            let namespace = &key[..separator_idx];
+                            let object_id = &key[separator_idx + 2..];
+
+                            // Update hot state with recovered location
+                            if let Err(e) = hot.update_location(
+                                namespace,
+                                object_id,
+                                update.position,
+                                update.metadata,
+                                update.timestamp,
+                            ) {
+                                eprintln!("Warning: Failed to recover location for {}: {}", key, e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to recover current locations: {}", e);
+                    // Continue anyway - partial recovery is acceptable
+                }
+            }
+        }
 
         Ok(Self {
             hot,
             cold,
             closed: Arc::new(AtomicBool::new(false)),
+            config,
         })
     }
 

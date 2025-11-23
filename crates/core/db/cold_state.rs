@@ -106,34 +106,229 @@ impl ColdState {
         let full_key = Self::make_key(namespace, object_id);
 
         // Try buffer first (fast path)
+        let mut from_buffer = Vec::new();
         if let Some(buffer) = self.recent_buffer.get(&full_key) {
-            let filtered: Vec<_> = buffer
+            from_buffer = buffer
                 .iter()
                 .filter(|u| u.timestamp >= start_time && u.timestamp <= end_time)
                 .rev() // Newest first
-                .take(limit)
                 .cloned()
                 .collect();
 
-            // If we found enough data in buffer covering the requested range end, return it
-            // Note: This is a simplification. Ideally we'd check if the buffer covers the *entire* requested range.
-            // For now, if we have data in buffer, we return it.
-            if !filtered.is_empty() {
-                return Ok(filtered);
+            // If buffer has enough results, return immediately
+            if from_buffer.len() >= limit {
+                from_buffer.truncate(limit);
+                return Ok(from_buffer);
             }
         }
 
-        // Fallback to disk (slow path)
-        // TODO: Implement efficient file scanning/indexing
-        // For now, we just return empty if not in buffer, as full file scan is expensive
-        // and we haven't implemented the index yet.
-        Ok(Vec::new())
+        // Fallback to disk (slow path) - scan entire log file
+        let log = self.trajectory_log.lock();
+        let path = log.path();
+
+        if !path.exists() {
+            return Ok(from_buffer);
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+
+        // Use a set to track timestamps we already have from buffer
+        let buffer_timestamps: std::collections::HashSet<SystemTime> =
+            from_buffer.iter().map(|u| u.timestamp).collect();
+
+        let mut from_disk: Vec<LocationUpdate> = Vec::new();
+
+        for line_result in std::io::BufRead::lines(reader) {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+
+            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|hex_metadata
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() != 8 {
+                continue;
+            }
+
+            // Check namespace and object_id match
+            if parts[1] != namespace || parts[2] != object_id {
+                continue;
+            }
+
+            // Parse timestamp
+            let timestamp_micros: u128 = match parts[0].parse() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
+
+            // Skip if already in buffer
+            if buffer_timestamps.contains(&timestamp) {
+                continue;
+            }
+
+            // Check if in time range
+            if timestamp < start_time || timestamp > end_time {
+                continue;
+            }
+
+            // Parse position
+            let lat: f64 = match parts[3].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let lon: f64 = match parts[4].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let alt: f64 = match parts[5].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Decode metadata
+            let metadata = match hex_decode(parts[7]) {
+                Ok(data) => Bytes::from(data),
+                Err(_) => continue,
+            };
+
+            from_disk.push(LocationUpdate {
+                timestamp,
+                position: Point3d::new(lon, lat, alt),
+                metadata,
+            });
+        }
+
+        // Merge buffer and disk results, sort by timestamp (newest first), limit
+        from_buffer.extend(from_disk);
+        from_buffer.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        from_buffer.truncate(limit);
+
+        Ok(from_buffer)
+    }
+
+    /// Recover current locations by scanning the trajectory log
+    ///
+    /// Returns a map of "namespace::object_id" → LocationUpdate with the latest
+    /// timestamp for each object. Used during DB startup to rebuild HotState.
+    pub fn recover_current_locations(
+        &self,
+    ) -> Result<std::collections::HashMap<String, LocationUpdate>> {
+        use std::collections::HashMap;
+        use std::io::{BufRead, BufReader};
+
+        let log = self.trajectory_log.lock();
+        let path = log.path();
+
+        // If file doesn't exist or is empty, return empty map
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+
+        let file = std::fs::File::open(path)?;
+        let reader = BufReader::new(file);
+
+        let mut latest_positions: HashMap<String, LocationUpdate> = HashMap::new();
+
+        for (line_num, line_result) in reader.lines().enumerate() {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to read line {} in trajectory log: {}",
+                        line_num + 1,
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|hex_metadata
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() != 8 {
+                eprintln!(
+                    "Warning: Malformed log line {} (expected 8 fields, got {})",
+                    line_num + 1,
+                    parts.len()
+                );
+                continue;
+            }
+
+            // Parse fields
+            let timestamp_micros: u128 = match parts[0].parse() {
+                Ok(t) => t,
+                Err(_) => {
+                    eprintln!("Warning: Invalid timestamp at line {}", line_num + 1);
+                    continue;
+                }
+            };
+
+            let namespace = parts[1];
+            let object_id = parts[2];
+
+            let lat: f64 = match parts[3].parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("Warning: Invalid latitude at line {}", line_num + 1);
+                    continue;
+                }
+            };
+
+            let lon: f64 = match parts[4].parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("Warning: Invalid longitude at line {}", line_num + 1);
+                    continue;
+                }
+            };
+
+            let alt: f64 = match parts[5].parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("Warning: Invalid altitude at line {}", line_num + 1);
+                    continue;
+                }
+            };
+
+            // Decode hex metadata
+            let metadata = match hex_decode(parts[7]) {
+                Ok(data) => Bytes::from(data),
+                Err(_) => {
+                    eprintln!("Warning: Invalid metadata at line {}", line_num + 1);
+                    continue;
+                }
+            };
+
+            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
+            let position = Point3d::new(lon, lat, alt);
+
+            let key = Self::make_key(namespace, object_id);
+            let update = LocationUpdate {
+                timestamp,
+                position,
+                metadata,
+            };
+
+            // Keep only the latest timestamp for each object
+            latest_positions
+                .entry(key)
+                .and_modify(|existing| {
+                    if update.timestamp > existing.timestamp {
+                        *existing = update.clone();
+                    }
+                })
+                .or_insert(update);
+        }
+
+        Ok(latest_positions)
     }
 }
 
 /// Trajectory log format management
 struct TrajectoryLog {
     writer: BufWriter<File>,
+    path: std::path::PathBuf,
 }
 
 impl TrajectoryLog {
@@ -142,7 +337,12 @@ impl TrajectoryLog {
 
         Ok(Self {
             writer: BufWriter::new(file),
+            path: path.to_path_buf(),
         })
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
     fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
@@ -186,6 +386,17 @@ impl TrajectoryLog {
 fn base64_encode(data: &[u8]) -> String {
     // Using hex encoding for simplicity without extra deps
     data.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn hex_decode(s: &str) -> std::result::Result<Vec<u8>, ()> {
+    if !s.len().is_multiple_of(2) {
+        return Err(());
+    }
+
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| ()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -240,6 +451,14 @@ mod tests {
                 .unwrap();
         }
 
+        // Check buffer directly - should only have last 2
+        let key = ColdState::make_key("v", "o");
+        let buffer = cold.recent_buffer.get(&key).unwrap();
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer[0].timestamp, UNIX_EPOCH + Duration::from_secs(3));
+        assert_eq!(buffer[1].timestamp, UNIX_EPOCH + Duration::from_secs(4));
+
+        // But query_trajectory should return all from disk
         let history = cold
             .query_trajectory(
                 "v",
@@ -250,8 +469,115 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(history.len(), 2); // Should only have last 2
+        assert_eq!(history.len(), 5); // All 5 from disk scan
         assert_eq!(history[0].timestamp, UNIX_EPOCH + Duration::from_secs(4));
         assert_eq!(history[1].timestamp, UNIX_EPOCH + Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_recover_current_locations() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 10).unwrap();
+
+        let t1 = UNIX_EPOCH + Duration::from_secs(1000);
+        let t2 = UNIX_EPOCH + Duration::from_secs(2000);
+        let t3 = UNIX_EPOCH + Duration::from_secs(3000);
+
+        // Add multiple updates for same object (should keep latest)
+        cold.append_update(
+            "vehicles",
+            "truck_001",
+            Point3d::new(-74.0, 40.0, 100.0),
+            Bytes::from("old"),
+            t1,
+        )
+        .unwrap();
+
+        cold.append_update(
+            "vehicles",
+            "truck_001",
+            Point3d::new(-74.1, 40.1, 200.0),
+            Bytes::from("new"),
+            t2,
+        )
+        .unwrap();
+
+        // Add different object
+        cold.append_update(
+            "aircraft",
+            "plane_001",
+            Point3d::new(-75.0, 41.0, 5000.0),
+            Bytes::from("flight"),
+            t3,
+        )
+        .unwrap();
+
+        // Recover
+        let recovered = cold.recover_current_locations().unwrap();
+
+        assert_eq!(recovered.len(), 2);
+
+        // Check truck - should have latest position
+        let truck_key = "vehicles::truck_001";
+        let truck = recovered.get(truck_key).unwrap();
+        assert_eq!(truck.position.x(), -74.1);
+        assert_eq!(truck.position.y(), 40.1);
+        assert_eq!(truck.timestamp, t2);
+        assert_eq!(truck.metadata, Bytes::from("new"));
+
+        // Check plane
+        let plane_key = "aircraft::plane_001";
+        let plane = recovered.get(plane_key).unwrap();
+        assert_eq!(plane.position.x(), -75.0);
+        assert_eq!(plane.position.z(), 5000.0);
+        assert_eq!(plane.timestamp, t3);
+    }
+
+    #[test]
+    fn test_disk_based_trajectory_query() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 2).unwrap(); // Small buffer to force disk scan
+
+        let t1 = UNIX_EPOCH + Duration::from_secs(1000);
+        let t2 = UNIX_EPOCH + Duration::from_secs(2000);
+        let t3 = UNIX_EPOCH + Duration::from_secs(3000);
+        let t4 = UNIX_EPOCH + Duration::from_secs(4000);
+        let t5 = UNIX_EPOCH + Duration::from_secs(5000);
+
+        // Add 5 updates - buffer only keeps last 2
+        for (i, t) in [t1, t2, t3, t4, t5].iter().enumerate() {
+            cold.append_update(
+                "vehicles",
+                "truck_001",
+                Point3d::new(-74.0 + i as f64 * 0.1, 40.0, 0.0),
+                Bytes::from(format!("data_{}", i)),
+                *t,
+            )
+            .unwrap();
+        }
+
+        // Query entire range - should scan disk for older entries
+        let trajectory = cold
+            .query_trajectory("vehicles", "truck_001", t1, t5, 10)
+            .unwrap();
+
+        // Should get all 5 results
+        assert_eq!(trajectory.len(), 5);
+
+        // Should be sorted newest first
+        assert_eq!(trajectory[0].timestamp, t5);
+        assert_eq!(trajectory[1].timestamp, t4);
+        assert_eq!(trajectory[2].timestamp, t3);
+        assert_eq!(trajectory[3].timestamp, t2);
+        assert_eq!(trajectory[4].timestamp, t1);
+
+        // Query with limit
+        let limited = cold
+            .query_trajectory("vehicles", "truck_001", t1, t5, 3)
+            .unwrap();
+        assert_eq!(limited.len(), 3);
+        assert_eq!(limited[0].timestamp, t5);
     }
 }
