@@ -135,7 +135,7 @@ impl HotState {
         object_id: &str,
     ) -> Option<CurrentLocation> {
         let key = Self::make_key(namespace, object_id);
-        self.current_locations.get(&key).map(|v| v.clone())
+        self.current_locations.get(&key).map(|v| v.value().clone())
     }
 
     /// Query objects within radius
@@ -151,7 +151,7 @@ impl HotState {
 
         results
             .into_iter()
-            .filter_map(|(key, _dist)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(key, _dist)| self.current_locations.get(&key).map(|v| v.value().clone()))
             .collect()
     }
 
@@ -171,7 +171,7 @@ impl HotState {
 
         results
             .into_iter()
-            .filter_map(|(_x, _y, key)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(_x, _y, key)| self.current_locations.get(&key).map(|v| v.value().clone()))
             .take(limit)
             .collect()
     }
@@ -261,7 +261,7 @@ impl HotState {
         results
             .into_iter()
             .take(limit)
-            .filter_map(|(key,)| self.current_locations.get(&key).map(|v| v.clone()))
+            .filter_map(|(key,)| self.current_locations.get(&key).map(|v| v.value().clone()))
             .collect()
     }
 

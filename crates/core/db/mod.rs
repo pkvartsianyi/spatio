@@ -9,16 +9,13 @@ use std::path::Path;
 
 use std::time::SystemTime;
 
-mod batch;
 mod cold_state;
 mod hot_state;
-mod internal;
 mod namespace;
 
 #[cfg(feature = "sync")]
 mod sync;
 
-pub use batch::AtomicBatch;
 pub use cold_state::{ColdState, LocationUpdate};
 pub use hot_state::{CurrentLocation, HotState};
 pub use namespace::{Namespace, NamespaceManager};
@@ -89,13 +86,13 @@ impl DB {
                                 update.metadata,
                                 update.timestamp,
                             ) {
-                                eprintln!("Warning: Failed to recover location for {}: {}", key, e);
+                                log::warn!("Failed to recover location for {}: {}", key, e);
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to recover current locations: {}", e);
+                    log::warn!("Failed to recover current locations: {}", e);
                     // Continue anyway - partial recovery is acceptable
                 }
             }

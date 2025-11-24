@@ -56,7 +56,7 @@ pub use compute::spatial::DistanceMetric;
 #[cfg(feature = "time-index")]
 pub use config::{HistoryEntry, HistoryEventKind};
 
-pub use db::{AtomicBatch, Namespace, NamespaceManager};
+pub use db::{Namespace, NamespaceManager};
 
 // Re-export validation and GeoJSON utilities
 pub use compute::geojson;
@@ -84,7 +84,7 @@ pub mod prelude {
 
     pub use crate::{Config, SetOptions, SyncPolicy};
 
-    pub use crate::{AtomicBatch, Namespace, NamespaceManager};
+    pub use crate::{Namespace, NamespaceManager};
 
     pub use crate::{MemoryBackend, StorageBackend};
 

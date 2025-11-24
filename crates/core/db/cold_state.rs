@@ -240,8 +240,8 @@ impl ColdState {
             let line = match line_result {
                 Ok(l) => l,
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to read line {} in trajectory log: {}",
+                    log::warn!(
+                        "Failed to read line {} in trajectory log: {}",
                         line_num + 1,
                         e
                     );
@@ -252,8 +252,8 @@ impl ColdState {
             // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
             let parts: Vec<&str> = line.split('|').collect();
             if parts.len() != 8 {
-                eprintln!(
-                    "Warning: Malformed log line {} (expected 8 fields, got {})",
+                log::warn!(
+                    "Malformed log line {} (expected 8 fields, got {})",
                     line_num + 1,
                     parts.len()
                 );
@@ -264,7 +264,7 @@ impl ColdState {
             let timestamp_micros: u128 = match parts[0].parse() {
                 Ok(t) => t,
                 Err(e) => {
-                    eprintln!("Warning: Invalid timestamp on line {}: {}", line_num + 1, e);
+                    log::warn!("Invalid timestamp on line {}: {}", line_num + 1, e);
                     continue;
                 }
             };
@@ -277,28 +277,28 @@ impl ColdState {
             let lat: f64 = match parts[3].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid latitude on line {}", line_num + 1);
+                    log::warn!("Invalid latitude on line {}", line_num + 1);
                     continue;
                 }
             };
             let lon: f64 = match parts[4].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid longitude on line {}", line_num + 1);
+                    log::warn!("Invalid longitude on line {}", line_num + 1);
                     continue;
                 }
             };
             let alt: f64 = match parts[5].parse() {
                 Ok(v) => v,
                 Err(_) => {
-                    eprintln!("Warning: Invalid altitude on line {}", line_num + 1);
+                    log::warn!("Invalid altitude on line {}", line_num + 1);
                     continue;
                 }
             };
 
             // Parse JSON metadata
             let metadata: serde_json::Value = serde_json::from_str(parts[7]).unwrap_or_else(|e| {
-                eprintln!("Warning: Invalid metadata on line {}: {}", line_num + 1, e);
+                log::warn!("Invalid metadata on line {}: {}", line_num + 1, e);
                 serde_json::Value::Null
             });
 
