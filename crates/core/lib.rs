@@ -13,13 +13,15 @@
 //! - Items remain in storage until overwritten or manually cleaned with `cleanup_expired()`
 //! - No automatic background cleanup or deletion on insert
 //!
+//! ## Example
+//! ```
 //! use spatio::{Point3d, Spatio};
 //!
 //! let db = Spatio::memory()?;
 //!
 //! // Spatial example
 //! let point = Point3d::new(-74.0060, 40.7128, 0.0);
-//! db.update_location("cities", "nyc", point.clone(), b"NYC")?;
+//! db.update_location("cities", "nyc", point.clone(), serde_json::json!({"name": "NYC"}))?;
 //! let nearby = db.query_current_within_radius("cities", &point, 1000.0, 10)?;
 //!
 //! # Ok::<(), spatio::SpatioError>(())
