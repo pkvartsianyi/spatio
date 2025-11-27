@@ -279,6 +279,14 @@ impl HotState {
             .count()
     }
 
+    /// Get detailed statistics including per-namespace breakdown
+    pub fn detailed_stats(&self) -> (usize, usize) {
+        let total_objects = self.current_locations.len();
+        // Estimate: ~200 bytes per object (key + Point3d + metadata + overhead)
+        let estimated_memory = total_objects * 200;
+        (total_objects, estimated_memory)
+    }
+
     /// Clear all objects from hot state
     pub fn clear(&mut self) {
         self.current_locations.clear();

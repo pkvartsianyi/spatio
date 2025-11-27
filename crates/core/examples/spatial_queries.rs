@@ -194,7 +194,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stats = db.stats();
     println!("=== Query Summary ===");
     println!("Database statistics:");
-    println!("  Total keys: {}", stats.key_count);
     println!("  Operations: {}", stats.operations_count);
 
     println!("\nSpatial query methods demonstrated:");

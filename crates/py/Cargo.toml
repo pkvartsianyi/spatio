@@ -17,10 +17,10 @@ crate-type = ["cdylib"]
 # Core Spatio dependency
 spatio = { path = "../core", features = ["sync"] }
 serde_json = "1.0"
-pythonize = "0.23"
+pythonize = "0.27"
 
 # Python bindings
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { workspace = true }
 
 # Geo types and algorithms
 geo.workspace = true

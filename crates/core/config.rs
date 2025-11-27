@@ -137,7 +137,7 @@ impl Config {
     }
 
     const fn default_snapshot_interval_seconds() -> u64 {
-        3600 // 1 hour
+        3600
     }
 
     pub fn with_buffer_capacity(mut self, capacity: usize) -> Self {
@@ -392,14 +392,20 @@ impl DbItem {
 /// Database statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DbStats {
-    /// Number of keys in the database
-    pub key_count: usize,
     /// Number of items that have expired
     pub expired_count: u64,
     /// Total number of operations performed
     pub operations_count: u64,
     /// Total size in bytes (approximate)
     pub size_bytes: usize,
+    /// Total number of objects currently tracked in hot state
+    pub hot_state_objects: usize,
+    /// Number of trajectories stored in cold state
+    pub cold_state_trajectories: usize,
+    /// Bytes used in cold state buffer
+    pub cold_state_buffer_bytes: usize,
+    /// Approximate total memory usage in bytes
+    pub memory_usage_bytes: usize,
 }
 
 impl DbStats {
@@ -416,11 +422,6 @@ impl DbStats {
     /// Record expired items cleanup
     pub fn record_expired(&mut self, count: u64) {
         self.expired_count += count;
-    }
-
-    /// Update key count
-    pub fn set_key_count(&mut self, count: usize) {
-        self.key_count = count;
     }
 
     /// Update size estimate
@@ -525,9 +526,6 @@ mod tests {
 
         stats.record_expired(5);
         assert_eq!(stats.expired_count, 5);
-
-        stats.set_key_count(100);
-        assert_eq!(stats.key_count, 100);
     }
 
     #[test]

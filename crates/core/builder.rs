@@ -33,19 +33,6 @@ impl DBBuilder {
         self
     }
 
-    /// Legacy method for AOF path, maps to persistence path.
-    #[cfg(feature = "aof")]
-    pub fn aof_path<P: Into<PathBuf>>(self, path: P) -> Self {
-        self.path(path)
-    }
-
-    /// Legacy method for snapshot path, currently ignored/unsupported in new architecture.
-    #[cfg(feature = "snapshot")]
-    pub fn snapshot_path<P: Into<PathBuf>>(self, _path: P) -> Self {
-        // Snapshots are not yet implemented in the new architecture
-        self
-    }
-
     /// Configure for in-memory storage with no persistence.
     pub fn in_memory(mut self) -> Self {
         self.in_memory = true;
@@ -113,8 +100,7 @@ mod tests {
     fn test_builder_with_path() {
         let temp_dir = std::env::temp_dir();
         let path = temp_dir.join("test_builder_new.db");
-        let _ = std::fs::remove_dir_all(&path); // ColdState expects a directory for now or file? 
-        // ColdState::new takes a path. If it's a file path, it uses it.
+        let _ = std::fs::remove_dir_all(&path);
 
         let db = DBBuilder::new().path(&path).build().unwrap();
         db.update_location(

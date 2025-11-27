@@ -332,8 +332,18 @@ impl DB {
 
     /// Get database statistics
     pub fn stats(&self) -> DbStats {
-        // TODO: Implement stats for Hot/Cold architecture
-        DbStats::default()
+        let (hot_objects, hot_memory) = self.hot.detailed_stats();
+        let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
+
+        DbStats {
+            expired_count: 0,
+            operations_count: 0,
+            size_bytes: 0,
+            hot_state_objects: hot_objects,
+            cold_state_trajectories: cold_trajectories,
+            cold_state_buffer_bytes: cold_buffer_bytes,
+            memory_usage_bytes: hot_memory + cold_buffer_bytes,
+        }
     }
 }
 

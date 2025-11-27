@@ -247,7 +247,7 @@ impl PySpatio {
             limit,
         ))?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
@@ -276,7 +276,7 @@ impl PySpatio {
                 .query_near_object(namespace, object_id, radius, limit),
         )?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
@@ -308,7 +308,7 @@ impl PySpatio {
                 .query_trajectory(namespace, object_id, start, end, limit),
         )?;
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_list = PyList::empty(py);
             for update in results {
                 let py_point = PyPoint {
@@ -333,12 +333,15 @@ impl PySpatio {
     fn stats(&self) -> PyResult<Py<PyAny>> {
         let stats = self.db.stats();
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
-            // TODO: Update stats fields when DbStats is updated
-            dict.set_item("key_count", stats.key_count)?;
             dict.set_item("expired_count", stats.expired_count)?;
             dict.set_item("operations_count", stats.operations_count)?;
+            dict.set_item("size_bytes", stats.size_bytes)?;
+            dict.set_item("hot_state_objects", stats.hot_state_objects)?;
+            dict.set_item("cold_state_trajectories", stats.cold_state_trajectories)?;
+            dict.set_item("cold_state_buffer_bytes", stats.cold_state_buffer_bytes)?;
+            dict.set_item("memory_usage_bytes", stats.memory_usage_bytes)?;
             Ok(dict.into_any().unbind())
         })
     }

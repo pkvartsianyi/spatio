@@ -58,6 +58,20 @@ impl ColdState {
         format!("{}::{}", namespace, object_id)
     }
 
+    /// Get detailed statistics about cold state
+    pub fn stats(&self) -> (usize, usize) {
+        let trajectory_count = self.recent_buffer.len();
+
+        // Estimate buffer size: sum of all trajectory lengths * ~100 bytes per point
+        let buffer_bytes = self
+            .recent_buffer
+            .iter()
+            .map(|entry| entry.value().len() * 100)
+            .sum();
+
+        (trajectory_count, buffer_bytes)
+    }
+
     /// Append location update to persistent log + buffer
     pub fn append_update(
         &self,

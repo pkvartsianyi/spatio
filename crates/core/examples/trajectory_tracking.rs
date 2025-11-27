@@ -259,7 +259,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------");
 
     let stats = db.stats();
-    println!("   Total keys in database: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 
     // === 9. USE CASES ===

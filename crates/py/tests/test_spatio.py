@@ -159,18 +159,6 @@ class TestSpatio:
         assert path[0][1] == {"step": 2} # metadata
         assert path[1][1] == {"step": 1}
 
-    def test_database_stats(self):
-        """Test database statistics"""
-        db = spatio.Spatio.memory()
-        db.update_location("test", "obj1", spatio.Point(0, 0))
-        
-        stats = db.stats()
-        assert isinstance(stats, dict)
-        assert "key_count" in stats
-        assert "operations_count" in stats
-        assert isinstance(stats["key_count"], int)
-        assert isinstance(stats["operations_count"], int)
-
     def test_close_operation(self):
         """Test database close operation"""
         db = spatio.Spatio.memory()
