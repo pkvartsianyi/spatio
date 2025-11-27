@@ -4,25 +4,14 @@
 //! advanced configuration options including custom persistence paths.
 
 use crate::config::Config;
-use crate::db::{DB, DBInner};
+use crate::db::DB;
 use crate::error::Result;
-#[cfg(feature = "aof")]
-use crate::storage::PersistenceLog;
-#[cfg(feature = "snapshot")]
-use crate::storage::SnapshotConfig;
-#[cfg(feature = "snapshot")]
-use crate::storage::SnapshotFile;
-#[cfg(feature = "aof")]
-use crate::storage::persistence::AOFFile;
 use std::path::PathBuf;
 
 /// Builder for database configuration with custom persistence paths and settings.
 #[derive(Debug)]
 pub struct DBBuilder {
-    #[cfg(feature = "aof")]
-    aof_path: Option<PathBuf>,
-    #[cfg(feature = "snapshot")]
-    snapshot_path: Option<PathBuf>,
+    path: Option<PathBuf>,
     config: Config,
     in_memory: bool,
 }
@@ -31,27 +20,15 @@ impl DBBuilder {
     /// Create a new builder with default in-memory configuration.
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "aof")]
-            aof_path: None,
-            #[cfg(feature = "snapshot")]
-            snapshot_path: None,
+            path: None,
             config: Config::default(),
             in_memory: true,
         }
     }
 
-    /// Set the AOF path for persistence. File is created if needed and replayed on startup.
-    #[cfg(feature = "aof")]
-    pub fn aof_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        self.aof_path = Some(path.into());
-        self.in_memory = false;
-        self
-    }
-
-    /// Set the snapshot path for persistence. File is created if needed and loaded on startup.
-    #[cfg(feature = "snapshot")]
-    pub fn snapshot_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        self.snapshot_path = Some(path.into());
+    /// Set the path for persistence (Cold State trajectory log).
+    pub fn path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.path = Some(path.into());
         self.in_memory = false;
         self
     }
@@ -59,22 +36,16 @@ impl DBBuilder {
     /// Configure for in-memory storage with no persistence.
     pub fn in_memory(mut self) -> Self {
         self.in_memory = true;
-        #[cfg(feature = "aof")]
-        {
-            self.aof_path = None;
-        }
-        #[cfg(feature = "snapshot")]
-        {
-            self.snapshot_path = None;
-        }
+        self.path = None;
         self
     }
 
-    /// Set the database configuration (sync policy, TTL, etc.).
+    /// Set the database configuration.
     pub fn config(mut self, config: Config) -> Self {
         self.config = config;
         self
     }
+
     /// Enable history tracking with a fixed per-key capacity.
     #[cfg(feature = "time-index")]
     pub fn history_capacity(mut self, capacity: usize) -> Self {
@@ -82,36 +53,16 @@ impl DBBuilder {
         self
     }
 
-    /// Build the database. Opens persistence file if configured and loads state.
+    /// Build the database.
     pub fn build(self) -> Result<DB> {
-        let mut inner = DBInner::new_with_config(&self.config);
-
-        if !self.in_memory {
-            #[cfg(feature = "aof")]
-            if let Some(aof_path) = self.aof_path {
-                let mut aof_file = AOFFile::open(&aof_path)?;
-                inner.load_from_aof(&mut aof_file)?;
-                inner.aof_file = Some(parking_lot::Mutex::new(
-                    Box::new(aof_file) as Box<dyn PersistenceLog>
-                ));
-            }
-
-            #[cfg(feature = "snapshot")]
-            if let Some(snapshot_path) = self.snapshot_path {
-                let snapshot_config = SnapshotConfig {
-                    auto_snapshot_ops: self.config.snapshot_auto_ops,
-                };
-                let snapshot_file = SnapshotFile::new(&snapshot_path, snapshot_config);
-                inner.load_from_snapshot(&snapshot_file)?;
-                inner.snapshot_file = Some(snapshot_file);
-            }
+        if self.in_memory {
+            DB::memory_with_config(self.config)
+        } else if let Some(path) = self.path {
+            DB::open_with_config(path, self.config)
+        } else {
+            // Default to memory if no path provided but in_memory is false (shouldn't happen with current API usage but safe fallback)
+            DB::memory_with_config(self.config)
         }
-
-        Ok(DB {
-            inner,
-            #[cfg(not(feature = "sync"))]
-            _not_send_sync: std::marker::PhantomData,
-        })
     }
 }
 
@@ -124,10 +75,7 @@ impl Default for DBBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "time-index")]
-    use crate::config::HistoryEventKind;
-    use crate::config::SyncPolicy;
-    use std::time::Duration;
+    use spatio_types::point::Point3d;
 
     #[test]
     fn test_builder_default() {
@@ -137,84 +85,37 @@ mod tests {
 
     #[test]
     fn test_builder_in_memory() {
-        let mut db = DBBuilder::new().in_memory().build().unwrap();
-        db.insert("test", b"value", None).unwrap();
-        assert_eq!(db.get("test").unwrap().unwrap().as_ref(), b"value");
+        let db = DBBuilder::new().in_memory().build().unwrap();
+        // Verify basic operation
+        db.update_location(
+            "ns",
+            "obj",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({}),
+        )
+        .unwrap();
     }
 
     #[test]
-    fn test_builder_with_config() {
-        let config = Config::default()
-            .with_sync_policy(SyncPolicy::Always)
-            .with_default_ttl(Duration::from_secs(3600));
-
-        let mut db = DBBuilder::new().config(config).build().unwrap();
-        db.insert("test", b"value", None).unwrap();
-    }
-
-    #[cfg(feature = "time-index")]
-    #[test]
-    fn test_builder_history_capacity() {
-        let mut db = DBBuilder::new().history_capacity(2).build().unwrap();
-
-        db.insert("key", b"v1", None).unwrap();
-        db.insert("key", b"v2", None).unwrap();
-        db.delete("key").unwrap();
-
-        let history = db.history("key").unwrap();
-        assert_eq!(history.len(), 2);
-        assert_eq!(history[0].kind, HistoryEventKind::Set);
-        assert_eq!(history[1].kind, HistoryEventKind::Delete);
-    }
-
-    #[cfg(feature = "aof")]
-    #[test]
-    fn test_builder_aof_path() {
+    fn test_builder_with_path() {
         let temp_dir = std::env::temp_dir();
-        let aof_path = temp_dir.join("test_builder.aof");
+        let path = temp_dir.join("test_builder_new.db");
+        let _ = std::fs::remove_dir_all(&path);
 
-        // Clean up any existing file
-        let _ = std::fs::remove_file(&aof_path);
+        let db = DBBuilder::new().path(&path).build().unwrap();
+        db.update_location(
+            "ns",
+            "obj",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({}),
+        )
+        .unwrap();
 
-        let mut db = DBBuilder::new().aof_path(&aof_path).build().unwrap();
-
-        db.insert("persistent", b"data", None).unwrap();
-        drop(db);
-
-        // Reopen and verify data persisted
-        let db2 = DBBuilder::new().aof_path(&aof_path).build().unwrap();
-
-        assert_eq!(db2.get("persistent").unwrap().unwrap().as_ref(), b"data");
-
-        // Clean up
-        let _ = std::fs::remove_file(aof_path);
-    }
-
-    #[cfg(feature = "aof")]
-    #[test]
-    fn test_builder_aof_path_disables_in_memory() {
-        let temp_dir = std::env::temp_dir();
-        let aof_path = temp_dir.join("test_builder2.aof");
-        let _ = std::fs::remove_file(&aof_path);
-
-        let builder = DBBuilder::new().in_memory().aof_path(&aof_path);
-
-        assert!(!builder.in_memory);
-        assert!(builder.aof_path.is_some());
-
-        // Clean up
-        let _ = std::fs::remove_file(aof_path);
-    }
-
-    #[cfg(feature = "aof")]
-    #[test]
-    fn test_builder_in_memory_clears_aof_path() {
-        let temp_dir = std::env::temp_dir();
-        let aof_path = temp_dir.join("test_builder3.aof");
-
-        let builder = DBBuilder::new().aof_path(aof_path).in_memory();
-
-        assert!(builder.in_memory);
-        assert!(builder.aof_path.is_none());
+        // Cleanup
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }

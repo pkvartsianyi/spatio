@@ -4,7 +4,7 @@ use std::time::{Duration, UNIX_EPOCH};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Spatio - Trajectory Tracking ===\n");
 
-    let mut db = Spatio::memory()?;
+    let db = Spatio::memory()?;
     println!("✓ Created in-memory database\n");
 
     // === 1. BASIC TRAJECTORY STORAGE ===
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    db.insert_trajectory("vehicle:truck001", &delivery_route, None)?;
+    db.insert_trajectory("logistics", "vehicle:truck001", &delivery_route)?;
     println!(
         "   Stored delivery truck trajectory with {} waypoints\n",
         delivery_route.len()
@@ -41,14 +41,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("2. Query Full Trajectory");
     println!("------------------------");
 
-    let full_path = db.query_trajectory("vehicle:truck001", 1640995200, 1640995400)?;
+    let full_path = db.query_trajectory(
+        "logistics",
+        "vehicle:truck001",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995400),
+        100,
+    )?;
     println!("   Retrieved {} waypoints:", full_path.len());
     for (i, tp) in full_path.iter().enumerate() {
         println!(
             "     {}. Point ({:.4}°, {:.4}°) at timestamp {}",
             i + 1,
-            tp.point.x(),
-            tp.point.y(),
+            tp.position.x(),
+            tp.position.y(),
             tp.timestamp.duration_since(UNIX_EPOCH).unwrap().as_secs()
         );
     }
@@ -59,11 +65,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------------");
 
     // Get only first 2 minutes of trajectory
-    let partial_path = db.query_trajectory("vehicle:truck001", 1640995200, 1640995320)?;
+    let partial_path = db.query_trajectory(
+        "logistics",
+        "vehicle:truck001",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995320),
+        100,
+    )?;
     println!("   First 2 minutes: {} waypoints", partial_path.len());
 
     // Get only middle segment
-    let middle_segment = db.query_trajectory("vehicle:truck001", 1640995260, 1640995320)?;
+    let middle_segment = db.query_trajectory(
+        "logistics",
+        "vehicle:truck001",
+        UNIX_EPOCH + Duration::from_secs(1640995260),
+        UNIX_EPOCH + Duration::from_secs(1640995320),
+        100,
+    )?;
     println!("   Middle segment: {} waypoints\n", middle_segment.len());
 
     // === 4. MULTIPLE TRAJECTORIES ===
@@ -86,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    db.insert_trajectory("vehicle:taxi042", &taxi_route, None)?;
+    db.insert_trajectory("transport", "vehicle:taxi042", &taxi_route)?;
     println!(
         "   Stored taxi trajectory with {} waypoints",
         taxi_route.len()
@@ -116,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    db.insert_trajectory("vehicle:bus123", &bus_route, None)?;
+    db.insert_trajectory("transport", "vehicle:bus123", &bus_route)?;
     println!(
         "   Stored bus trajectory with {} waypoints\n",
         bus_route.len()
@@ -126,9 +144,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("5. Query Different Vehicles");
     println!("---------------------------");
 
-    let truck_path = db.query_trajectory("vehicle:truck001", 1640995200, 1640995400)?;
-    let taxi_path = db.query_trajectory("vehicle:taxi042", 1640995200, 1640995400)?;
-    let bus_path = db.query_trajectory("vehicle:bus123", 1640995200, 1640995700)?;
+    let truck_path = db.query_trajectory(
+        "logistics",
+        "vehicle:truck001",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995400),
+        100,
+    )?;
+    let taxi_path = db.query_trajectory(
+        "transport",
+        "vehicle:taxi042",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995400),
+        100,
+    )?;
+    let bus_path = db.query_trajectory(
+        "transport",
+        "vehicle:bus123",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995700),
+        100,
+    )?;
 
     println!("   Truck waypoints: {}", truck_path.len());
     println!("   Taxi waypoints: {}", taxi_path.len());
@@ -153,14 +189,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    db.insert_trajectory("drone:delivery001", &drone_path, None)?;
+    db.insert_trajectory("logistics", "drone:delivery001", &drone_path)?;
     println!(
         "   Stored drone trajectory with {} waypoints",
         drone_path.len()
     );
 
     // Query specific time window (10 seconds)
-    let window = db.query_trajectory("drone:delivery001", start_time, start_time + 10)?;
+    let window = db.query_trajectory(
+        "logistics",
+        "drone:delivery001",
+        UNIX_EPOCH + Duration::from_secs(start_time),
+        UNIX_EPOCH + Duration::from_secs(start_time + 10),
+        100,
+    )?;
     println!(
         "   Retrieved 10-second window: {} waypoints\n",
         window.len()
@@ -199,8 +241,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
-    db.insert_trajectory("vehicle:truck001", &extended_route, None)?;
-    let updated_path = db.query_trajectory("vehicle:truck001", 1640995200, 1640995600)?;
+    db.insert_trajectory("logistics", "vehicle:truck001", &extended_route)?;
+    let updated_path = db.query_trajectory(
+        "logistics",
+        "vehicle:truck001",
+        UNIX_EPOCH + Duration::from_secs(1640995200),
+        UNIX_EPOCH + Duration::from_secs(1640995600),
+        100,
+    )?;
     println!(
         "   Extended truck trajectory from 4 to {} waypoints\n",
         updated_path.len()
@@ -211,7 +259,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------");
 
     let stats = db.stats();
-    println!("   Total keys in database: {}", stats.key_count);
     println!("   Total operations: {}\n", stats.operations_count);
 
     // === 9. USE CASES ===

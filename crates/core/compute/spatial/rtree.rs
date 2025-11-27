@@ -12,12 +12,12 @@
 //! use spatio::Spatio;
 //! use spatio::Point3d;
 //!
-//! let mut db = Spatio::memory().unwrap();
+//! let db = Spatio::memory().unwrap();
 //! let point = Point3d::new(-74.0, 40.7, 5000.0);
-//! db.insert_point_3d("aircraft", &point, b"data", None).unwrap();
+//! db.update_location("aircraft", "id1", point.clone(), serde_json::json!({"data": "data"})).unwrap();
 //!
 //! let center = Point3d::new(-74.0, 40.0, 5000.0);
-//! let results = db.query_within_sphere_3d("aircraft", &center, 10000.0, 100).unwrap();
+//! let results = db.query_current_within_radius("aircraft", &center, 10000.0, 100).unwrap();
 //! ```
 
 use crate::config::BoundingBox2D;
@@ -57,12 +57,11 @@ pub struct IndexedPoint3D {
     pub y: f64,
     pub z: f64,
     pub key: String,
-    pub data: Bytes,
 }
 
 impl IndexedPoint3D {
-    pub fn new(x: f64, y: f64, z: f64, key: String, data: Bytes) -> Self {
-        Self { x, y, z, key, data }
+    pub fn new(x: f64, y: f64, z: f64, key: String) -> Self {
+        Self { x, y, z, key }
     }
 }
 
@@ -76,7 +75,6 @@ impl RstarPoint for IndexedPoint3D {
             y: generator(1),
             z: generator(2),
             key: String::new(),
-            data: Bytes::new(),
         }
     }
 
@@ -167,12 +165,12 @@ impl SpatialIndexManager {
         }
     }
 
-    pub fn insert_point_2d(&mut self, prefix: &str, x: f64, y: f64, key: String, data: Bytes) {
-        self.insert_point(prefix, x, y, 0.0, key, data);
+    pub fn insert_point_2d(&mut self, prefix: &str, x: f64, y: f64, key: String) {
+        self.insert_point(prefix, x, y, 0.0, key);
     }
 
-    pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String, data: Bytes) {
-        let point = IndexedPoint3D::new(x, y, z, key.clone(), data);
+    pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String) {
+        let point = IndexedPoint3D::new(x, y, z, key.clone());
 
         self.indexes
             .entry(prefix.to_string())
@@ -223,7 +221,7 @@ impl SpatialIndexManager {
         center: &Point3d,
         radius: f64,
         limit: usize,
-    ) -> Vec<(String, Bytes, f64)> {
+    ) -> Vec<(String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -238,7 +236,6 @@ impl SpatialIndexManager {
             if distance.is_finite() && distance <= radius {
                 if heap.len() < limit {
                     heap.push(QueryCandidate {
-                        // TODO: Performance optimization: Avoid cloning here?
                         point: point.clone(),
                         distance,
                     });
@@ -257,11 +254,7 @@ impl SpatialIndexManager {
         // Convert heap to sorted vector (ascending distance)
         let mut results = Vec::with_capacity(heap.len());
         while let Some(candidate) = heap.pop() {
-            results.push((
-                candidate.point.key,
-                candidate.point.data,
-                candidate.distance,
-            ));
+            results.push((candidate.point.key, candidate.distance));
         }
         results.reverse();
         results
@@ -287,7 +280,7 @@ impl SpatialIndexManager {
         center: &GeoPoint,
         radius: f64,
         limit: usize,
-    ) -> Vec<(f64, f64, String, Bytes, f64)> {
+    ) -> Vec<(f64, f64, String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -322,7 +315,6 @@ impl SpatialIndexManager {
                 candidate.point.x,
                 candidate.point.y,
                 candidate.point.key,
-                candidate.point.data,
                 candidate.distance,
             ));
         }
@@ -330,10 +322,35 @@ impl SpatialIndexManager {
         results
     }
 
+    /// Query points within a 2D bounding box, returning coordinates.
+    pub fn query_within_bbox_2d_points(
+        &self,
+        prefix: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> Vec<(f64, f64, String)> {
+        let Some(tree) = self.indexes.get(prefix) else {
+            return Vec::new();
+        };
+
+        let envelope = AABB::from_corners(
+            IndexedPoint3D::new(min_x, min_y, f64::NEG_INFINITY, String::new()),
+            IndexedPoint3D::new(max_x, max_y, f64::INFINITY, String::new()),
+        );
+
+        tree.locate_in_envelope(&envelope)
+            .take(limit)
+            .map(|p| (p.x, p.y, p.key.clone()))
+            .collect()
+    }
+
     /// Query points within a 3D bounding box.
     ///
     /// - Returns empty result if coordinates are non-finite.
-    pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String, Bytes)> {
+    pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String,)> {
         let min_x = query.min_x;
         let min_y = query.min_y;
         let min_z = query.min_z;
@@ -353,12 +370,12 @@ impl SpatialIndexManager {
             return Vec::new();
         };
 
-        let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new(), Bytes::new());
-        let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new(), Bytes::new());
+        let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new());
+        let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new());
         let envelope = rstar::AABB::from_corners(min_corner, max_corner);
 
         tree.locate_in_envelope_intersecting(&envelope)
-            .map(|point| (point.key.clone(), point.data.clone()))
+            .map(|point| (point.key.clone(),))
             .collect()
     }
 
@@ -370,7 +387,7 @@ impl SpatialIndexManager {
         min_y: f64,
         max_x: f64,
         max_y: f64,
-    ) -> Vec<(String, Bytes)> {
+    ) -> Vec<(String,)> {
         self.query_within_bbox(
             prefix,
             BBoxQuery {
@@ -424,7 +441,7 @@ impl SpatialIndexManager {
         prefix: &str,
         center: &GeoPoint,
         k: usize,
-    ) -> Vec<(f64, f64, String, Bytes, f64)> {
+    ) -> Vec<(f64, f64, String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -442,13 +459,7 @@ impl SpatialIndexManager {
                 let p2 = GeoPoint::new(point.x, point.y);
                 let distance = center.haversine_distance(&p2);
                 if distance.is_finite() {
-                    Some((
-                        point.x,
-                        point.y,
-                        point.key.clone(),
-                        point.data.clone(),
-                        distance,
-                    ))
+                    Some((point.x, point.y, point.key.clone(), distance))
                 } else {
                     None
                 }
@@ -463,7 +474,7 @@ impl SpatialIndexManager {
         center: &GeoPoint,
         k: usize,
         max_distance: Option<f64>,
-    ) -> Vec<(f64, f64, String, Bytes, f64)> {
+    ) -> Vec<(f64, f64, String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -487,13 +498,7 @@ impl SpatialIndexManager {
                 {
                     return None;
                 }
-                Some((
-                    point.x,
-                    point.y,
-                    point.key.clone(),
-                    point.data.clone(),
-                    distance,
-                ))
+                Some((point.x, point.y, point.key.clone(), distance))
             })
             .take(k)
             .collect()
@@ -505,7 +510,7 @@ impl SpatialIndexManager {
         prefix: &str,
         query: CylinderQuery,
         limit: usize,
-    ) -> Vec<(String, Bytes, f64)> {
+    ) -> Vec<(String, f64)> {
         let center = query.center;
         let min_z = query.min_z;
         let max_z = query.max_z;
@@ -544,18 +549,14 @@ impl SpatialIndexManager {
 
         let mut results = Vec::with_capacity(heap.len());
         while let Some(candidate) = heap.pop() {
-            results.push((
-                candidate.point.key,
-                candidate.point.data,
-                candidate.distance,
-            ));
+            results.push((candidate.point.key, candidate.distance));
         }
         results.reverse();
         results
     }
 
     /// Find k nearest neighbors in 3D space.
-    pub fn knn_3d(&self, prefix: &str, center: &Point3d, k: usize) -> Vec<(String, Bytes, f64)> {
+    pub fn knn_3d(&self, prefix: &str, center: &Point3d, k: usize) -> Vec<(String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
@@ -573,7 +574,7 @@ impl SpatialIndexManager {
                 let p2 = Point3d::new(point.x, point.y, point.z);
                 let distance = geographic_3d_distance(center, &p2);
                 if distance.is_finite() {
-                    Some((point.key.clone(), point.data.clone(), distance))
+                    Some((point.key.clone(), distance))
                 } else {
                     None
                 }
@@ -631,11 +632,7 @@ impl SpatialIndexManager {
     }
 
     /// Find intersecting bounding boxes.
-    pub fn find_intersecting_bboxes(
-        &self,
-        prefix: &str,
-        bbox: &BoundingBox2D,
-    ) -> Vec<(String, Bytes)> {
+    pub fn find_intersecting_bboxes(&self, prefix: &str, bbox: &BoundingBox2D) -> Vec<(String,)> {
         let Some(tree) = self.bbox_indexes.get(prefix) else {
             return Vec::new();
         };
@@ -644,7 +641,7 @@ impl SpatialIndexManager {
             AABB::from_corners([bbox.min_x(), bbox.min_y()], [bbox.max_x(), bbox.max_y()]);
 
         tree.locate_in_envelope_intersecting(&envelope)
-            .map(|entry| (entry.key.clone(), entry.data.clone()))
+            .map(|entry| (entry.key.clone(),))
             .collect()
     }
 
@@ -724,8 +721,8 @@ fn compute_2d_envelope(center: &GeoPoint, radius: f64) -> rstar::AABB<IndexedPoi
     let min_y = center.y() - lat_degrees;
     let max_y = center.y() + lat_degrees;
 
-    let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new(), Bytes::new());
-    let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new(), Bytes::new());
+    let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new());
+    let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new());
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
@@ -762,8 +759,8 @@ fn compute_spherical_envelope(center: &Point3d, radius: f64) -> rstar::AABB<Inde
     let min_z = center.z() - radius;
     let max_z = center.z() + radius;
 
-    let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new(), Bytes::new());
-    let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new(), Bytes::new());
+    let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new());
+    let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new());
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
@@ -782,8 +779,8 @@ fn compute_cylindrical_envelope(
     let min_y = center.y() - lat_degrees;
     let max_y = center.y() + lat_degrees;
 
-    let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new(), Bytes::new());
-    let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new(), Bytes::new());
+    let min_corner = IndexedPoint3D::new(min_x, min_y, min_z, String::new());
+    let max_corner = IndexedPoint3D::new(max_x, max_y, max_z, String::new());
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
@@ -811,30 +808,9 @@ mod tests {
     fn test_insert_and_query_3d() {
         let mut index = SpatialIndexManager::new();
 
-        index.insert_point(
-            "drones",
-            -74.0,
-            40.7,
-            100.0,
-            "drone1".to_string(),
-            Bytes::from("data1"),
-        );
-        index.insert_point(
-            "drones",
-            -74.001,
-            40.701,
-            150.0,
-            "drone2".to_string(),
-            Bytes::from("data2"),
-        );
-        index.insert_point(
-            "drones",
-            -74.0,
-            40.7,
-            50.0,
-            "drone3".to_string(),
-            Bytes::from("data3"),
-        );
+        index.insert_point("drones", -74.0, 40.7, 100.0, "drone1".to_string());
+        index.insert_point("drones", -74.001, 40.701, 150.0, "drone2".to_string());
+        index.insert_point("drones", -74.0, 40.7, 50.0, "drone3".to_string());
 
         let center = Point3d::new(-74.0, 40.7, 100.0);
         let results = index.query_within_sphere("drones", &center, 1000.0, 10);
@@ -845,30 +821,9 @@ mod tests {
     fn test_query_within_bbox_3d() {
         let mut index = SpatialIndexManager::new();
 
-        index.insert_point(
-            "aircraft",
-            -74.0,
-            40.7,
-            1000.0,
-            "plane1".to_string(),
-            Bytes::from("data1"),
-        );
-        index.insert_point(
-            "aircraft",
-            -74.1,
-            40.8,
-            2000.0,
-            "plane2".to_string(),
-            Bytes::from("data2"),
-        );
-        index.insert_point(
-            "aircraft",
-            -74.0,
-            40.7,
-            3000.0,
-            "plane3".to_string(),
-            Bytes::from("data3"),
-        );
+        index.insert_point("aircraft", -74.0, 40.7, 1000.0, "plane1".to_string());
+        index.insert_point("aircraft", -74.1, 40.8, 2000.0, "plane2".to_string());
+        index.insert_point("aircraft", -74.0, 40.7, 3000.0, "plane3".to_string());
 
         let results = index.query_within_bbox(
             "aircraft",
@@ -891,30 +846,9 @@ mod tests {
         let mut index = SpatialIndexManager::new();
 
         // Insert points at different altitudes
-        index.insert_point(
-            "aircraft",
-            -74.0,
-            40.7,
-            1000.0,
-            "low".to_string(),
-            Bytes::from("data1"),
-        );
-        index.insert_point(
-            "aircraft",
-            -74.0,
-            40.7,
-            5000.0,
-            "mid".to_string(),
-            Bytes::from("data2"),
-        );
-        index.insert_point(
-            "aircraft",
-            -74.0,
-            40.7,
-            10000.0,
-            "high".to_string(),
-            Bytes::from("data3"),
-        );
+        index.insert_point("aircraft", -74.0, 40.7, 1000.0, "low".to_string());
+        index.insert_point("aircraft", -74.0, 40.7, 5000.0, "mid".to_string());
+        index.insert_point("aircraft", -74.0, 40.7, 10000.0, "high".to_string());
 
         // Query for mid-altitude aircraft
         let results = index.query_within_cylinder(
@@ -954,14 +888,7 @@ mod tests {
         let mut index = SpatialIndexManager::new();
 
         // Insert a point near the North Pole
-        index.insert_point(
-            "arctic",
-            0.0,
-            89.5,
-            1000.0,
-            "station1".to_string(),
-            Bytes::from("arctic_station"),
-        );
+        index.insert_point("arctic", 0.0, 89.5, 1000.0, "station1".to_string());
 
         // Query near pole should not panic or produce invalid envelopes
         let center = Point3d::new(0.0, 89.5, 1000.0);
@@ -977,14 +904,7 @@ mod tests {
         let mut index = SpatialIndexManager::new();
 
         // Insert at exactly 90° (North Pole)
-        index.insert_point(
-            "pole",
-            0.0,
-            90.0,
-            0.0,
-            "north_pole".to_string(),
-            Bytes::from("pole_marker"),
-        );
+        index.insert_point("pole", 0.0, 90.0, 0.0, "north_pole".to_string());
 
         // Query at pole should not panic (latitude is clamped internally)
         let center = Point3d::new(0.0, 90.0, 0.0);
@@ -998,13 +918,7 @@ mod tests {
         let mut index = SpatialIndexManager::new();
 
         // Insert points at high latitude
-        index.insert_point_2d(
-            "scandinavia",
-            10.0,
-            70.0,
-            "tromso".to_string(),
-            Bytes::from("norway"),
-        );
+        index.insert_point_2d("scandinavia", 10.0, 70.0, "tromso".to_string());
 
         let center = GeoPoint::new(10.0, 70.0);
         let results = index.query_within_radius_2d("scandinavia", &center, 50_000.0, 10);

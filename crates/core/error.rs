@@ -23,6 +23,10 @@ pub enum SpatioError {
     InvalidFormat,
     /// Invalid input parameter
     InvalidInput(String),
+    /// Operation not supported
+    NotSupported(String),
+    /// Object not found
+    ObjectNotFound,
     /// I/O error from persistence layer
     Io(std::io::Error),
     /// Generic error with message
@@ -43,6 +47,8 @@ impl fmt::Display for SpatioError {
             SpatioError::UnexpectedEof => write!(f, "Unexpected end of file"),
             SpatioError::InvalidFormat => write!(f, "Invalid data format"),
             SpatioError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            SpatioError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
+            SpatioError::ObjectNotFound => write!(f, "Object not found"),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),
         }

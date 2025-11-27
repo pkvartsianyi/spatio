@@ -1,15 +1,16 @@
 //! In-memory storage backend implementation.
 
-use super::{StorageBackend, StorageOp, StorageStats, calculate_prefix_end};
+use super::{StorageBackend, StorageOp, StorageStats};
 use crate::config::DbItem;
 use crate::error::Result;
 use bytes::Bytes;
+use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
-/// In-memory storage backend using BTreeMap
+/// In-memory storage backend using HashMap
 pub struct MemoryBackend {
-    data: BTreeMap<Vec<u8>, DbItem>,
+    data: FxHashMap<Vec<u8>, DbItem>,
     stats: StorageStats,
 }
 
@@ -17,7 +18,7 @@ impl MemoryBackend {
     /// Create a new in-memory storage backend
     pub fn new() -> Self {
         Self {
-            data: BTreeMap::new(),
+            data: FxHashMap::default(),
             stats: StorageStats::default(),
         }
     }
@@ -25,6 +26,7 @@ impl MemoryBackend {
     /// Create with initial capacity hint
     pub fn with_capacity(capacity: usize) -> Self {
         let mut backend = Self::new();
+        backend.data.reserve(capacity);
         backend.stats.size_bytes = capacity * 64; // Rough estimate
         backend
     }
@@ -78,21 +80,16 @@ impl StorageBackend for MemoryBackend {
             for key in self.data.keys() {
                 keys.push(Bytes::copy_from_slice(key));
             }
-            return Ok(keys);
-        }
-
-        let prefix_end = calculate_prefix_end(prefix);
-        let range = if prefix_end.len() < prefix.len() {
-            self.data.range(prefix.to_vec()..)
         } else {
-            self.data.range(prefix.to_vec()..prefix_end)
-        };
-
-        for (key, _) in range {
-            if key.starts_with(prefix) {
-                keys.push(Bytes::copy_from_slice(key));
+            for key in self.data.keys() {
+                if key.starts_with(prefix) {
+                    keys.push(Bytes::copy_from_slice(key));
+                }
             }
         }
+
+        // Sort keys to maintain consistent order expected by some tests/consumers
+        keys.sort();
 
         Ok(keys)
     }
@@ -104,20 +101,11 @@ impl StorageBackend for MemoryBackend {
             for (key, item) in &self.data {
                 result.insert(Bytes::copy_from_slice(key), item.clone());
             }
-            return Ok(result);
-        }
-
-        let prefix_end = calculate_prefix_end(prefix);
-
-        let range = if prefix_end.len() < prefix.len() {
-            self.data.range(prefix.to_vec()..)
         } else {
-            self.data.range(prefix.to_vec()..prefix_end)
-        };
-
-        for (key, item) in range {
-            if key.starts_with(prefix) {
-                result.insert(Bytes::copy_from_slice(key), item.clone());
+            for (key, item) in &self.data {
+                if key.starts_with(prefix) {
+                    result.insert(Bytes::copy_from_slice(key), item.clone());
+                }
             }
         }
 

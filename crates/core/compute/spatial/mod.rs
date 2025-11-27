@@ -4,7 +4,5 @@ pub use algorithms::{
     expand_bbox, geodesic_polygon_area, knn, point_in_polygon, polygon_area,
 };
 
-pub mod queries;
-
 pub mod rtree;
 pub use rtree::{BBoxQuery, CylinderQuery, SpatialIndexManager};

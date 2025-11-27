@@ -56,6 +56,14 @@ pub struct Config {
     #[cfg(feature = "snapshot")]
     #[serde(default)]
     pub snapshot_auto_ops: Option<usize>,
+
+    /// Buffer capacity per object for recent history in ColdState
+    #[serde(default = "Config::default_buffer_capacity")]
+    pub buffer_capacity: usize,
+
+    /// Snapshot interval in seconds (0 = disabled)
+    #[serde(default = "Config::default_snapshot_interval_seconds")]
+    pub snapshot_interval_seconds: u64,
 }
 
 impl Config {
@@ -121,6 +129,25 @@ impl Config {
         }
 
         self.history_capacity = Some(capacity);
+        self
+    }
+
+    const fn default_buffer_capacity() -> usize {
+        100
+    }
+
+    const fn default_snapshot_interval_seconds() -> u64 {
+        3600
+    }
+
+    pub fn with_buffer_capacity(mut self, capacity: usize) -> Self {
+        assert!(capacity > 0, "Buffer capacity must be greater than zero");
+        self.buffer_capacity = capacity;
+        self
+    }
+
+    pub fn with_snapshot_interval(mut self, seconds: u64) -> Self {
+        self.snapshot_interval_seconds = seconds;
         self
     }
 
@@ -199,6 +226,8 @@ impl Default for Config {
             history_capacity: None,
             #[cfg(feature = "snapshot")]
             snapshot_auto_ops: None,
+            buffer_capacity: Self::default_buffer_capacity(),
+            snapshot_interval_seconds: Self::default_snapshot_interval_seconds(),
         }
     }
 }
@@ -363,14 +392,20 @@ impl DbItem {
 /// Database statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DbStats {
-    /// Number of keys in the database
-    pub key_count: usize,
     /// Number of items that have expired
     pub expired_count: u64,
     /// Total number of operations performed
     pub operations_count: u64,
     /// Total size in bytes (approximate)
     pub size_bytes: usize,
+    /// Total number of objects currently tracked in hot state
+    pub hot_state_objects: usize,
+    /// Number of trajectories stored in cold state
+    pub cold_state_trajectories: usize,
+    /// Bytes used in cold state buffer
+    pub cold_state_buffer_bytes: usize,
+    /// Approximate total memory usage in bytes
+    pub memory_usage_bytes: usize,
 }
 
 impl DbStats {
@@ -387,11 +422,6 @@ impl DbStats {
     /// Record expired items cleanup
     pub fn record_expired(&mut self, count: u64) {
         self.expired_count += count;
-    }
-
-    /// Update key count
-    pub fn set_key_count(&mut self, count: usize) {
-        self.key_count = count;
     }
 
     /// Update size estimate
@@ -496,9 +526,6 @@ mod tests {
 
         stats.record_expired(5);
         assert_eq!(stats.expired_count, 5);
-
-        stats.set_key_count(100);
-        assert_eq!(stats.key_count, 100);
     }
 
     #[test]
