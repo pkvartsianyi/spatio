@@ -308,6 +308,117 @@ impl DB {
         self.query_current_within_radius(namespace, &target.position, radius, limit)
     }
 
+    /// Query objects within a bounding box relative to another object
+    pub fn query_bbox_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        width: f64,
+        height: f64,
+        limit: usize,
+    ) -> Result<Vec<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let target = self
+            .hot
+            .get_current_location(namespace, object_id)
+            .ok_or(SpatioError::ObjectNotFound)?;
+
+        let half_width = width / 2.0;
+        let half_height = height / 2.0;
+        let center = &target.position;
+
+        self.query_current_within_bbox(
+            namespace,
+            center.x() - half_width,
+            center.y() - half_height,
+            center.x() + half_width,
+            center.y() + half_height,
+            limit,
+        )
+    }
+
+    /// Query objects within a cylindrical volume relative to another object
+    pub fn query_cylinder_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let target = self
+            .hot
+            .get_current_location(namespace, object_id)
+            .ok_or(SpatioError::ObjectNotFound)?;
+
+        let center = spatio_types::geo::Point::new(target.position.x(), target.position.y());
+
+        self.query_within_cylinder(namespace, center, min_z, max_z, radius, limit)
+    }
+
+    /// Query objects within a 3D bounding box relative to another object
+    pub fn query_bbox_3d_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        width: f64,
+        height: f64,
+        depth: f64,
+        limit: usize,
+    ) -> Result<Vec<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let target = self
+            .hot
+            .get_current_location(namespace, object_id)
+            .ok_or(SpatioError::ObjectNotFound)?;
+
+        let half_width = width / 2.0;
+        let half_height = height / 2.0;
+        let half_depth = depth / 2.0;
+        let center = &target.position;
+
+        self.query_within_bbox_3d(
+            namespace,
+            center.x() - half_width,
+            center.y() - half_height,
+            center.z() - half_depth,
+            center.x() + half_width,
+            center.y() + half_height,
+            center.z() + half_depth,
+            limit,
+        )
+    }
+
+    /// Find k nearest neighbors relative to another object
+    pub fn knn_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        k: usize,
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+
+        let target = self
+            .hot
+            .get_current_location(namespace, object_id)
+            .ok_or(SpatioError::ObjectNotFound)?;
+
+        self.knn_3d(namespace, &target.position, k)
+    }
+
     /// Query historical trajectory (COLD PATH)
     pub fn query_trajectory(
         &self,

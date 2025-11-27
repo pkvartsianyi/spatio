@@ -188,46 +188,41 @@ See [PLATFORMS.md](PLATFORMS.md) for details.
 
 ## API Overview
 
-**Key-Value:**
+**Real-time Tracking:**
 ```rust
-db.insert(key, value, options)?;
-db.get(key)?;
-db.delete(key)?;
+db.update_location(namespace, object_id, &position, metadata)?;
+db.update_location_at(namespace, object_id, &position, metadata, timestamp)?;
 ```
 
-**Spatial:**
+**Object-Based Queries (Primary - Most Common):**
 ```rust
-db.insert_point(namespace, &point, data, options)?;
-db.query_within_radius(namespace, &center, radius, limit)?;
-db.count_within_radius(namespace, &center, radius)?;
-db.contains_point(namespace, &center, radius)?;
-db.find_within_bounds(namespace, min_lat, min_lon, max_lat, max_lon, limit)?;
-db.knn(namespace, &center, k, max_radius, metric)?;
-db.query_within_polygon(namespace, &polygon, limit)?;
-db.distance_between(&p1, &p2, metric)?;
+// Find objects near another object
+db.query_near_object(namespace, object_id, radius, limit)?;
+db.query_bbox_near_object(namespace, object_id, width, height, limit)?;
+db.query_cylinder_near_object(namespace, object_id, min_z, max_z, radius, limit)?;
+db.query_bbox_3d_near_object(namespace, object_id, width, height, depth, limit)?;
+db.knn_near_object(namespace, object_id, k)?;
 ```
 
-**3D Spatial:**
+**Coordinate-Based Queries (When You Have Explicit Coordinates):**
 ```rust
-db.insert_point_3d(namespace, &point3d, data, options)?;
-db.query_within_sphere_3d(namespace, &center, radius, limit)?;
-db.query_within_cylinder_3d(namespace, &center, min_z, max_z, radius, limit)?;
-db.query_within_bbox_3d(namespace, &bbox, limit)?;
+db.query_current_within_radius(namespace, &center, radius, limit)?;
+db.query_current_within_bbox(namespace, min_x, min_y, max_x, max_y, limit)?;
+db.query_within_cylinder(namespace, &center, min_z, max_z, radius, limit)?;
+db.query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)?;
 db.knn_3d(namespace, &center, k)?;
 ```
 
 **Trajectories:**
 ```rust
-db.insert_trajectory(object_id, &points, options)?;
-db.query_trajectory(object_id, start_time, end_time)?;
+db.insert_trajectory(namespace, object_id, &points)?;
+db.query_trajectory(namespace, object_id, start_time, end_time, limit)?;
 ```
 
 **Utility:**
 ```rust
-db.atomic(|batch| { /* multiple ops */ })?;
-db.cleanup_expired()?;
-db.count_expired();
 db.stats();
+db.close()?;
 ```
 
 ## Documentation
