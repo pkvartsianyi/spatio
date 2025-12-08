@@ -50,40 +50,39 @@ impl SyncDB {
         self.inner.stats()
     }
 
-    /// Update object's current location
-    pub fn update_location(
+    /// Upsert an object's location.
+    pub fn upsert(
         &self,
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
         metadata: serde_json::Value,
+        timestamp: Option<SystemTime>,
     ) -> Result<()> {
         self.inner
-            .update_location(namespace, object_id, position, metadata)
+            .upsert(namespace, object_id, position, metadata, timestamp)
     }
 
-    /// Query current locations within radius
-    pub fn query_current_within_radius(
+    /// Query objects within radius (returns location and distance)
+    pub fn query_radius(
         &self,
         namespace: &str,
         center: &spatio_types::point::Point3d,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
-        self.inner
-            .query_current_within_radius(namespace, center, radius, limit)
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        self.inner.query_radius(namespace, center, radius, limit)
     }
 
-    /// Query objects near another object
-    pub fn query_near_object(
+    /// Query objects near another object (returns location and distance)
+    pub fn query_near(
         &self,
         namespace: &str,
         object_id: &str,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
-        self.inner
-            .query_near_object(namespace, object_id, radius, limit)
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
+        self.inner.query_near(namespace, object_id, radius, limit)
     }
 
     /// Query historical trajectory

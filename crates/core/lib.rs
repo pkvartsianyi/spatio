@@ -21,8 +21,8 @@
 //!
 //! // Spatial example
 //! let point = Point3d::new(-74.0060, 40.7128, 0.0);
-//! db.update_location("cities", "nyc", point.clone(), serde_json::json!({"name": "NYC"}))?;
-//! let nearby = db.query_current_within_radius("cities", &point, 1000.0, 10)?;
+//! db.upsert("cities", "nyc", point.clone(), serde_json::json!({"name": "NYC"}), None)?;
+//! let nearby = db.query_radius("cities", &point, 1000.0, 10)?;
 //!
 //! # Ok::<(), spatio::SpatioError>(())
 //! ```

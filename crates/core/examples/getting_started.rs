@@ -16,37 +16,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("1. Spatial Point Storage (Hot State)");
     println!("------------------------------------");
 
-    // Store geographic points (lon, lat, alt)
+    // Store geographic points
     let nyc = Point3d::new(-74.0060, 40.7128, 0.0);
     let london = Point3d::new(-0.1278, 51.5074, 0.0);
     let paris = Point3d::new(2.3522, 48.8566, 0.0);
 
-    // Update current locations
-    db.update_location(
+    db.upsert(
         "cities",
         "nyc",
         nyc.clone(),
         serde_json::json!({"data": "New York"}),
+        None,
     )?;
-    db.update_location(
+    println!("   Stored nyc at ({}, {})", nyc.x(), nyc.y());
+
+    db.upsert(
         "cities",
         "london",
         london.clone(),
         serde_json::json!({"data": "London"}),
+        None,
     )?;
-    db.update_location(
+    println!("   Stored london at ({}, {})", london.x(), london.y());
+
+    db.upsert(
         "cities",
         "paris",
         paris.clone(),
         serde_json::json!({"data": "Paris"}),
+        None,
     )?;
+    println!("   Stored paris at ({}, {})", paris.x(), paris.y());
     println!("   Stored 3 cities with automatic spatial indexing");
 
     // Find nearby cities within radius (in meters)
-    let nearby = db.query_current_within_radius("cities", &london, 500_000.0, 10)?;
+    // using query_radius which now returns distance
+    let nearby = db.query_radius("cities", &london, 500_000.0, 10)?;
     println!("   Found {} cities within 500km of London:", nearby.len());
-    for loc in &nearby {
-        println!("Found nearby: {} at {:?}", loc.metadata, loc.position);
+    for (loc, dist) in &nearby {
+        println!(
+            "     - {} ({:.1}m away): {:?}",
+            loc.object_id, dist, loc.metadata
+        );
     }
     println!();
 
@@ -96,12 +107,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let past_time = SystemTime::now() - Duration::from_secs(3600);
     let past_pos = Point3d::new(10.0, 10.0, 0.0);
 
-    db.update_location_at(
+    db.upsert(
         "fleet",
         "old_truck",
         past_pos,
         serde_json::json!({"data": "Historical Data"}),
-        past_time,
+        Some(past_time),
     )?;
     println!("   Ingested historical data point\n");
 
@@ -110,7 +121,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------");
 
     let stats = db.stats();
-    // Note: Stats implementation is currently minimal in new architecture
     println!("   Stats available: {:?}", stats);
 
     println!("=== Getting Started Complete! ===");

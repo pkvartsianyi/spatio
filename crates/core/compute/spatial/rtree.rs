@@ -14,10 +14,10 @@
 //!
 //! let db = Spatio::memory().unwrap();
 //! let point = Point3d::new(-74.0, 40.7, 5000.0);
-//! db.update_location("aircraft", "id1", point.clone(), serde_json::json!({"data": "data"})).unwrap();
+//! db.upsert("aircraft", "id1", point.clone(), serde_json::json!({"data": "data"}), None).unwrap();
 //!
 //! let center = Point3d::new(-74.0, 40.0, 5000.0);
-//! let results = db.query_current_within_radius("aircraft", &center, 10000.0, 100).unwrap();
+//! let results = db.query_radius("aircraft", &center, 10000.0, 100).unwrap();
 //! ```
 
 use crate::config::BoundingBox2D;

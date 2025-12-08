@@ -17,53 +17,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Tracking multiple drones at different altitudes\n");
 
     // Insert drones at various positions and altitudes
-    let drones = vec![
-        (
-            "drone-001",
-            -74.0060,
-            40.7128,
-            50.0,
-            "Delivery drone - Package A",
-        ),
-        (
-            "drone-002",
-            -74.0070,
-            40.7138,
-            75.0,
-            "Delivery drone - Package B",
-        ),
-        (
-            "drone-003",
-            -74.0050,
-            40.7118,
-            100.0,
-            "Survey drone - Area mapping",
-        ),
-        (
-            "drone-004",
-            -74.0080,
-            40.7148,
-            125.0,
-            "Inspection drone - Building check",
-        ),
-        (
-            "drone-005",
-            -74.0065,
-            40.7133,
-            150.0,
-            "Emergency response drone",
-        ),
-    ];
+    // 4. Register drones (using upsert)
+    // Note: upsert replaces update_location
+    for i in 1..=5 {
+        let id = format!("drone-{:03}", i);
+        let altitude = 50.0 + (i as f64 - 1.0) * 25.0; // 50m, 75m, 100m, 125m, 150m
+        let pos = Point3d::new(-74.0060, 40.7128, altitude);
 
-    for (id, lon, lat, alt, description) in &drones {
-        let position = Point3d::new(*lon, *lat, *alt);
-        db.update_location(
-            "drones",
-            id,
-            position,
-            serde_json::json!({"description": description}),
-        )?;
-        println!("   ✓ Registered {}: altitude {}m", id, alt);
+        // Simulating different drone types
+        let metadata = if i % 2 == 0 {
+            serde_json::json!({"type": "delivery", "description": "Delivery drone - Package B"})
+        } else if i == 5 {
+            serde_json::json!({"type": "emergency", "description": "Emergency response drone"})
+        } else if i == 3 {
+            serde_json::json!({"type": "survey", "description": "Survey drone - Area mapping"})
+        } else {
+            serde_json::json!({"type": "delivery", "description": "Delivery drone - Package A"})
+        };
+
+        db.upsert("drones", &id, pos, metadata, None)?;
+        println!("   ✓ Registered {}: altitude {}m", id, altitude);
     }
     println!();
 
@@ -74,9 +47,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let control_center = Point3d::new(-74.0065, 40.7133, 100.0);
     let search_radius = 200.0; // 200 meters in 3D space
 
-    // Note: query_current_within_radius uses 3D distance if points are 3D
-    let nearby_drones =
-        db.query_current_within_radius("drones", &control_center, search_radius, 10)?;
+    // Persist control center so we can query relative to it (using key)
+    db.upsert(
+        "drones",
+        "control_center",
+        control_center.clone(),
+        serde_json::json!({"type": "infrastructure", "name": "Main Base"}),
+        None,
+    )?;
+
+    // Query drones near the control center using its ID
+    // query_near always returns distance now
+    let nearby_drones = db.query_near("drones", "control_center", search_radius, 10)?;
 
     println!(
         "   Control center: ({:.4}, {:.4}, {}m)",
@@ -87,10 +69,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("   Search radius: {}m (3D)\n", search_radius);
     println!("   Found {} drones within range:", nearby_drones.len());
 
-    for loc in &nearby_drones {
+    for (loc, distance) in &nearby_drones {
         let description = loc.metadata.to_string();
-        // Calculate distance manually for display
-        let distance = control_center.distance_3d(&loc.position);
         println!(
             "   - {} at ({:.4}, {:.4}, {}m) - distance: {:.1}m",
             description,
@@ -178,8 +158,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let emergency_location = Point3d::new(-74.0062, 40.7130, 80.0);
     let k = 3;
 
-    let nearest = db.knn_3d("drones", &emergency_location, k)?;
-
+    // knn always returns distance
+    let nearest_drones = db.knn("drones", &emergency_location, 3)?;
     println!(
         "   Emergency at: ({:.4}, {:.4}, {}m)",
         emergency_location.x(),
@@ -188,7 +168,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!("   Finding {} nearest drones:\n", k);
 
-    for (i, (loc, distance)) in nearest.iter().enumerate() {
+    for (i, (loc, distance)) in nearest_drones.iter().enumerate() {
         let description = loc.metadata.to_string();
         println!("   {}. {} - {:.1}m away", i + 1, description, distance);
         println!(
@@ -211,32 +191,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("SW321", -74.0050, 40.7150, 11000.0, "NYC to CHI"),
     ];
 
-    for (flight, lon, lat, alt, route) in &flights {
-        let position = Point3d::new(*lon, *lat, *alt);
-        let info = format!("{} - {}", flight, route);
-        db.update_location(
+    for (id, lon, lat, alt, route) in &flights {
+        let pos = Point3d::new(*lon, *lat, *alt);
+        db.upsert(
             "aircraft",
-            flight,
-            position,
-            serde_json::json!({"info": info}),
+            id,
+            pos,
+            serde_json::json!({"info": format!("{} - {}", id, route)}),
+            None,
         )?;
-        println!("   ✓ Tracking {}: {}m altitude", flight, alt);
+        println!("   ✓ Tracking {}: {}m altitude", id, alt);
     }
-    println!();
 
-    // Query aircraft in specific flight level
-    let fl_center = spatio_types::geo::Point::new(-74.0150, 40.7250);
-    let fl_min = 9500.0; // Flight level 310 (approx)
-    let fl_max = 10500.0; // Flight level 345 (approx)
-    let radar_range = 50000.0; // 50km
+    println!("\n   Air traffic in flight levels FL310-FL345:");
+    println!("   Radar range: 50km\n");
 
-    let tracked_flights =
-        db.query_within_cylinder("aircraft", fl_center, fl_min, fl_max, radar_range, 20)?;
+    let radar_pos = Point3d::new(-74.0060, 40.7128, 0.0); // Ground radar
+    let traffic = db.query_within_cylinder(
+        "aircraft",
+        spatio_types::geo::Point::new(radar_pos.x(), radar_pos.y()),
+        310.0 * 30.48, // FL310 in meters
+        345.0 * 30.48, // FL345 in meters
+        50000.0,
+        10,
+    )?;
 
-    println!("   Air traffic in flight levels FL310-FL345:");
-    println!("   Radar range: {}km\n", radar_range / 1000.0);
-
-    for (loc, h_dist) in &tracked_flights {
+    for (loc, h_dist) in &traffic {
         let info = loc.metadata.to_string();
         println!(
             "   - {} at FL{:.0} ({}km away)",
@@ -247,37 +227,53 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!();
 
-    // === Example 7: 3D Distance Calculations ===
-    println!("7. 3D Distance Calculations");
-    println!("   Computing distances between 3D points\n");
+    println!("7. 3D Distance Calculations (Native)");
+    println!("   Computing distances natively in DB query\n");
 
     let point_a = Point3d::new(-74.0060, 40.7128, 100.0);
     let point_b = Point3d::new(-74.0070, 40.7138, 200.0);
 
     // Use Point3d methods directly
     let dist_3d = point_a.distance_3d(&point_b);
-    // Convert to GeoPoint for haversine
+
+    // Insert points to query relative to each other
+    db.upsert(
+        "calc_demo",
+        "point_a",
+        point_a.clone(),
+        serde_json::json!({}),
+        None,
+    )?;
+    db.upsert(
+        "calc_demo",
+        "point_b",
+        point_b.clone(),
+        serde_json::json!({}),
+        None,
+    )?;
+
+    // Query distance between objects using keys
+    // query_near replaces query_near_object_with_distance
+    let results = db.query_near("calc_demo", "point_a", 1000.0, 10)?;
+
+    // Print native DB results
+    println!("   Results near point_a:");
+    for (loc, dist) in &results {
+        println!("   - Distance to {}: {:.2}m", loc.object_id, dist);
+    }
+
+    // Convert to GeoPoint for validation info (optional)
     let geo_a = spatio_types::geo::Point::new(point_a.x(), point_a.y());
     let geo_b = spatio_types::geo::Point::new(point_b.x(), point_b.y());
     let horizontal_dist = geo_a.haversine_distance(&geo_b);
     let altitude_diff = (point_a.z() - point_b.z()).abs();
 
-    println!(
-        "   Point A: ({:.4}, {:.4}, {}m)",
-        point_a.x(),
-        point_a.y(),
-        point_a.z()
-    );
-    println!(
-        "   Point B: ({:.4}, {:.4}, {}m)",
-        point_b.x(),
-        point_b.y(),
-        point_b.z()
-    );
     println!();
-    println!("   3D distance:        {:.2}m", dist_3d);
-    println!("   Horizontal distance: {:.2}m", horizontal_dist);
-    println!("   Altitude difference: {:.2}m", altitude_diff);
+    println!("   Comparison:");
+    println!("   - Native DB distance: see above");
+    println!("   - Manual 3D distance: {:.2}m", dist_3d);
+    println!("   - Horizontal distance: {:.2}m", horizontal_dist);
+    println!("   - Altitude difference: {:.2}m", altitude_diff);
     println!();
 
     // === Example 8: Multi-Floor Building Navigation ===
@@ -287,15 +283,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Simulate a 10-floor building with sensors on each floor
     // Each floor is ~3 meters tall
     for floor in 0..10 {
-        let altitude = floor as f64 * 3.0;
-        let sensor_id = format!("sensor-floor-{:02}", floor);
-        let position = Point3d::new(-74.0060, 40.7128, altitude);
-        let info = format!("Temperature sensor - Floor {}", floor);
-        db.update_location(
+        let height = floor as f64 * 3.0;
+        let fmt_id = format!("sensor-floor-{:02}", floor);
+        db.upsert(
             "building-sensors",
-            &sensor_id,
-            position,
-            serde_json::json!({"info": info}),
+            &fmt_id,
+            Point3d::new(-74.0060, 40.7128, height),
+            serde_json::json!({"info": fmt_id}),
+            None,
         )?;
     }
 

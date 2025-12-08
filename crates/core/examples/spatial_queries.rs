@@ -27,43 +27,64 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (name, point) in &cities {
         // Using name as object_id for simplicity
         let object_id = name.to_lowercase().replace(" ", "_");
-        db.update_location(
+        db.upsert(
             "world_cities",
             &object_id,
             point.clone(),
             serde_json::json!({"name": name}),
+            None,
         )?;
     }
     println!("   Added {} cities to spatial index\n", cities.len());
 
+    // 4. Populate with sample data (using upsert)
+    // Create a grid of points
+    for i in 0..10 {
+        for j in 0..10 {
+            let id = format!("point-{}-{}", i, j);
+            let lon = -74.0 + (i as f64) * 0.01;
+            let lat = 40.7 + (j as f64) * 0.01;
+            let pos = Point3d::new(lon, lat, 0.0);
+
+            db.upsert(
+                "nyc_grid",
+                &id,
+                pos,
+                serde_json::json!({"category": "grid_point"}),
+                None,
+            )?;
+        }
+    }
+    println!("   Populated database with 100 points in 'nyc_grid' namespace\n");
+
     // === 1. RADIUS QUERIES ===
-    println!("1. Radius-Based Queries (query_current_within_radius)");
+    println!("1. Radius-Based Queries (query_radius)");
     println!("-----------------------------------------------------");
 
     let london = Point3d::new(-0.1278, 51.5074, 0.0);
 
     // Find cities within 500km of London
-    let nearby_500km = db.query_current_within_radius("world_cities", &london, 500_000.0, 10)?;
+    let nearby_500km = db.query_radius("world_cities", &london, 500_000.0, 10)?;
     println!("   Cities within 500km of London: {}", nearby_500km.len());
-    for loc in &nearby_500km {
-        println!("     - {}", loc.metadata);
+    for (loc, dist) in &nearby_500km {
+        println!("     - {} ({:.1}m)", loc.metadata, dist);
     }
 
     // Find cities within 2000km of London
-    let nearby_2000km = db.query_current_within_radius("world_cities", &london, 2_000_000.0, 10)?;
+    let nearby_2000km = db.query_radius("world_cities", &london, 2_000_000.0, 10)?;
     println!(
         "\n   Cities within 2000km of London: {}",
         nearby_2000km.len()
     );
-    for loc in &nearby_2000km {
-        println!("     - {}", loc.metadata);
+    for (loc, dist) in &nearby_2000km {
+        println!("     - {} ({:.1}m)", loc.metadata, dist);
     }
 
     // Use limit to get only closest N cities
-    let closest_3 = db.query_current_within_radius("world_cities", &london, f64::INFINITY, 3)?;
+    let closest_3 = db.query_radius("world_cities", &london, f64::INFINITY, 3)?;
     println!("\n   Closest 3 cities to London:");
-    for (i, loc) in closest_3.iter().enumerate() {
-        println!("     {}. {}", i + 1, loc.metadata);
+    for (i, (loc, dist)) in closest_3.iter().enumerate() {
+        println!("     {}. {} ({:.1}m)", i + 1, loc.metadata, dist);
     }
     println!();
 
@@ -72,10 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("------------------------------------------------");
 
     let has_nearby_500km = !db
-        .query_current_within_radius("world_cities", &london, 500_000.0, 1)?
+        .query_radius("world_cities", &london, 500_000.0, 1)?
         .is_empty();
     let has_nearby_100km = !db
-        .query_current_within_radius("world_cities", &london, 100_000.0, 1)?
+        .query_radius("world_cities", &london, 100_000.0, 1)?
         .is_empty();
 
     println!("   Any cities within 500km of London? {}", has_nearby_500km);
@@ -83,13 +104,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // === 3. BOUNDING BOX QUERIES ===
-    println!("3. Bounding Box Queries (query_current_within_bbox)");
+    println!("3. Bounding Box Queries (query_bbox)");
     println!("---------------------------------------------------");
 
     // European bounding box (min_lon, min_lat, max_lon, max_lat)
     println!("   European region (lon: -10 to 20, lat: 40 to 60):");
-    let europe_cities =
-        db.query_current_within_bbox("world_cities", -10.0, 40.0, 20.0, 60.0, 20)?;
+    let europe_cities = db.query_bbox("world_cities", -10.0, 40.0, 20.0, 60.0, 20)?;
     println!("     Found {} cities:", europe_cities.len());
     for loc in &europe_cities {
         println!(
@@ -100,9 +120,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // 6. Perform Bounding Box Query (query_bbox)
+    let min_x = -74.06;
+    let min_y = 40.74;
+    let max_x = -74.04;
+    let max_y = 40.76;
+
+    println!("\n6. Bounding Box Query (query_bbox)");
+    println!("   BBox: [{}, {}] to [{}, {}]", min_x, min_y, max_x, max_y);
+
+    let bbox_results = db.query_bbox("nyc_grid", min_x, min_y, max_x, max_y, 100)?;
+    println!("   Found {} points in bounding box", bbox_results.len());
+    for loc in &bbox_results {
+        println!(
+            "       - {} at ({:.4}, {:.4})",
+            loc.object_id,
+            loc.position.x(),
+            loc.position.y()
+        );
+    }
+
     // Asia-Pacific region
     println!("\n   Asia-Pacific region (lon: 70 to 180, lat: -40 to 40):");
-    let asia_cities = db.query_current_within_bbox("world_cities", 70.0, -40.0, 180.0, 40.0, 20)?;
+    let asia_cities = db.query_bbox("world_cities", 70.0, -40.0, 180.0, 40.0, 20)?;
     println!("     Found {} cities:", asia_cities.len());
     for loc in &asia_cities {
         println!("       - {}", loc.metadata);
@@ -110,8 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Americas region
     println!("\n   Americas region (lon: -130 to -30, lat: -60 to 60):");
-    let americas_cities =
-        db.query_current_within_bbox("world_cities", -130.0, -60.0, -30.0, 60.0, 20)?;
+    let americas_cities = db.query_bbox("world_cities", -130.0, -60.0, -30.0, 60.0, 20)?;
     println!("     Found {} cities:", americas_cities.len());
     for loc in &americas_cities {
         println!("       - {}", loc.metadata);
@@ -123,10 +162,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("----------------------------------------");
 
     let has_european = !db
-        .query_current_within_bbox("world_cities", -10.0, 40.0, 20.0, 60.0, 1)?
+        .query_bbox("world_cities", -10.0, 40.0, 20.0, 60.0, 1)?
         .is_empty();
     let has_antarctica = !db
-        .query_current_within_bbox("world_cities", -180.0, -90.0, 180.0, -60.0, 1)?
+        .query_bbox("world_cities", -180.0, -90.0, 180.0, -60.0, 1)?
         .is_empty();
 
     println!("   European region has cities? {}", has_european);
@@ -147,33 +186,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (name, point) in &london_landmarks {
         let object_id = name.to_lowercase().replace(" ", "_");
-        db.update_location(
+        db.upsert(
             "landmarks",
             &object_id,
             point.clone(),
             serde_json::json!({"name": name}),
+            None,
         )?;
     }
 
     println!("   Added {} London landmarks", london_landmarks.len());
 
-    // Query different namespaces from same location
+    // 5. Perform Radius Query (using query_radius)
+    // Note: query_radius replaces query_current_within_radius and always returns distance
+    let center = Point3d::new(-74.05, 40.75, 0.0);
+    let radius = 3000.0; // 3km
+    println!("\n5. Radius Query (query_radius)");
+    println!("   Center: ({:.4}, {:.4})", center.x(), center.y());
+    println!("   Radius: {:.0}m", radius);
+
+    let results = db.query_radius("nyc_grid", &center, radius, 100)?;
+    println!("   Found {} points within radius:", results.len());
+
+    // Verify results
+    if let Some((loc, dist)) = results.first() {
+        println!("     - Sample: {} at {:.1}m", loc.object_id, dist);
+    }
+
+    // Performance check (optional, run many queries)
+    let start = std::time::Instant::now();
+    for _ in 0..1000 {
+        db.query_radius("nyc_grid", &center, radius, 100)?;
+    }
+    println!("   Perf: 1000 radius queries in {:?}", start.elapsed());
+
+    // Query different namespaces
     let center_london = Point3d::new(-0.1278, 51.5074, 0.0);
 
-    let nearby_cities =
-        db.query_current_within_radius("world_cities", &center_london, 10_000.0, 10)?;
-    let nearby_landmarks =
-        db.query_current_within_radius("landmarks", &center_london, 10_000.0, 10)?;
+    let nearby_cities = db.query_radius("world_cities", &center_london, 10_000.0, 10)?;
+    let nearby_landmarks = db.query_radius("landmarks", &center_london, 10_000.0, 10)?;
 
     println!("   Within 10km of center London:");
     println!("     Cities: {}", nearby_cities.len());
     println!("     Landmarks: {}", nearby_landmarks.len());
 
     println!("\n   Landmarks within 2km:");
-    let close_landmarks =
-        db.query_current_within_radius("landmarks", &center_london, 2_000.0, 10)?;
-    for loc in &close_landmarks {
-        println!("     - {}", loc.metadata);
+    let close_landmarks = db.query_radius("landmarks", &center_london, 2_000.0, 10)?;
+    for (loc, dist) in &close_landmarks {
+        println!("     - {} ({:.1}m)", loc.metadata, dist);
     }
     println!();
 
@@ -181,9 +241,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("6. Query Result Limiting");
     println!("------------------------");
 
-    let all_cities = db.query_current_within_radius("world_cities", &london, f64::INFINITY, 100)?;
-    let top_5 = db.query_current_within_radius("world_cities", &london, f64::INFINITY, 5)?;
-    let top_3 = db.query_current_within_radius("world_cities", &london, f64::INFINITY, 3)?;
+    let all_cities = db.query_radius("world_cities", &london, f64::INFINITY, 100)?;
+    let top_5 = db.query_radius("world_cities", &london, f64::INFINITY, 5)?;
+    let top_3 = db.query_radius("world_cities", &london, f64::INFINITY, 3)?;
 
     println!("   Total cities in database: {}", all_cities.len());
     println!("   With limit=5: {} cities", top_5.len());
@@ -197,8 +257,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Operations: {}", stats.operations_count);
 
     println!("\nSpatial query methods demonstrated:");
-    println!("  • query_current_within_radius - Find points within distance");
-    println!("  • query_current_within_bbox - Rectangular region queries");
+    println!("  • query_radius - Find points within distance");
+    println!("  • query_bbox - Rectangular region queries");
     println!("  • Multiple namespaces - Organize different point types");
     println!("  • Result limiting - Control query result size");
 

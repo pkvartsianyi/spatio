@@ -207,9 +207,9 @@ impl PySpatio {
         Ok(PySpatio { db: Arc::new(db) })
     }
 
-    /// Update an object's location
+    /// Upsert an object's location
     #[pyo3(signature = (namespace, object_id, point, metadata=None))]
-    fn update_location(
+    fn upsert(
         &self,
         namespace: &str,
         object_id: &str,
@@ -226,13 +226,25 @@ impl PySpatio {
 
         handle_error(
             self.db
-                .update_location(namespace, object_id, pos, metadata_value),
+                .upsert(namespace, object_id, pos, metadata_value, None),
         )
+    }
+
+    /// Alias for upsert for backward compatibility
+    #[pyo3(signature = (namespace, object_id, point, metadata=None))]
+    fn update_location(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        point: &PyPoint,
+        metadata: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        self.upsert(namespace, object_id, point, metadata)
     }
 
     /// Query current locations within radius
     #[pyo3(signature = (namespace, center, radius, limit=100))]
-    fn query_current_within_radius(
+    fn query_radius(
         &self,
         namespace: &str,
         center: &PyPoint,
@@ -240,22 +252,17 @@ impl PySpatio {
         limit: usize,
     ) -> PyResult<Py<PyList>> {
         let center_pos = center.inner.clone();
-        let results = handle_error(self.db.query_current_within_radius(
-            namespace,
-            &center_pos,
-            radius,
-            limit,
-        ))?;
+        let results = handle_error(self.db.query_radius(namespace, &center_pos, radius, limit))?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
-            for loc in results {
+            for (loc, dist) in results {
                 let py_point = PyPoint {
                     inner: loc.position,
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-                // (object_id, point, metadata)
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -264,26 +271,24 @@ impl PySpatio {
 
     /// Query objects near another object
     #[pyo3(signature = (namespace, object_id, radius, limit=100))]
-    fn query_near_object(
+    fn query_near(
         &self,
         namespace: &str,
         object_id: &str,
         radius: f64,
         limit: usize,
     ) -> PyResult<Py<PyList>> {
-        let results = handle_error(
-            self.db
-                .query_near_object(namespace, object_id, radius, limit),
-        )?;
+        let results = handle_error(self.db.query_near(namespace, object_id, radius, limit))?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
-            for loc in results {
+            for (loc, dist) in results {
                 let py_point = PyPoint {
                     inner: loc.position,
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())

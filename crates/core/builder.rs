@@ -87,11 +87,12 @@ mod tests {
     fn test_builder_in_memory() {
         let db = DBBuilder::new().in_memory().build().unwrap();
         // Verify basic operation
-        db.update_location(
+        db.upsert(
             "ns",
             "obj",
             Point3d::new(0.0, 0.0, 0.0),
             serde_json::json!({}),
+            None,
         )
         .unwrap();
     }
@@ -103,11 +104,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let db = DBBuilder::new().path(&path).build().unwrap();
-        db.update_location(
+        db.upsert(
             "ns",
             "obj",
             Point3d::new(0.0, 0.0, 0.0),
             serde_json::json!({}),
+            None,
         )
         .unwrap();
 
