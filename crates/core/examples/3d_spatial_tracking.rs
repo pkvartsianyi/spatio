@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Note: upsert replaces update_location
     for i in 1..=5 {
         let id = format!("drone-{:03}", i);
-        let altitude = 50.0 + (i as f64 - 1.0) * 25.0; // 50m, 75m, 100m, 125m, 150m
+        let altitude = 50.0 + (i as f64 - 1.0) * 25.0;
         let pos = Point3d::new(-74.0060, 40.7128, altitude);
 
         // Simulating different drone types

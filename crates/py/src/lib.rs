@@ -267,6 +267,28 @@ impl PySpatio {
         self.upsert(namespace, object_id, point, metadata)
     }
 
+    /// Insert a trajectory (sequence of points)
+    #[pyo3(signature = (namespace, object_id, trajectory))]
+    fn insert_trajectory(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        trajectory: Vec<PyTemporalPoint>,
+    ) -> PyResult<()> {
+        let core_trajectory: Vec<spatio::TemporalPoint> = trajectory
+            .into_iter()
+            .map(|tp| spatio::TemporalPoint {
+                point: spatio::Point::new(tp.point.inner.x(), tp.point.inner.y()),
+                timestamp: UNIX_EPOCH + Duration::from_secs_f64(tp.timestamp),
+            })
+            .collect();
+
+        handle_error(
+            self.db
+                .insert_trajectory(namespace, object_id, &core_trajectory),
+        )
+    }
+
     /// Query current locations within radius
     #[pyo3(signature = (namespace, center, radius, limit=100))]
     fn query_radius(
@@ -304,6 +326,47 @@ impl PySpatio {
         limit: usize,
     ) -> PyResult<Py<PyList>> {
         let results = handle_error(self.db.query_near(namespace, object_id, radius, limit))?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Find k nearest neighbors in 3D
+    #[pyo3(signature = (namespace, center, k))]
+    fn knn(&self, namespace: &str, center: &PyPoint, k: usize) -> PyResult<Py<PyList>> {
+        let center_pos = center.inner.clone();
+        let results = handle_error(self.db.knn(namespace, &center_pos, k))?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Find k nearest neighbors near an object
+    #[pyo3(signature = (namespace, object_id, k))]
+    fn knn_near_object(&self, namespace: &str, object_id: &str, k: usize) -> PyResult<Py<PyList>> {
+        let results = handle_error(self.db.knn_near_object(namespace, object_id, k))?;
 
         Python::attach(|py| {
             let py_list = PyList::empty(py);
