@@ -28,8 +28,6 @@ pub struct CurrentLocation {
 /// - Frequent updates (replaces old position)
 /// - Spatial queries on current state
 /// - Lock-free concurrent access
-///
-/// Memory footprint: ~200 bytes per object
 pub struct HotState {
     /// One entry per object (keyed by "namespace::object_id")
     current_locations: DashMap<String, CurrentLocation>,
@@ -39,7 +37,6 @@ pub struct HotState {
 }
 
 impl HotState {
-    /// Create a new hot state
     pub fn new() -> Self {
         Self {
             current_locations: DashMap::new(),

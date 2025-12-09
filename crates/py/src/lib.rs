@@ -142,6 +142,31 @@ impl PyDistanceMetric {
     }
 }
 
+/// Python wrapper for TemporalPoint
+#[pyclass(name = "TemporalPoint")]
+#[derive(Clone, Debug)]
+pub struct PyTemporalPoint {
+    #[pyo3(get, set)]
+    pub point: PyPoint,
+    #[pyo3(get, set)]
+    pub timestamp: f64,
+}
+
+#[pymethods]
+impl PyTemporalPoint {
+    #[new]
+    fn new(point: PyPoint, timestamp: f64) -> Self {
+        PyTemporalPoint { point, timestamp }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TemporalPoint(point={:?}, timestamp={})",
+            self.point, self.timestamp
+        )
+    }
+}
+
 /// Python wrapper for database Config
 #[pyclass(name = "Config")]
 #[derive(Clone, Debug)]
@@ -242,6 +267,28 @@ impl PySpatio {
         self.upsert(namespace, object_id, point, metadata)
     }
 
+    /// Insert a trajectory (sequence of points)
+    #[pyo3(signature = (namespace, object_id, trajectory))]
+    fn insert_trajectory(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        trajectory: Vec<PyTemporalPoint>,
+    ) -> PyResult<()> {
+        let core_trajectory: Vec<spatio::TemporalPoint> = trajectory
+            .into_iter()
+            .map(|tp| spatio::TemporalPoint {
+                point: spatio::Point::new(tp.point.inner.x(), tp.point.inner.y()),
+                timestamp: UNIX_EPOCH + Duration::from_secs_f64(tp.timestamp),
+            })
+            .collect();
+
+        handle_error(
+            self.db
+                .insert_trajectory(namespace, object_id, &core_trajectory),
+        )
+    }
+
     /// Query current locations within radius
     #[pyo3(signature = (namespace, center, radius, limit=100))]
     fn query_radius(
@@ -295,6 +342,47 @@ impl PySpatio {
         })
     }
 
+    /// Find k nearest neighbors in 3D
+    #[pyo3(signature = (namespace, center, k))]
+    fn knn(&self, namespace: &str, center: &PyPoint, k: usize) -> PyResult<Py<PyList>> {
+        let center_pos = center.inner.clone();
+        let results = handle_error(self.db.knn(namespace, &center_pos, k))?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Find k nearest neighbors near an object
+    #[pyo3(signature = (namespace, object_id, k))]
+    fn knn_near_object(&self, namespace: &str, object_id: &str, k: usize) -> PyResult<Py<PyList>> {
+        let results = handle_error(self.db.knn_near_object(namespace, object_id, k))?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
     /// Query trajectory
     #[pyo3(signature = (namespace, object_id, start_time, end_time, limit=100))]
     fn query_trajectory(
@@ -328,6 +416,195 @@ impl PySpatio {
 
                 // (point, metadata, timestamp)
                 let tuple = (py_point, py_meta, ts).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a 2D bounding box
+    #[pyo3(signature = (namespace, min_x, min_y, max_x, max_y, limit=100))]
+    fn query_bbox(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(
+            self.db
+                .query_bbox(namespace, min_x, min_y, max_x, max_y, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata) - no distance for bbox
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a cylindrical volume
+    #[pyo3(signature = (namespace, center, min_z, max_z, radius, limit=100))]
+    fn query_within_cylinder(
+        &self,
+        namespace: &str,
+        center: &PyPoint,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let center_geo = spatio::Point::new(center.inner.x(), center.inner.y());
+        let results = handle_error(
+            self.db
+                .query_within_cylinder(namespace, center_geo, min_z, max_z, radius, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a 3D bounding box
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit=100))]
+    fn query_within_bbox_3d(
+        &self,
+        namespace: &str,
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(
+            self.db
+                .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata)
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a bounding box relative to another object
+    #[pyo3(signature = (namespace, object_id, width, height, limit=100))]
+    fn query_bbox_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        width: f64,
+        height: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(
+            self.db
+                .query_bbox_near_object(namespace, object_id, width, height, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata)
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a cylindrical volume relative to another object
+    #[pyo3(signature = (namespace, object_id, min_z, max_z, radius, limit=100))]
+    fn query_cylinder_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(
+            self.db
+                .query_cylinder_near_object(namespace, object_id, min_z, max_z, radius, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for (loc, dist) in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata, distance)
+                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Query objects within a 3D bounding box relative to another object
+    #[pyo3(signature = (namespace, object_id, width, height, depth, limit=100))]
+    fn query_bbox_3d_near_object(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        width: f64,
+        height: f64,
+        depth: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(
+            self.db
+                .query_bbox_3d_near_object(namespace, object_id, width, height, depth, limit),
+        )?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata)
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -386,6 +663,7 @@ fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPoint>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;
+    m.add_class::<PyTemporalPoint>()?;
     m.add_class::<PySetOptions>()?;
 
     // Add version

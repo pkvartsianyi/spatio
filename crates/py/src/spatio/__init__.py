@@ -27,6 +27,7 @@ from __future__ import annotations
 # Import the compiled Rust extension
 from spatio._spatio import Config as _Config
 from spatio._spatio import Point as _Point
+from spatio._spatio import TemporalPoint as _TemporalPoint
 from spatio._spatio import SetOptions as _SetOptions
 from spatio._spatio import Spatio as _Spatio
 from spatio._spatio import __version__
@@ -35,6 +36,7 @@ from spatio._spatio import __version__
 __all__ = [
     "Config",
     "Point",
+    "TemporalPoint",
     "SetOptions",
     "Spatio",
     "__version__",
@@ -43,6 +45,7 @@ __all__ = [
 # Type aliases for better API
 Spatio = _Spatio
 Point = _Point
+TemporalPoint = _TemporalPoint
 SetOptions = _SetOptions
 Config = _Config
 
