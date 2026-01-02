@@ -275,13 +275,18 @@ impl PySpatio {
         object_id: &str,
         trajectory: Vec<PyTemporalPoint>,
     ) -> PyResult<()> {
-        let core_trajectory: Vec<spatio::TemporalPoint> = trajectory
-            .into_iter()
-            .map(|tp| spatio::TemporalPoint {
+        let mut core_trajectory = Vec::with_capacity(trajectory.len());
+        for tp in trajectory {
+            if !tp.timestamp.is_finite() || tp.timestamp < 0.0 {
+                return Err(PyValueError::new_err(
+                    "Timestamp must be a finite, non-negative value",
+                ));
+            }
+            core_trajectory.push(spatio::TemporalPoint {
                 point: spatio::Point::new(tp.point.inner.x(), tp.point.inner.y()),
                 timestamp: UNIX_EPOCH + Duration::from_secs_f64(tp.timestamp),
-            })
-            .collect();
+            });
+        }
 
         handle_error(
             self.db
