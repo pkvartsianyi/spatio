@@ -80,26 +80,29 @@ class TestSpatio:
         nyc = spatio.Point(-74.0060, 40.7128)
         
         # Update with metadata
-        db.update_location("cities", "nyc", nyc, {"name": "New York"})
+        db.upsert("cities", "nyc", nyc, {"name": "New York"})
         
         # Query to verify
-        results = db.query_current_within_radius("cities", nyc, 1000.0, 10)
+        results = db.query_radius("cities", nyc, 1000.0, 10)
         assert len(results) == 1
-        obj_id, point, meta = results[0]
+        # Expect (obj_id, point, meta, distance)
+        obj_id, point, meta, distance = results[0]
         assert obj_id == "nyc"
         assert point.lon == -74.0060
         assert meta == {"name": "New York"}
+        assert distance < 1.0  # Should be 0 since it's the same point
 
     def test_update_location_no_metadata(self):
         """Test updating location without metadata"""
         db = spatio.Spatio.memory()
         nyc = spatio.Point(-74.0060, 40.7128)
         
-        db.update_location("cities", "nyc", nyc)
+        db.upsert("cities", "nyc", nyc)
         
-        results = db.query_current_within_radius("cities", nyc, 1000.0, 10)
+        results = db.query_radius("cities", nyc, 1000.0, 10)
         assert len(results) == 1
-        _, _, meta = results[0]
+        # Expect (obj_id, point, meta, distance)
+        _, _, meta, _ = results[0]
         assert meta is None
 
     def test_query_near_object(self):
@@ -108,11 +111,11 @@ class TestSpatio:
         nyc = spatio.Point(-74.0060, 40.7128)
         brooklyn = spatio.Point(-73.9442, 40.6782)
         
-        db.update_location("cities", "nyc", nyc, {"name": "NYC"})
-        db.update_location("cities", "bk", brooklyn, {"name": "Brooklyn"})
+        db.upsert("cities", "nyc", nyc, {"name": "NYC"})
+        db.upsert("cities", "bk", brooklyn, {"name": "Brooklyn"})
         
         # Query near NYC
-        results = db.query_near_object("cities", "nyc", 10000.0, 10)
+        results = db.query_near("cities", "nyc", 10000.0, 10)
         
         # Should find Brooklyn (NYC itself is excluded from near_object query usually, or included? 
         # Rust implementation of query_near_object usually excludes the object itself if it's based on KNN, 
@@ -125,7 +128,8 @@ class TestSpatio:
         assert len(results) >= 1
         
         found_bk = False
-        for obj_id, _, _ in results:
+        # Expect (obj_id, point, meta, distance)
+        for obj_id, _, _, _ in results:
             if obj_id == "bk":
                 found_bk = True
         assert found_bk
@@ -141,11 +145,11 @@ class TestSpatio:
         # currently uses system time for updates.
         
         p1 = spatio.Point(-74.0060, 40.7128)
-        db.update_location("vehicle", "truck1", p1, {"step": 1})
+        db.upsert("vehicle", "truck1", p1, {"step": 1})
         time.sleep(0.01)
         
         p2 = spatio.Point(-74.0040, 40.7150)
-        db.update_location("vehicle", "truck1", p2, {"step": 2})
+        db.upsert("vehicle", "truck1", p2, {"step": 2})
         time.sleep(0.01)
         
         end_time = time.time()
@@ -166,7 +170,7 @@ class TestSpatio:
         
         # Operations should fail after close
         with pytest.raises(RuntimeError, match=r"Database is closed"):
-            db.update_location("test", "obj", spatio.Point(0, 0))
+            db.upsert("test", "obj", spatio.Point(0, 0))
 
 if __name__ == "__main__":
     pytest.main([__file__])

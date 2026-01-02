@@ -116,66 +116,28 @@ impl DB {
         Self::open_with_config(":memory:", config)
     }
 
-    /// Update object's current location
-    pub fn update_location(
+    /// Upsert an object's location. If timestamp is None, uses SystemTime::now().
+    pub fn upsert(
         &self,
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
         metadata: serde_json::Value,
+        timestamp: Option<SystemTime>,
     ) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let timestamp = SystemTime::now();
+        let ts = timestamp.unwrap_or_else(SystemTime::now);
 
         // 1. Update hot state (replaces old position)
-        self.hot.update_location(
-            namespace,
-            object_id,
-            position.clone(),
-            metadata.clone(),
-            timestamp,
-        )?;
+        self.hot
+            .update_location(namespace, object_id, position.clone(), metadata.clone(), ts)?;
 
         // 2. Append to cold state
         self.cold
-            .append_update(namespace, object_id, position, metadata, timestamp)?;
-
-        Ok(())
-    }
-
-    /// Update an object's location with a specific timestamp (useful for backfilling)
-    pub fn update_location_at(
-        &self,
-        namespace: &str,
-        object_id: &str,
-        position: spatio_types::point::Point3d,
-        metadata: serde_json::Value,
-        timestamp: SystemTime,
-    ) -> Result<()> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(SpatioError::DatabaseClosed);
-        }
-
-        // 1. Update Hot State (Current Location)
-        // We only update hot state if this is a recent update (e.g. within last minute)
-        // or if it's newer than what we have.
-        // For simplicity in this version, we always update hot state if it's "current" enough.
-        // But really, hot state should reflect the *latest* known position.
-
-        self.hot.update_location(
-            namespace,
-            object_id,
-            position.clone(),
-            metadata.clone(),
-            timestamp,
-        )?;
-
-        // 2. Append to Cold State (History)
-        self.cold
-            .append_update(namespace, object_id, position, metadata, timestamp)?;
+            .append_update(namespace, object_id, position, metadata, ts)?;
 
         Ok(())
     }
@@ -189,25 +151,25 @@ impl DB {
     ) -> Result<()> {
         for tp in trajectory {
             let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
-            self.update_location_at(
+            self.upsert(
                 namespace,
                 object_id,
                 pos,
                 serde_json::json!({}),
-                tp.timestamp,
+                Some(tp.timestamp),
             )?;
         }
         Ok(())
     }
 
-    /// Query current locations within radius (HOT PATH)
-    pub fn query_current_within_radius(
+    /// Query objects within radius, always returning (Location, distance).
+    pub fn query_radius(
         &self,
         namespace: &str,
         center: &spatio_types::point::Point3d,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -217,7 +179,7 @@ impl DB {
     }
 
     /// Query current locations within a 2D bounding box (HOT PATH)
-    pub fn query_current_within_bbox(
+    pub fn query_bbox(
         &self,
         namespace: &str,
         min_x: f64,
@@ -253,7 +215,7 @@ impl DB {
     }
 
     /// Find k nearest neighbors in 3D (HOT PATH)
-    pub fn knn_3d(
+    pub fn knn(
         &self,
         namespace: &str,
         center: &spatio_types::point::Point3d,
@@ -286,14 +248,14 @@ impl DB {
             .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit))
     }
 
-    /// Query objects near another object (relative query)
-    pub fn query_near_object(
+    /// Query objects near another object (by key). returns (Location, distance).
+    pub fn query_near(
         &self,
         namespace: &str,
         object_id: &str,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<(CurrentLocation, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -305,7 +267,7 @@ impl DB {
             .ok_or(SpatioError::ObjectNotFound)?;
 
         // 2. Query around that position
-        self.query_current_within_radius(namespace, &target.position, radius, limit)
+        self.query_radius(namespace, &target.position, radius, limit)
     }
 
     /// Query objects within a bounding box relative to another object
@@ -330,7 +292,7 @@ impl DB {
         let half_height = height / 2.0;
         let center = &target.position;
 
-        self.query_current_within_bbox(
+        self.query_bbox(
             namespace,
             center.x() - half_width,
             center.y() - half_height,
@@ -416,7 +378,7 @@ impl DB {
             .get_current_location(namespace, object_id)
             .ok_or(SpatioError::ObjectNotFound)?;
 
-        self.knn_3d(namespace, &target.position, k)
+        self.knn(namespace, &target.position, k)
     }
 
     /// Query historical trajectory (COLD PATH)
@@ -475,29 +437,25 @@ mod tests {
         let pos1 = Point3d::new(10.0, 20.0, 0.0);
         let metadata1 = serde_json::json!({"engine": "on"});
 
-        db.update_location(namespace, object_id, pos1.clone(), metadata1.clone())
+        db.upsert(namespace, object_id, pos1.clone(), metadata1.clone(), None)
             .unwrap();
 
-        let results = db
-            .query_current_within_radius(namespace, &pos1, 1.0, 1)
-            .unwrap();
+        let results = db.query_radius(namespace, &pos1, 1.0, 1).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].object_id, object_id);
-        assert_eq!(results[0].position, pos1);
-        assert_eq!(results[0].metadata, metadata1);
+        assert_eq!(results[0].0.object_id, object_id);
+        assert_eq!(results[0].0.position, pos1);
+        assert_eq!(results[0].0.metadata, metadata1);
 
         let pos2 = Point3d::new(10.1, 20.1, 0.0);
         let metadata2 = serde_json::json!({"engine": "off"});
-        db.update_location(namespace, object_id, pos2.clone(), metadata2.clone())
+        db.upsert(namespace, object_id, pos2.clone(), metadata2.clone(), None)
             .unwrap();
 
-        let results = db
-            .query_current_within_radius(namespace, &pos2, 1.0, 1)
-            .unwrap();
+        let results = db.query_radius(namespace, &pos2, 1.0, 1).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].object_id, object_id);
-        assert_eq!(results[0].position, pos2); // Should be updated to pos2
-        assert_eq!(results[0].metadata, metadata2);
+        assert_eq!(results[0].0.object_id, object_id);
+        assert_eq!(results[0].0.position, pos2);
+        assert_eq!(results[0].0.metadata, metadata2);
     }
 
     #[test]
@@ -506,24 +464,24 @@ mod tests {
         let namespace = "vehicles";
 
         let car1_pos = Point3d::new(0.0, 0.0, 0.0);
-        db.update_location(namespace, "car1", car1_pos, serde_json::json!({}))
+        db.upsert(namespace, "car1", car1_pos, serde_json::json!({}), None)
             .unwrap();
 
         let car2_pos = Point3d::new(0.00001, 0.0, 0.0); // ~1 meter away
-        db.update_location(namespace, "car2", car2_pos, serde_json::json!({}))
+        db.upsert(namespace, "car2", car2_pos, serde_json::json!({}), None)
             .unwrap();
 
         let car3_pos = Point3d::new(10.0, 0.0, 0.0); // 10 units away
-        db.update_location(namespace, "car3", car3_pos, serde_json::json!({}))
+        db.upsert(namespace, "car3", car3_pos, serde_json::json!({}), None)
             .unwrap();
 
-        let near_car1 = db.query_near_object(namespace, "car1", 1.5, 10).unwrap();
+        let near_car1 = db.query_near(namespace, "car1", 1.5, 10).unwrap();
         assert_eq!(near_car1.len(), 2); // car1 and car2
-        assert!(near_car1.iter().any(|loc| loc.object_id == "car1"));
-        assert!(near_car1.iter().any(|loc| loc.object_id == "car2"));
-        assert!(!near_car1.iter().any(|loc| loc.object_id == "car3"));
+        assert!(near_car1.iter().any(|(loc, _)| loc.object_id == "car1"));
+        assert!(near_car1.iter().any(|(loc, _)| loc.object_id == "car2"));
+        assert!(!near_car1.iter().any(|(loc, _)| loc.object_id == "car3"));
 
-        let near_car1_limit_1 = db.query_near_object(namespace, "car1", 1.5, 1).unwrap();
+        let near_car1_limit_1 = db.query_near(namespace, "car1", 1.5, 1).unwrap();
         assert_eq!(near_car1_limit_1.len(), 1);
     }
 
@@ -535,27 +493,30 @@ mod tests {
 
         let start_time = SystemTime::now();
         sleep(Duration::from_millis(10));
-        db.update_location(
+        db.upsert(
             namespace,
             object_id,
             Point3d::new(0.0, 0.0, 0.0),
             serde_json::json!({"status": "takeoff"}),
+            None,
         )
         .unwrap();
         sleep(Duration::from_millis(10));
-        db.update_location(
+        db.upsert(
             namespace,
             object_id,
             Point3d::new(10.0, 10.0, 1000.0),
             serde_json::json!({"status": "climb"}),
+            None,
         )
         .unwrap();
         sleep(Duration::from_millis(10));
-        db.update_location(
+        db.upsert(
             namespace,
             object_id,
             Point3d::new(20.0, 20.0, 2000.0),
             serde_json::json!({"status": "cruise"}),
+            None,
         )
         .unwrap();
         sleep(Duration::from_millis(10));
@@ -588,14 +549,11 @@ mod tests {
         let metadata = serde_json::json!({"data": "data"});
 
         assert!(
-            db.update_location(namespace, object_id, pos.clone(), metadata)
+            db.upsert(namespace, object_id, pos.clone(), metadata, None)
                 .is_err()
         );
-        assert!(
-            db.query_current_within_radius(namespace, &pos, 1.0, 1)
-                .is_err()
-        );
-        assert!(db.query_near_object(namespace, object_id, 1.0, 1).is_err());
+        assert!(db.query_radius(namespace, &pos, 1.0, 1).is_err());
+        assert!(db.query_near(namespace, object_id, 1.0, 1).is_err());
         assert!(
             db.query_trajectory(
                 namespace,

@@ -12,7 +12,6 @@ pub use spatio_types::bbox::{
 };
 pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
 pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
-pub use spatio_types::trajectory::{Trajectory, Trajectory3D};
 
 /// Synchronization policy for persistence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

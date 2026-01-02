@@ -52,4 +52,3 @@ pub mod bbox;
 pub mod geo;
 pub mod point;
 pub mod polygon;
-pub mod trajectory;

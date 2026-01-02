@@ -19,7 +19,7 @@ pub struct CurrentLocation {
     pub namespace: String,
     pub position: Point3d,
     pub metadata: serde_json::Value,
-    pub last_updated: SystemTime,
+    pub timestamp: SystemTime,
 }
 
 /// Hot state: current locations only
@@ -28,8 +28,6 @@ pub struct CurrentLocation {
 /// - Frequent updates (replaces old position)
 /// - Spatial queries on current state
 /// - Lock-free concurrent access
-///
-/// Memory footprint: ~200 bytes per object
 pub struct HotState {
     /// One entry per object (keyed by "namespace::object_id")
     current_locations: DashMap<String, CurrentLocation>,
@@ -39,7 +37,6 @@ pub struct HotState {
 }
 
 impl HotState {
-    /// Create a new hot state
     pub fn new() -> Self {
         Self {
             current_locations: DashMap::new(),
@@ -70,7 +67,7 @@ impl HotState {
             namespace: namespace.to_string(),
             position,
             metadata: metadata.clone(),
-            last_updated: timestamp,
+            timestamp,
         };
 
         // Extract coordinates before moving new_location
@@ -88,7 +85,7 @@ impl HotState {
 
         let action = match self.current_locations.entry(full_key.clone()) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                if entry.get().last_updated <= timestamp {
+                if entry.get().timestamp <= timestamp {
                     let old = entry.insert(new_location);
                     UpdateAction::Updated(old)
                 } else {
@@ -138,20 +135,24 @@ impl HotState {
         self.current_locations.get(&key).map(|v| v.value().clone())
     }
 
-    /// Query objects within radius
+    /// Query objects within radius, returning (location, distance)
     pub fn query_within_radius(
         &self,
         namespace: &str,
         center: &Point3d,
         radius: f64,
         limit: usize,
-    ) -> Vec<CurrentLocation> {
+    ) -> Vec<(CurrentLocation, f64)> {
         let spatial_idx = self.spatial_index.read();
         let results = spatial_idx.query_within_sphere(namespace, center, radius, limit);
 
         results
             .into_iter()
-            .filter_map(|(key, _dist)| self.current_locations.get(&key).map(|v| v.value().clone()))
+            .filter_map(|(key, dist)| {
+                self.current_locations
+                    .get(&key)
+                    .map(|v| (v.value().clone(), dist))
+            })
             .collect()
     }
 
@@ -483,7 +484,7 @@ mod tests {
 
         // Should find truck_001 and truck_002, not truck_003
         assert!(nearby.len() >= 2);
-        assert!(nearby.iter().any(|l| l.object_id == "truck_001"));
-        assert!(nearby.iter().any(|l| l.object_id == "truck_002"));
+        assert!(nearby.iter().any(|(l, _)| l.object_id == "truck_001"));
+        assert!(nearby.iter().any(|(l, _)| l.object_id == "truck_002"));
     }
 }

@@ -24,11 +24,12 @@ fn test_3d_sphere_query_scales_sublinearly() {
             let lon = -74.0 + ((i / 100) as f64 * 0.001);
             let alt = (i as f64 * 10.0) % 10000.0;
             let point = Point3d::new(lon, lat, alt);
-            db.update_location(
+            db.upsert(
                 "aircraft",
                 &format!("data_{}", i),
                 point,
                 serde_json::json!({}),
+                None,
             )
             .unwrap();
         }
@@ -38,9 +39,7 @@ fn test_3d_sphere_query_scales_sublinearly() {
         let radius = 10000.0;
 
         let start = Instant::now();
-        let results = db
-            .query_current_within_radius("aircraft", &center, radius, 100)
-            .unwrap();
+        let results = db.query_radius("aircraft", &center, radius, 100).unwrap();
         let elapsed = start.elapsed();
 
         query_times_ms.push(elapsed.as_secs_f64() * 1000.0);
@@ -83,11 +82,12 @@ fn test_3d_cylinder_query_altitude_pruning() {
         let lon = -74.0 + ((i / 100) as f64 * 0.001);
         let alt = (i as f64 / 10000.0) * 20000.0; // 0 to 20,000m
         let point = Point3d::new(lon, lat, alt);
-        db.update_location(
+        db.upsert(
             "aircraft",
             &format!("data_{}", i),
             point,
             serde_json::json!({}),
+            None,
         )
         .unwrap();
     }
@@ -150,11 +150,12 @@ fn test_3d_knn_with_large_dataset() {
         let lon = -74.0 + ((i / 50) as f64 * 0.002);
         let alt = (i as f64 * 5.0) % 8000.0;
         let point = Point3d::new(lon, lat, alt);
-        db.update_location(
+        db.upsert(
             "points",
             &format!("data_{}", i),
             point,
             serde_json::json!({}),
+            None,
         )
         .unwrap();
     }
@@ -163,7 +164,7 @@ fn test_3d_knn_with_large_dataset() {
 
     // KNN should be fast even with 5k points
     let start = Instant::now();
-    let neighbors = db.knn_3d("points", &query_point, 10).unwrap();
+    let neighbors = db.knn("points", &query_point, 10).unwrap();
     let elapsed = start.elapsed();
 
     println!(
@@ -199,11 +200,12 @@ fn test_3d_sphere_query_correctness() {
 
     for (i, &(lon, lat, alt)) in test_points.iter().enumerate() {
         let point = Point3d::new(lon, lat, alt);
-        db.update_location(
+        db.upsert(
             "test",
             &format!("point_{}", i),
             point,
             serde_json::json!({}),
+            None,
         )
         .unwrap();
     }
@@ -211,9 +213,7 @@ fn test_3d_sphere_query_correctness() {
     let center = Point3d::new(-74.0, 40.0, 1000.0);
     let radius = 2000.0;
 
-    let results = db
-        .query_current_within_radius("test", &center, radius, 10)
-        .unwrap();
+    let results = db.query_radius("test", &center, radius, 10).unwrap();
 
     // Should find points 0, 1, and 2 (within ~2km including altitude)
     assert!(
