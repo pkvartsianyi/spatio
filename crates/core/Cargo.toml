@@ -10,6 +10,7 @@ homepage = "https://github.com/pkvartsianyi/spatio"
 documentation = "https://docs.rs/spatio"
 keywords = ["spatial", "database", "geospatial", "embedded", "temporal"]
 categories = ["database-implementations", "science::geo"]
+readme = "../../README.md"
 
 [lib]
 name = "spatio"

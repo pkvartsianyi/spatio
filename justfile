@@ -12,7 +12,7 @@ test:
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types --all-targets --all-features -- -D warnings
+    cargo clippy -p spatio -p spatio-types -p spatio-py --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test

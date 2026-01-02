@@ -60,6 +60,9 @@ jobs:
       - name: Run clippy (spatio)
         run: cargo clippy -p spatio --all-targets --all-features -- -D warnings
 
+      - name: Run clippy (spatio-py)
+        run: cargo clippy -p spatio-py --all-targets -- -D warnings
+
       # Rust building
       - name: Build spatio-types
         run: cargo build -p spatio-types --verbose
