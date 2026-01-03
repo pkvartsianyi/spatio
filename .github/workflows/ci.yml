@@ -177,19 +177,3 @@ jobs:
         run: cargo doc -p spatio -p spatio-types --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
-
-  # Run benchmarks (don't fail on performance regression, just run them)
-  benchmarks:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run benchmarks
-        run: cargo bench -p spatio --no-fail-fast -- --test
