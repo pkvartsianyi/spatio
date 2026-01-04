@@ -4,7 +4,7 @@ A lightweight TCP server for remote access to the Spatio spatio-temporal databas
 
 ## Overview
 
-The Spatio Server provides a high-performance, framed TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It supports the full Spatio API via a custom binary protocol (SBP).
+The Spatio Server provides a high-performance, framed TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It supports the full Spatio API via a custom RPC protocol.
 
 ## Running the Server
 

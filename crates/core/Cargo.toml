@@ -42,7 +42,7 @@ tokio = { version = "1.37", features = [
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 tokio-stream = { version = "0.1", optional = true }
 futures = { version = "0.3", optional = true }
-spatio-protocol = { workspace = true, optional = true }
+spatio-rpc = { workspace = true, optional = true }
 anyhow = { version = "1.0", optional = true }
 
 # Optional dependencies
@@ -67,7 +67,7 @@ remote = [
     "dep:tokio-util",
     "dep:tokio-stream",
     "dep:futures",
-    "dep:spatio-protocol",
+    "dep:spatio-rpc",
     "dep:anyhow",
 ]
 full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync", "remote"]

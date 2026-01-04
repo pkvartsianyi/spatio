@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use spatio::Spatio;
-use spatio_server::protocol::{Command, ResponseStatus};
-use spatio_server::{run_server, SBPClientCodec};
+use spatio_server::rpc::{Command, ResponseStatus};
+use spatio_server::{run_server, RpcClientCodec};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -68,7 +68,7 @@ async fn test_idle_timeout() -> anyhow::Result<()> {
     // let's assume the implementation is correct based on the code.
     // However, we CAN test that a valid command works.
 
-    let mut framed = Framed::new(stream, SBPClientCodec);
+    let mut framed = Framed::new(stream, RpcClientCodec);
     let cmd = Command::Stats;
     framed.send(cmd).await?;
 

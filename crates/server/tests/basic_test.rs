@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use spatio::{Point3d, Spatio};
-use spatio_server::protocol::{Command, ResponsePayload, ResponseStatus};
-use spatio_server::{run_server, SBPClientCodec};
+use spatio_server::rpc::{Command, ResponsePayload, ResponseStatus};
+use spatio_server::{run_server, RpcClientCodec};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -30,7 +30,7 @@ async fn test_rpc_lifecycle() -> anyhow::Result<()> {
 
     // Connect client
     let stream = TcpStream::connect(bound_addr).await?;
-    let mut framed = Framed::new(stream, SBPClientCodec);
+    let mut framed = Framed::new(stream, RpcClientCodec);
 
     // Send UPSERT
     let upsert = Command::Upsert {
@@ -90,7 +90,7 @@ async fn test_trajectory_rpc() -> anyhow::Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     let stream = TcpStream::connect(bound_addr).await?;
-    let mut framed = Framed::new(stream, SBPClientCodec);
+    let mut framed = Framed::new(stream, RpcClientCodec);
 
     // Send InsertTrajectory
     let tp = spatio_types::point::TemporalPoint {

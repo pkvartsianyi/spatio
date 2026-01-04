@@ -133,9 +133,9 @@ pub enum ResponsePayload {
     Error(String),
 }
 
-pub struct SBPServerCodec;
+pub struct RpcServerCodec;
 
-impl Decoder for SBPServerCodec {
+impl Decoder for RpcServerCodec {
     type Item = Command;
     type Error = anyhow::Error;
 
@@ -168,7 +168,7 @@ impl Decoder for SBPServerCodec {
     }
 }
 
-impl Encoder<(ResponseStatus, ResponsePayload)> for SBPServerCodec {
+impl Encoder<(ResponseStatus, ResponsePayload)> for RpcServerCodec {
     type Error = anyhow::Error;
 
     fn encode(
@@ -189,9 +189,9 @@ impl Encoder<(ResponseStatus, ResponsePayload)> for SBPServerCodec {
     }
 }
 
-pub struct SBPClientCodec;
+pub struct RpcClientCodec;
 
-impl Decoder for SBPClientCodec {
+impl Decoder for RpcClientCodec {
     type Item = (ResponseStatus, ResponsePayload);
     type Error = anyhow::Error;
 
@@ -229,7 +229,7 @@ impl Decoder for SBPClientCodec {
     }
 }
 
-impl Encoder<Command> for SBPClientCodec {
+impl Encoder<Command> for RpcClientCodec {
     type Error = anyhow::Error;
 
     fn encode(&mut self, item: Command, dst: &mut BytesMut) -> Result<(), Self::Error> {

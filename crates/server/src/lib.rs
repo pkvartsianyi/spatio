@@ -10,8 +10,8 @@ use tracing::{debug, error, info};
 pub mod handler;
 
 use crate::handler::Handler;
-pub use spatio_protocol as protocol;
-pub use spatio_protocol::{SBPClientCodec, SBPServerCodec};
+pub use spatio_rpc as rpc;
+pub use spatio_rpc::{RpcClientCodec, RpcServerCodec};
 use std::future::Future;
 use tokio::time::{timeout, Duration};
 
@@ -62,7 +62,7 @@ pub async fn run_server(
 }
 
 pub async fn handle_connection(socket: TcpStream, state: Arc<AppState>) -> anyhow::Result<()> {
-    let mut framed = Framed::new(socket, SBPServerCodec);
+    let mut framed = Framed::new(socket, RpcServerCodec);
 
     while let Ok(Some(request)) = timeout(IDLE_TIMEOUT, framed.next()).await {
         match request {

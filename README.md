@@ -148,7 +148,7 @@ Spatio includes a dedicated server crate (`spatio-server`) for multi-process or 
 cargo run -p spatio-server
 ```
 
-Clients can then connect via direct TCP using the Spatio Binary Protocol (SBP).
+Clients can then connect via direct TCP using the Spatio RPC protocol.
 
 ## Documentation
 

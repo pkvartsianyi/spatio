@@ -1,8 +1,8 @@
 [package]
-name = "spatio-protocol"
+name = "spatio-rpc"
 version = "0.1.0"
 edition = "2021"
-description = "Spatio Binary Protocol (SBP) framing and codecs"
+description = "Spatio RPC framing and codecs"
 license = "MIT"
 
 [dependencies]

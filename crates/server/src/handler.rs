@@ -1,4 +1,4 @@
-use crate::protocol::{Command, ResponsePayload, ResponseStatus};
+use crate::rpc::{Command, ResponsePayload, ResponseStatus};
 use spatio::Spatio;
 use std::sync::Arc;
 
@@ -167,7 +167,7 @@ impl Handler {
                 Ok(updates) => {
                     let formatted = updates
                         .into_iter()
-                        .map(|upd| crate::protocol::LocationUpdate {
+                        .map(|upd| crate::rpc::LocationUpdate {
                             timestamp: upd.timestamp,
                             position: upd.position,
                             metadata: serde_json::to_vec(&upd.metadata).unwrap_or_default(),

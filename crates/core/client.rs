@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::SinkExt;
-use spatio_protocol::{Command, ResponsePayload, ResponseStatus, SBPClientCodec};
+use spatio_rpc::{Command, ResponsePayload, ResponseStatus, RpcClientCodec};
 use spatio_types::config::SetOptions;
 use spatio_types::point::{Point3d, TemporalPoint};
 use spatio_types::stats::DbStats;
@@ -13,7 +13,7 @@ use tokio_util::codec::Framed;
 pub struct SpatioClient {
     host: String,
     port: u16,
-    inner: Mutex<Option<Framed<TcpStream, SBPClientCodec>>>,
+    inner: Mutex<Option<Framed<TcpStream, RpcClientCodec>>>,
     timeout: Duration,
 }
 
@@ -32,7 +32,7 @@ impl SpatioClient {
         self
     }
 
-    async fn get_connection(&self) -> Result<Framed<TcpStream, SBPClientCodec>> {
+    async fn get_connection(&self) -> Result<Framed<TcpStream, RpcClientCodec>> {
         let mut inner = self.inner.lock().await;
 
         if let Some(framed) = inner.take() {
@@ -41,7 +41,7 @@ impl SpatioClient {
 
         let addr = format!("{}:{}", self.host, self.port);
         let stream = tokio::time::timeout(self.timeout, TcpStream::connect(&addr)).await??;
-        Ok(Framed::new(stream, SBPClientCodec))
+        Ok(Framed::new(stream, RpcClientCodec))
     }
 
     async fn call(&self, cmd: Command) -> Result<ResponsePayload> {
