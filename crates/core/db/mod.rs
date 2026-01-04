@@ -24,7 +24,7 @@ pub use namespace::{Namespace, NamespaceManager};
 pub use sync::SyncDB;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Embedded spatio-temporal database.
 ///
@@ -38,6 +38,7 @@ pub struct DB {
     pub(crate) hot: Arc<HotState>,
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
+    pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // Will be used for snapshot checkpoints
     pub(crate) config: Config,
 }
@@ -102,6 +103,7 @@ impl DB {
             hot,
             cold,
             closed: Arc::new(AtomicBool::new(false)),
+            ops_count: Arc::new(AtomicU64::new(0)),
             config,
         })
     }
@@ -141,6 +143,8 @@ impl DB {
         // 2. Append to cold state
         self.cold
             .append_update(namespace, object_id, position, metadata, ts)?;
+
+        self.ops_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
@@ -432,9 +436,9 @@ impl DB {
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0,
-            operations_count: 0,
-            size_bytes: 0,
+            expired_count: 0, // Placeholder as we don't track expired cleanup count globally yet
+            operations_count: self.ops_count.load(Ordering::Relaxed),
+            size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,
             cold_state_trajectories: cold_trajectories,
             cold_state_buffer_bytes: cold_buffer_bytes,

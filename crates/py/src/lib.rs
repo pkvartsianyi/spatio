@@ -724,18 +724,10 @@ impl PySpatioClient {
     #[new]
     #[pyo3(signature = (host="127.0.0.1", port=3000))]
     fn new(host: &str, port: u16) -> PyResult<Self> {
-        let addr = format!("{}:{}", host, port);
-        let framed = RUNTIME.block_on(async {
-            let stream = TcpStream::connect(&addr).await.map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to connect to {}: {}", addr, e))
-            })?;
-            Ok::<_, PyErr>(Framed::new(stream, SBPClientCodec))
-        })?;
-
         Ok(PySpatioClient {
             host: host.to_string(),
             port,
-            inner: Arc::new(tokio::sync::Mutex::new(Some(framed))),
+            inner: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 

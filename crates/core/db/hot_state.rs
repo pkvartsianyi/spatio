@@ -102,9 +102,8 @@ impl HotState {
             UpdateAction::Updated(old_location) => {
                 // Update spatial index
                 // Remove old position
-                let old_key = Self::make_key(namespace, object_id);
                 let mut spatial_idx = self.spatial_index.write();
-                spatial_idx.remove_entry(namespace, &old_key);
+                spatial_idx.remove_entry(namespace, &full_key);
 
                 // Insert new position
                 spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
