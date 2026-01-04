@@ -3,7 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::config::{Config, DbStats, TemporalPoint};
+use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use std::path::Path;
 
@@ -116,20 +116,23 @@ impl DB {
         Self::open_with_config(":memory:", config)
     }
 
-    /// Upsert an object's location. If timestamp is None, uses SystemTime::now().
+    /// Upsert an object's location.
     pub fn upsert(
         &self,
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
         metadata: serde_json::Value,
-        timestamp: Option<SystemTime>,
+        opts: Option<SetOptions>,
     ) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let ts = timestamp.unwrap_or_else(SystemTime::now);
+        let ts = opts
+            .as_ref()
+            .and_then(|o| o.timestamp)
+            .unwrap_or_else(SystemTime::now);
 
         // 1. Update hot state (replaces old position)
         self.hot
@@ -139,6 +142,23 @@ impl DB {
         self.cold
             .append_update(namespace, object_id, position, metadata, ts)?;
 
+        Ok(())
+    }
+
+    /// Get current location of an object.
+    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.get_current_location(namespace, object_id))
+    }
+
+    /// Delete an object from the database.
+    pub fn delete(&self, namespace: &str, object_id: &str) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.hot.remove_object(namespace, object_id);
         Ok(())
     }
 
@@ -156,7 +176,10 @@ impl DB {
                 object_id,
                 pos,
                 serde_json::json!({}),
-                Some(tp.timestamp),
+                Some(SetOptions {
+                    timestamp: Some(tp.timestamp),
+                    ..Default::default()
+                }),
             )?;
         }
         Ok(())

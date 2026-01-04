@@ -13,7 +13,7 @@ use crate::error::Result;
 use parking_lot::RwLock;
 
 /// Current location of a tracked object
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CurrentLocation {
     pub object_id: String,
     pub namespace: String,

@@ -4,7 +4,7 @@
 //! Since `DB` is now inherently thread-safe (using DashMap and internal locking),
 //! `SyncDB` is just a lightweight wrapper for API compatibility.
 
-use crate::config::{Config, DbStats};
+use crate::config::{Config, DbStats, SetOptions};
 use crate::db::{CurrentLocation, DB, LocationUpdate};
 use crate::error::Result;
 use std::path::Path;
@@ -57,10 +57,20 @@ impl SyncDB {
         object_id: &str,
         position: spatio_types::point::Point3d,
         metadata: serde_json::Value,
-        timestamp: Option<SystemTime>,
+        opts: Option<SetOptions>,
     ) -> Result<()> {
         self.inner
-            .upsert(namespace, object_id, position, metadata, timestamp)
+            .upsert(namespace, object_id, position, metadata, opts)
+    }
+
+    /// Get current location of an object.
+    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<CurrentLocation>> {
+        self.inner.get(namespace, object_id)
+    }
+
+    /// Delete an object from the database.
+    pub fn delete(&self, namespace: &str, object_id: &str) -> Result<()> {
+        self.inner.delete(namespace, object_id)
     }
 
     /// Query objects within radius (returns location and distance)
