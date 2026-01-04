@@ -5,14 +5,14 @@ default:
 # =============
 
 build:
-    cargo build -p spatio -p spatio-types --release
+    cargo build -p spatio -p spatio-types -p spatio-server --release
 
 test:
-    cargo test -p spatio -p spatio-types --all-features
+    cargo test -p spatio -p spatio-types -p spatio-server --all-features
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-py --all-targets --all-features -- -D warnings
+    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-py --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -21,7 +21,7 @@ clean:
     cargo clean
 
 doc:
-    cargo doc -p spatio -p spatio-types --no-deps --all-features --open
+    cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features --open
 
 # Python commands (delegate to py-spatio)
 # ======================================
@@ -112,11 +112,11 @@ security-audit:
     cd crates/py && bandit -r src/ && safety check
 
 benchmarks:
-    cargo bench -p spatio
+    cargo bench -p spatio -p spatio-server
     cd crates/py && just bench
 
 coverage:
-    cargo tarpaulin --verbose --all-features -p spatio -p spatio-types --timeout 120 --out html
+    cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server --timeout 120 --out html
     cd crates/py && just coverage
 
 test-examples:

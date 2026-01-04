@@ -58,16 +58,10 @@ pub use config::{HistoryEntry, HistoryEventKind};
 
 pub use db::{Namespace, NamespaceManager};
 
-// Re-export validation and GeoJSON utilities
-pub use compute::geojson;
+// Re-export validation utilities
 pub use compute::validation;
 
-#[cfg(feature = "aof")]
-pub use storage::{AOFCommand, PersistenceLog};
-pub use storage::{MemoryBackend, StorageBackend, StorageOp, StorageStats};
-
-#[cfg(feature = "snapshot")]
-pub use storage::{SnapshotConfig, SnapshotFile};
+pub use storage::LocationUpdate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -86,9 +80,7 @@ pub mod prelude {
 
     pub use crate::{Namespace, NamespaceManager};
 
-    pub use crate::{MemoryBackend, StorageBackend};
-
-    pub use crate::{geojson, validation};
+    pub use crate::validation;
 
     pub use std::time::Duration;
 }

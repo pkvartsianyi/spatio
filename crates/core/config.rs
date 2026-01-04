@@ -236,12 +236,14 @@ impl Default for Config {
 /// TTL is **lazy/passive**: expired items are filtered on read operations
 /// (`get()`, spatial queries) but remain in storage until manually cleaned up
 /// with `cleanup_expired()` or overwritten.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SetOptions {
     /// Time-to-live for this item
     pub ttl: Option<Duration>,
     /// Absolute expiration time (takes precedence over TTL)
     pub expires_at: Option<SystemTime>,
+    /// Optional timestamp for the update (defaults to now if None)
+    pub timestamp: Option<SystemTime>,
 }
 
 impl SetOptions {
@@ -262,6 +264,7 @@ impl SetOptions {
         Self {
             ttl: Some(ttl),
             expires_at: None,
+            timestamp: None,
         }
     }
 
@@ -275,6 +278,15 @@ impl SetOptions {
         Self {
             ttl: None,
             expires_at: Some(expires_at),
+            timestamp: None,
+        }
+    }
+
+    pub fn with_timestamp(timestamp: SystemTime) -> Self {
+        Self {
+            ttl: None,
+            expires_at: None,
+            timestamp: Some(timestamp),
         }
     }
 

@@ -55,6 +55,11 @@ if [[ ! -f "crates/types/Cargo.toml" ]]; then
     exit 1
 fi
 
+if [[ ! -f "crates/server/Cargo.toml" ]]; then
+    print_error "crates/server/Cargo.toml not found"
+    exit 1
+fi
+
 # Extract version using cargo metadata for robust parsing
 CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
     grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
@@ -62,7 +67,8 @@ PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
     grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
 TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
     grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-
+SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
 # Fallback to awk if cargo metadata fails
 if [[ -z "$CORE_VERSION" ]]; then
     CORE_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
@@ -73,15 +79,20 @@ fi
 if [[ -z "$TYPES_VERSION" ]]; then
     TYPES_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
 fi
+if [[ -z "$SERVER_VERSION" ]]; then
+    SERVER_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/server/Cargo.toml)
+fi
 
 # Get latest git tags
 LATEST_CORE_TAG=$(git tag -l "core-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_PYTHON_TAG=$(git tag -l "python-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_TYPES_TAG=$(git tag -l "types-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_SERVER_TAG=$(git tag -l "server-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 
 LATEST_CORE_TAG_VERSION=${LATEST_CORE_TAG#core-v}
 LATEST_PYTHON_TAG_VERSION=${LATEST_PYTHON_TAG#python-v}
 LATEST_TYPES_TAG_VERSION=${LATEST_TYPES_TAG#types-v}
+LATEST_SERVER_TAG_VERSION=${LATEST_SERVER_TAG#server-v}
 
 print_info "Version Check Report"
 print_info "==================="
@@ -89,10 +100,12 @@ print_info ""
 print_info "spatio (core) version:  $CORE_VERSION"
 print_info "spatio-py version:      $PYTHON_VERSION"
 print_info "spatio-types version:   $TYPES_VERSION"
+print_info "spatio-server version:  $SERVER_VERSION"
 print_info ""
 print_info "Latest core tag:        $LATEST_CORE_TAG"
 print_info "Latest Python tag:      $LATEST_PYTHON_TAG"
 print_info "Latest types tag:       $LATEST_TYPES_TAG"
+print_info "Latest server tag:      $LATEST_SERVER_TAG"
 print_info ""
 
 print_info "Version Status:"
@@ -140,6 +153,20 @@ else
     print_info "No types-specific tags found. Ready for first types release."
 fi
 
+# Check server version against its tag
+if [[ "$LATEST_SERVER_TAG" != "none" ]]; then
+    if [[ "$SERVER_VERSION" == "$LATEST_SERVER_TAG_VERSION" ]]; then
+        print_success "spatio-server version matches latest tag"
+    elif [[ "$SERVER_VERSION" > "$LATEST_SERVER_TAG_VERSION" ]]; then
+        print_info "spatio-server version ($SERVER_VERSION) is newer than latest tag ($LATEST_SERVER_TAG_VERSION)"
+        print_info "✓ Ready for new server release"
+    else
+        print_warning "spatio-server version ($SERVER_VERSION) is older than latest tag ($LATEST_SERVER_TAG_VERSION)"
+    fi
+else
+    print_info "No server-specific tags found. Ready for first server release."
+fi
+
 # Check workspace dependency consistency
 print_info ""
 print_info "Workspace Dependencies:"
@@ -173,6 +200,7 @@ print_info "Available commands:"
 print_info "  Core only:   ./scripts/bump-version.sh core <version>"
 print_info "  Python only: ./scripts/bump-version.sh python <version>"
 print_info "  Types only:  ./scripts/bump-version.sh types <version>"
+print_info "  Server only: ./scripts/bump-version.sh server <version>"
 print_info "  All:         ./scripts/bump-version.sh all <version>"
 print_info ""
 print_info "Dry run:       ./scripts/bump-version.sh <package> <version> --dry-run"

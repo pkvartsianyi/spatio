@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "old_truck",
         past_pos,
         serde_json::json!({"data": "Historical Data"}),
-        Some(past_time),
+        Some(spatio::SetOptions::with_timestamp(past_time)),
     )?;
     println!("   Ingested historical data point\n");
 

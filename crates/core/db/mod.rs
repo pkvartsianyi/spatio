@@ -3,7 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
-use crate::config::{Config, DbStats, TemporalPoint};
+use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use std::path::Path;
 
@@ -24,7 +24,7 @@ pub use namespace::{Namespace, NamespaceManager};
 pub use sync::SyncDB;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Embedded spatio-temporal database.
 ///
@@ -38,6 +38,7 @@ pub struct DB {
     pub(crate) hot: Arc<HotState>,
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
+    pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // Will be used for snapshot checkpoints
     pub(crate) config: Config,
 }
@@ -102,6 +103,7 @@ impl DB {
             hot,
             cold,
             closed: Arc::new(AtomicBool::new(false)),
+            ops_count: Arc::new(AtomicU64::new(0)),
             config,
         })
     }
@@ -116,20 +118,23 @@ impl DB {
         Self::open_with_config(":memory:", config)
     }
 
-    /// Upsert an object's location. If timestamp is None, uses SystemTime::now().
+    /// Upsert an object's location.
     pub fn upsert(
         &self,
         namespace: &str,
         object_id: &str,
         position: spatio_types::point::Point3d,
         metadata: serde_json::Value,
-        timestamp: Option<SystemTime>,
+        opts: Option<SetOptions>,
     ) -> Result<()> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
 
-        let ts = timestamp.unwrap_or_else(SystemTime::now);
+        let ts = opts
+            .as_ref()
+            .and_then(|o| o.timestamp)
+            .unwrap_or_else(SystemTime::now);
 
         // 1. Update hot state (replaces old position)
         self.hot
@@ -139,6 +144,25 @@ impl DB {
         self.cold
             .append_update(namespace, object_id, position, metadata, ts)?;
 
+        self.ops_count.fetch_add(1, Ordering::Relaxed);
+
+        Ok(())
+    }
+
+    /// Get current location of an object.
+    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.get_current_location(namespace, object_id))
+    }
+
+    /// Delete an object from the database.
+    pub fn delete(&self, namespace: &str, object_id: &str) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.hot.remove_object(namespace, object_id);
         Ok(())
     }
 
@@ -156,7 +180,10 @@ impl DB {
                 object_id,
                 pos,
                 serde_json::json!({}),
-                Some(tp.timestamp),
+                Some(SetOptions {
+                    timestamp: Some(tp.timestamp),
+                    ..Default::default()
+                }),
             )?;
         }
         Ok(())
@@ -409,9 +436,9 @@ impl DB {
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0,
-            operations_count: 0,
-            size_bytes: 0,
+            expired_count: 0, // Placeholder as we don't track expired cleanup count globally yet
+            operations_count: self.ops_count.load(Ordering::Relaxed),
+            size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,
             cold_state_trajectories: cold_trajectories,
             cold_state_buffer_bytes: cold_buffer_bytes,
