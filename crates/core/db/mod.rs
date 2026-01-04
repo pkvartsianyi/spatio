@@ -53,11 +53,6 @@ impl DB {
         crate::builder::DBBuilder::new()
     }
 
-    #[cfg(feature = "remote")]
-    pub fn server<S: Into<String>>(host: S) -> crate::builder::RemoteBuilder {
-        crate::builder::RemoteBuilder::new(host.into())
-    }
-
     /// Open or create a database with custom configuration.
     pub fn open_with_config<P: AsRef<Path>>(path: P, config: Config) -> Result<Self> {
         let path_ref = path.as_ref();

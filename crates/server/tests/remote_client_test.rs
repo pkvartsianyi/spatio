@@ -1,4 +1,5 @@
 use spatio::prelude::*;
+use spatio_client::SpatioClient;
 use spatio_types::point::Point3d;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -30,10 +31,8 @@ async fn test_remote_client_ops() -> anyhow::Result<()> {
     sleep(Duration::from_millis(200)).await;
 
     // 2. Connect with SpatioClient
-    let client = Spatio::server("127.0.0.1")
-        .port(bound_addr.port())
-        .connect()
-        .await?;
+    let client = SpatioClient::new("127.0.0.1".to_string(), bound_addr.port())
+        .with_timeout(Duration::from_secs(10));
 
     // 3. Perform operations
     let nyc = Point3d::new(-74.0060, 40.7128, 0.0);

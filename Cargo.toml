@@ -6,6 +6,7 @@ members = [
     "crates/types",
     "crates/server",
     "crates/rpc",
+    "crates/client",
 ]
 
 [workspace.package]
@@ -46,6 +47,7 @@ pyo3 = { version = "0.27.1", features = ["extension-module"] }
 # Workspace crates
 spatio-types = { version = "0.1.10", path = "crates/types" }
 spatio-rpc = { version = "0.1.0", path = "crates/rpc" }
+spatio-client = { version = "0.1.0", path = "crates/client" }
 
 # Dev dependencies
 criterion = "0.7.0"

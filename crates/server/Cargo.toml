@@ -14,7 +14,7 @@ name = "spatio-server"
 path = "src/main.rs"
 
 [dependencies]
-spatio = { path = "../core", features = ["remote"] }
+spatio = { path = "../core" }
 spatio-types = { path = "../types" }
 spatio-rpc = { path = "../rpc" }
 tokio = { version = "1.37", features = ["full"] }
@@ -33,3 +33,4 @@ tokio-stream = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
+spatio-client = { path = "../client" }

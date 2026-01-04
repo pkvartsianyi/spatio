@@ -1,7 +1,4 @@
-//! Database builder for flexible configuration
-//!
-//! This module provides a builder pattern for creating databases with
-//! advanced configuration options including custom persistence paths.
+//! Database builder
 
 use crate::config::Config;
 use crate::db::DB;
@@ -60,49 +57,8 @@ impl DBBuilder {
         } else if let Some(path) = self.path {
             DB::open_with_config(path, self.config)
         } else {
-            // Default to memory if no path provided but in_memory is false (shouldn't happen with current API usage but safe fallback)
             DB::memory_with_config(self.config)
         }
-    }
-
-    /// Connect to a remote Spatio server.
-    #[cfg(feature = "remote")]
-    pub fn server<S: Into<String>>(host: S) -> RemoteBuilder {
-        RemoteBuilder::new(host.into())
-    }
-}
-
-/// Builder for remote server connection.
-#[cfg(feature = "remote")]
-#[derive(Debug)]
-pub struct RemoteBuilder {
-    host: String,
-    port: u16,
-    timeout: std::time::Duration,
-}
-
-#[cfg(feature = "remote")]
-impl RemoteBuilder {
-    pub fn new(host: String) -> Self {
-        Self {
-            host,
-            port: 3000,
-            timeout: std::time::Duration::from_secs(10),
-        }
-    }
-
-    pub fn port(mut self, port: u16) -> Self {
-        self.port = port;
-        self
-    }
-
-    pub fn timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    pub async fn connect(self) -> Result<crate::client::SpatioClient> {
-        Ok(crate::client::SpatioClient::new(self.host, self.port).with_timeout(self.timeout))
     }
 }
 

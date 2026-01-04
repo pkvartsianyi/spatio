@@ -28,25 +28,17 @@
 //! ```
 
 pub mod builder;
-#[cfg(feature = "remote")]
-pub mod client;
 pub mod compute;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod storage;
 
 pub use builder::DBBuilder;
-#[cfg(feature = "remote")]
-pub use builder::RemoteBuilder;
 pub use db::DB;
 pub use error::{Result, SpatioError};
 
 #[cfg(feature = "sync")]
 pub use db::SyncDB;
-
-#[cfg(feature = "remote")]
-pub use client::SpatioClient;
 
 pub type Spatio = DB;
 
@@ -65,10 +57,7 @@ pub use config::{HistoryEntry, HistoryEventKind};
 
 pub use db::{Namespace, NamespaceManager};
 
-// Re-export validation utilities
 pub use compute::validation;
-
-pub use storage::LocationUpdate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -79,9 +68,6 @@ pub mod prelude {
 
     #[cfg(feature = "sync")]
     pub use crate::SyncDB;
-
-    #[cfg(feature = "remote")]
-    pub use crate::{RemoteBuilder, SpatioClient};
 
     pub use crate::{Point, Polygon};
     pub use geo::Rect;
