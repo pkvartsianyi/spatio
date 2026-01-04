@@ -148,7 +148,7 @@ Spatio includes a dedicated server crate (`spatio-server`) for multi-process or 
 cargo run -p spatio-server
 ```
 
-Clients can then connect via the Python `SpatioClient` or direct TCP.
+Clients can then connect via direct TCP using the Spatio Binary Protocol (SBP).
 
 ## Documentation
 

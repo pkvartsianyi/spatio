@@ -4,7 +4,6 @@
 //! from the `spatio-types` crate for convenience.
 use bytes::Bytes;
 use serde::de::Error;
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
 pub use spatio_types::bbox::{
@@ -13,24 +12,7 @@ pub use spatio_types::bbox::{
 pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
 pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
 
-/// Synchronization policy for persistence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SyncPolicy {
-    Never,
-    #[default]
-    EverySecond,
-    Always,
-}
-
-/// File synchronization strategy (fsync vs fdatasync).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SyncMode {
-    #[default]
-    All,
-    Data,
-}
+pub use spatio_types::config::{SyncMode, SyncPolicy};
 
 /// Database configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -231,71 +213,7 @@ impl Default for Config {
     }
 }
 
-/// Options for setting values with TTL.
-///
-/// TTL is **lazy/passive**: expired items are filtered on read operations
-/// (`get()`, spatial queries) but remain in storage until manually cleaned up
-/// with `cleanup_expired()` or overwritten.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SetOptions {
-    /// Time-to-live for this item
-    pub ttl: Option<Duration>,
-    /// Absolute expiration time (takes precedence over TTL)
-    pub expires_at: Option<SystemTime>,
-    /// Optional timestamp for the update (defaults to now if None)
-    pub timestamp: Option<SystemTime>,
-}
-
-impl SetOptions {
-    /// Create options with TTL (time-to-live).
-    ///
-    /// # Important: Manual Cleanup Required
-    ///
-    /// Expired items are treated as non-existent on reads (passive expiration),
-    /// but they remain in memory and storage until either:
-    ///
-    /// 1. Overwritten by a new value with the same key
-    /// 2. Manually cleaned with `db.cleanup_expired()`
-    /// 3. Database is restarted (snapshot won't restore expired items)
-    ///
-    /// **For production systems with TTL**, you MUST periodically call `cleanup_expired()`
-    /// to prevent unbounded memory growth.
-    pub fn with_ttl(ttl: Duration) -> Self {
-        Self {
-            ttl: Some(ttl),
-            expires_at: None,
-            timestamp: None,
-        }
-    }
-
-    /// Create options with absolute expiration time.
-    ///
-    /// # Important: Manual Cleanup Required
-    ///
-    /// Like `with_ttl()`, expired items remain in storage until manually cleaned.
-    /// See `with_ttl()` documentation for cleanup requirements.
-    pub fn with_expiration(expires_at: SystemTime) -> Self {
-        Self {
-            ttl: None,
-            expires_at: Some(expires_at),
-            timestamp: None,
-        }
-    }
-
-    pub fn with_timestamp(timestamp: SystemTime) -> Self {
-        Self {
-            ttl: None,
-            expires_at: None,
-            timestamp: Some(timestamp),
-        }
-    }
-
-    /// Get the effective expiration time
-    pub fn effective_expires_at(&self) -> Option<SystemTime> {
-        self.expires_at
-            .or_else(|| self.ttl.map(|ttl| SystemTime::now() + ttl))
-    }
-}
+pub use spatio_types::config::SetOptions;
 
 /// Internal representation of a database item.
 ///
@@ -400,46 +318,7 @@ impl DbItem {
     }
 }
 
-/// Database statistics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DbStats {
-    /// Number of items that have expired
-    pub expired_count: u64,
-    /// Total number of operations performed
-    pub operations_count: u64,
-    /// Total size in bytes (approximate)
-    pub size_bytes: usize,
-    /// Total number of objects currently tracked in hot state
-    pub hot_state_objects: usize,
-    /// Number of trajectories stored in cold state
-    pub cold_state_trajectories: usize,
-    /// Bytes used in cold state buffer
-    pub cold_state_buffer_bytes: usize,
-    /// Approximate total memory usage in bytes
-    pub memory_usage_bytes: usize,
-}
-
-impl DbStats {
-    /// Create new empty statistics
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Record an operation
-    pub fn record_operation(&mut self) {
-        self.operations_count += 1;
-    }
-
-    /// Record expired items cleanup
-    pub fn record_expired(&mut self, count: u64) {
-        self.expired_count += count;
-    }
-
-    /// Update size estimate
-    pub fn set_size_bytes(&mut self, bytes: usize) {
-        self.size_bytes = bytes;
-    }
-}
+pub use spatio_types::stats::DbStats;
 
 #[cfg(test)]
 mod tests {

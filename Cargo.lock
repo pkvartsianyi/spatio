@@ -1326,11 +1326,13 @@ dependencies = [
 name = "spatio"
 version = "0.2.2"
 dependencies = [
+ "anyhow",
  "bincode 2.0.1",
  "bytes",
  "criterion",
  "dashmap",
  "env_logger",
+ "futures",
  "geo",
  "geojson",
  "geozero",
@@ -1343,28 +1345,40 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "spatio-protocol",
  "spatio-types",
  "tempfile",
  "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "spatio-protocol"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode 1.3.3",
+ "bytes",
+ "serde",
+ "spatio-types",
+ "thiserror 1.0.69",
+ "tokio-util",
 ]
 
 [[package]]
 name = "spatio-py"
 version = "0.2.2"
 dependencies = [
- "futures",
  "geo",
- "once_cell",
  "pyo3",
  "pythonize",
  "serde_json",
  "spatio",
- "spatio-server",
  "spatio-types",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -1379,6 +1393,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spatio",
+ "spatio-protocol",
  "spatio-types",
  "thiserror 1.0.69",
  "tokio",

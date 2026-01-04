@@ -49,8 +49,13 @@ impl DB {
         Self::open_with_config(path, Config::default())
     }
 
-    pub fn builder() -> crate::DBBuilder {
-        crate::DBBuilder::new()
+    pub fn builder() -> crate::builder::DBBuilder {
+        crate::builder::DBBuilder::new()
+    }
+
+    #[cfg(feature = "remote")]
+    pub fn server<S: Into<String>>(host: S) -> crate::builder::RemoteBuilder {
+        crate::builder::RemoteBuilder::new(host.into())
     }
 
     /// Open or create a database with custom configuration.

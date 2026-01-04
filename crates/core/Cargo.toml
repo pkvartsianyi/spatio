@@ -33,6 +33,17 @@ rustc-hash.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+tokio = { version = "1.37", features = [
+    "net",
+    "time",
+    "sync",
+    "rt",
+], optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+futures = { version = "0.3", optional = true }
+spatio-protocol = { workspace = true, optional = true }
+anyhow = { version = "1.0", optional = true }
 
 # Optional dependencies
 bincode = { workspace = true, optional = true }
@@ -51,7 +62,15 @@ toml = ["dep:toml"]
 time-index = []
 bench-prof = []
 sync = []
-full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync"]
+remote = [
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:tokio-stream",
+    "dep:futures",
+    "dep:spatio-protocol",
+    "dep:anyhow",
+]
+full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync", "remote"]
 
 [dev-dependencies]
 criterion.workspace = true

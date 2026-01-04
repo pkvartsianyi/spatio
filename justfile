@@ -89,6 +89,9 @@ bump-python VERSION:
 bump-types VERSION:
     ./scripts/bump-version.sh types {{VERSION}}
 
+bump-server VERSION:
+    ./scripts/bump-version.sh server {{VERSION}}
+
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run
 
@@ -97,6 +100,9 @@ bump-python-dry VERSION:
 
 bump-types-dry VERSION:
     ./scripts/bump-version.sh types {{VERSION}} --dry-run
+
+bump-server-dry VERSION:
+    ./scripts/bump-version.sh server {{VERSION}} --dry-run
 
 bump-core-no-commit VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --no-commit
