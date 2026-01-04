@@ -1354,11 +1354,17 @@ dependencies = [
 name = "spatio-py"
 version = "0.2.2"
 dependencies = [
+ "futures",
  "geo",
+ "once_cell",
  "pyo3",
  "pythonize",
  "serde_json",
  "spatio",
+ "spatio-server",
+ "spatio-types",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

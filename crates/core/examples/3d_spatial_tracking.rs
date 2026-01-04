@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             serde_json::json!({"type": "delivery", "description": "Delivery drone - Package A"})
         };
 
-        db.upsert("drones", &id, pos, meztadata, None)?;
+        db.upsert("drones", &id, pos, metadata, None)?;
         println!("   ✓ Registered {}: altitude {}m", id, altitude);
     }
     println!();

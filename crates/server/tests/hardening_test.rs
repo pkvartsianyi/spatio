@@ -1,6 +1,6 @@
 use futures::{SinkExt, StreamExt};
 use spatio::Spatio;
-use spatio_server::protocol::{Command, ResponsePayload, ResponseStatus};
+use spatio_server::protocol::{Command, ResponseStatus};
 use spatio_server::{run_server, SBPClientCodec};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ async fn test_idle_timeout() -> anyhow::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let mut stream = TcpStream::connect(bound_addr).await?;
+    let stream = TcpStream::connect(bound_addr).await?;
 
     // Wait for IDLE_TIMEOUT (we'll need to reduce it for the test or just wait 5 mins...
     // actually, let's just assert the server is up and then we'd need a way to mock time)

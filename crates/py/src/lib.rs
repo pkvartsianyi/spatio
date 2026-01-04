@@ -8,11 +8,24 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use spatio::DistanceMetric as RustDistanceMetric;
-use spatio::{Point3d, Spatio};
+use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Spatio};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
+
+use futures::{SinkExt, StreamExt};
+use once_cell::sync::Lazy;
+use spatio_server::SBPClientCodec;
+use spatio_server::protocol::{Command, ResponsePayload, ResponseStatus};
+use tokio::net::TcpStream;
+use tokio_util::codec::Framed;
+
+static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create Tokio runtime")
+});
 
 /// Convert Rust Result to Python Result
 fn handle_error<T>(result: RustResult<T>) -> PyResult<T> {
@@ -230,6 +243,13 @@ impl PySpatio {
             .build()
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(PySpatio { db: Arc::new(db) })
+    }
+
+    /// Connect to a remote Spatio server
+    #[staticmethod]
+    #[pyo3(signature = (host="127.0.0.1", port=3000))]
+    fn server(host: &str, port: u16) -> PyResult<PySpatioClient> {
+        PySpatioClient::new(host, port)
     }
 
     /// Upsert an object's location
@@ -643,6 +663,548 @@ impl PySpatio {
     }
 }
 
+/// RPC Client for Spatio server
+#[pyclass(name = "SpatioClient")]
+#[derive(Clone)]
+pub struct PySpatioClient {
+    host: String,
+    port: u16,
+    inner: Arc<tokio::sync::Mutex<Option<Framed<TcpStream, SBPClientCodec>>>>,
+}
+
+impl PySpatioClient {
+    /// Internal helper to send a command and receive a response
+    fn call(&self, cmd: Command) -> PyResult<(ResponseStatus, ResponsePayload)> {
+        RUNTIME.block_on(async {
+            let mut inner_opt = self.inner.lock().await;
+
+            // Ensure connected
+            if inner_opt.is_none() {
+                let addr = format!("{}:{}", self.host, self.port);
+                let stream = tokio::net::TcpStream::connect(&addr).await.map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to reconnect to {}: {}", addr, e))
+                })?;
+                *inner_opt = Some(Framed::new(stream, SBPClientCodec));
+            }
+
+            let inner = inner_opt.as_mut().unwrap();
+
+            let fut = async {
+                inner
+                    .send(cmd)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(format!("Send error: {}", e)))?;
+
+                let resp = inner.next().await.ok_or_else(|| {
+                    PyRuntimeError::new_err("Connection closed by server".to_string())
+                })?;
+
+                resp.map_err(|e| PyRuntimeError::new_err(format!("Receive error: {}", e)))
+            };
+
+            match tokio::time::timeout(tokio::time::Duration::from_secs(10), fut).await {
+                Ok(res) => {
+                    if res.is_err() {
+                        // On error, clear the connection so next call retries
+                        *inner_opt = None;
+                    }
+                    res
+                }
+                Err(_) => {
+                    *inner_opt = None;
+                    Err(PyRuntimeError::new_err("RPC request timed out after 10s"))
+                }
+            }
+        })
+    }
+}
+
+#[pymethods]
+impl PySpatioClient {
+    #[new]
+    #[pyo3(signature = (host="127.0.0.1", port=3000))]
+    fn new(host: &str, port: u16) -> PyResult<Self> {
+        let addr = format!("{}:{}", host, port);
+        let framed = RUNTIME.block_on(async {
+            let stream = TcpStream::connect(&addr).await.map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to connect to {}: {}", addr, e))
+            })?;
+            Ok::<_, PyErr>(Framed::new(stream, SBPClientCodec))
+        })?;
+
+        Ok(PySpatioClient {
+            host: host.to_string(),
+            port,
+            inner: Arc::new(tokio::sync::Mutex::new(Some(framed))),
+        })
+    }
+
+    #[pyo3(signature = (namespace, object_id, point, metadata=None))]
+    fn upsert(
+        &self,
+        namespace: String,
+        object_id: String,
+        point: &PyPoint,
+        metadata: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let meta_vec = if let Some(meta) = metadata {
+            let val: serde_json::Value =
+                pythonize::depythonize(meta).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            serde_json::to_vec(&val).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let cmd = Command::Upsert {
+            namespace,
+            id: object_id,
+            point: point.inner.clone(),
+            metadata: meta_vec,
+            opts: None,
+        };
+
+        let (status, payload) = self.call(cmd)?;
+        match status {
+            ResponseStatus::Ok => Ok(()),
+            ResponseStatus::Error => {
+                if let ResponsePayload::Error(e) = payload {
+                    Err(PyRuntimeError::new_err(e))
+                } else {
+                    Err(PyRuntimeError::new_err("Unknown server error"))
+                }
+            }
+        }
+    }
+
+    fn get(&self, namespace: String, id: String) -> PyResult<Option<(String, PyPoint, Py<PyAny>)>> {
+        let cmd = Command::Get { namespace, id };
+        let (status, payload) = self.call(cmd)?;
+
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            if e == "Not found" {
+                return Ok(None);
+            }
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Object {
+            id,
+            point,
+            metadata,
+        } = payload
+        {
+            Python::attach(|py| {
+                let py_point = PyPoint { inner: point };
+                let meta_json: serde_json::Value =
+                    serde_json::from_slice(&metadata).unwrap_or_default();
+                let py_meta = pythonize::pythonize(py, &meta_json)?;
+                Ok(Some((id, py_point, py_meta.unbind())))
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    fn delete(&self, namespace: String, id: String) -> PyResult<()> {
+        let cmd = Command::Delete { namespace, id };
+        let (status, payload) = self.call(cmd)?;
+        match status {
+            ResponseStatus::Ok => Ok(()),
+            ResponseStatus::Error => {
+                if let ResponsePayload::Error(e) = payload {
+                    Err(PyRuntimeError::new_err(e))
+                } else {
+                    Err(PyRuntimeError::new_err("Unknown server error"))
+                }
+            }
+        }
+    }
+
+    #[pyo3(signature = (namespace, center, radius, limit=100))]
+    fn query_radius(
+        &self,
+        namespace: String,
+        center: &PyPoint,
+        radius: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryRadius {
+            namespace,
+            center: center.inner.clone(),
+            radius,
+            limit,
+        };
+
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Objects(results) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for (id, pos, meta_bytes, dist) in results {
+                    let py_point = PyPoint { inner: pos };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&meta_bytes).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            id.into_pyobject(py)?.into_any(),
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                            dist.into_pyobject(py)?.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    fn stats(&self) -> PyResult<Py<PyAny>> {
+        let (status, payload) = self.call(Command::Stats)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Stats(stats) = payload {
+            Python::attach(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("expired_count", stats.expired_count)?;
+                dict.set_item("operations_count", stats.operations_count)?;
+                dict.set_item("size_bytes", stats.size_bytes)?;
+                dict.set_item("hot_state_objects", stats.hot_state_objects)?;
+                dict.set_item("cold_state_trajectories", stats.cold_state_trajectories)?;
+                dict.set_item("cold_state_buffer_bytes", stats.cold_state_buffer_bytes)?;
+                dict.set_item("memory_usage_bytes", stats.memory_usage_bytes)?;
+                Ok(dict.into_any().unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    fn close(&self) -> PyResult<()> {
+        let (status, payload) = self.call(Command::Close)?;
+        match status {
+            ResponseStatus::Ok => Ok(()),
+            ResponseStatus::Error => {
+                if let ResponsePayload::Error(e) = payload {
+                    Err(PyRuntimeError::new_err(e))
+                } else {
+                    Err(PyRuntimeError::new_err("Unknown server error"))
+                }
+            }
+        }
+    }
+
+    #[pyo3(signature = (namespace, min_x, min_y, max_x, max_y, limit=100))]
+    fn query_bbox(
+        &self,
+        namespace: String,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryBbox {
+            namespace,
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+            limit,
+        };
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::ObjectList(results) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for (id, pos, meta_bytes) in results {
+                    let py_point = PyPoint { inner: pos };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&meta_bytes).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            id.into_pyobject(py)?.into_any(),
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    #[pyo3(signature = (namespace, center, min_z, max_z, radius, limit=100))]
+    fn query_within_cylinder(
+        &self,
+        namespace: String,
+        center: &PyPoint,
+        min_z: f64,
+        max_z: f64,
+        radius: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryCylinder {
+            namespace,
+            center_x: center.inner.x(),
+            center_y: center.inner.y(),
+            min_z,
+            max_z,
+            radius,
+            limit,
+        };
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Objects(results) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for (id, pos, meta_bytes, dist) in results {
+                    let py_point = PyPoint { inner: pos };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&meta_bytes).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            id.into_pyobject(py)?.into_any(),
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                            dist.into_pyobject(py)?.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit=100))]
+    fn query_within_bbox_3d(
+        &self,
+        namespace: String,
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryBbox3d {
+            namespace,
+            min_x,
+            min_y,
+            min_z,
+            max_x,
+            max_y,
+            max_z,
+            limit,
+        };
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::ObjectList(results) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for (id, pos, meta_bytes) in results {
+                    let py_point = PyPoint { inner: pos };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&meta_bytes).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            id.into_pyobject(py)?.into_any(),
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    #[pyo3(signature = (namespace, object_id, trajectory))]
+    fn insert_trajectory(
+        &self,
+        namespace: String,
+        object_id: String,
+        trajectory: Vec<PyTemporalPoint>,
+    ) -> PyResult<()> {
+        let mut core_trajectory = Vec::with_capacity(trajectory.len());
+        for tp in trajectory {
+            core_trajectory.push(spatio_types::point::TemporalPoint {
+                point: spatio::Point::new(tp.point.inner.x(), tp.point.inner.y()),
+                timestamp: UNIX_EPOCH + Duration::from_secs_f64(tp.timestamp),
+            });
+        }
+
+        let cmd = Command::InsertTrajectory {
+            namespace,
+            id: object_id,
+            trajectory: core_trajectory,
+        };
+
+        let (status, payload) = self.call(cmd)?;
+        match status {
+            ResponseStatus::Ok => Ok(()),
+            ResponseStatus::Error => {
+                if let ResponsePayload::Error(e) = payload {
+                    Err(PyRuntimeError::new_err(e))
+                } else {
+                    Err(PyRuntimeError::new_err("Unknown server error"))
+                }
+            }
+        }
+    }
+
+    #[pyo3(signature = (namespace, id, start_time, end_time, limit=100))]
+    fn query_trajectory(
+        &self,
+        namespace: String,
+        id: String,
+        start_time: f64,
+        end_time: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryTrajectory {
+            namespace,
+            id,
+            start_time: UNIX_EPOCH + Duration::from_secs_f64(start_time),
+            end_time: UNIX_EPOCH + Duration::from_secs_f64(end_time),
+            limit,
+        };
+
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Trajectory(updates) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for update in updates {
+                    let py_point = PyPoint {
+                        inner: update.position,
+                    };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&update.metadata).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let ts = update
+                        .timestamp
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                            ts.into_pyobject(py)?.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+
+    #[pyo3(signature = (namespace, object_id, radius, limit=100))]
+    fn query_near(
+        &self,
+        namespace: String,
+        object_id: String,
+        radius: f64,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let cmd = Command::QueryNear {
+            namespace,
+            id: object_id,
+            radius,
+            limit,
+        };
+
+        let (status, payload) = self.call(cmd)?;
+        if matches!(status, ResponseStatus::Error)
+            && let ResponsePayload::Error(e) = payload
+        {
+            return Err(PyRuntimeError::new_err(e));
+        }
+
+        if let ResponsePayload::Objects(results) = payload {
+            Python::attach(|py| {
+                let py_list = PyList::empty(py);
+                for (id, pos, meta_bytes, dist) in results {
+                    let py_point = PyPoint { inner: pos };
+                    let meta_json: serde_json::Value =
+                        serde_json::from_slice(&meta_bytes).unwrap_or_default();
+                    let py_meta = pythonize::pythonize(py, &meta_json)?;
+                    let tuple = pyo3::types::PyTuple::new(
+                        py,
+                        [
+                            id.into_pyobject(py)?.into_any(),
+                            py_point.into_pyobject(py)?.into_any(),
+                            py_meta.into_any(),
+                            dist.into_pyobject(py)?.into_any(),
+                        ],
+                    )?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.unbind())
+            })
+        } else {
+            Err(PyRuntimeError::new_err("Unexpected response payload"))
+        }
+    }
+}
+
 /// Python wrapper for SetOptions
 #[pyclass(name = "SetOptions")]
 #[derive(Clone, Debug)]
@@ -665,6 +1227,7 @@ impl PySetOptions {
 #[pymodule]
 fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpatio>()?;
+    m.add_class::<PySpatioClient>()?;
     m.add_class::<PyPoint>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;

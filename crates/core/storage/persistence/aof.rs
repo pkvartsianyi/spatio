@@ -846,6 +846,7 @@ mod tests {
         let options = SetOptions {
             ttl: None,
             expires_at: Some(expires_at),
+            timestamp: None,
         };
 
         aof.write_set(b"key1", b"value1", Some(&options), SystemTime::now())

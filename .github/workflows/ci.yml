@@ -63,6 +63,9 @@ jobs:
       - name: Run clippy (spatio-py)
         run: cargo clippy -p spatio-py --all-targets -- -D warnings
 
+      - name: Run clippy (spatio-server)
+        run: cargo clippy -p spatio-server --all-targets --all-features -- -D warnings
+
       # Rust building
       - name: Build spatio-types
         run: cargo build -p spatio-types --verbose
@@ -72,6 +75,9 @@ jobs:
 
       - name: Build spatio (all features)
         run: cargo build -p spatio --all-features --verbose
+
+      - name: Build spatio-server
+        run: cargo build -p spatio-server --all-features --verbose
 
       # Rust testing
       - name: Run tests (spatio-types)
@@ -83,8 +89,11 @@ jobs:
       - name: Run tests (spatio - all features)
         run: cargo test -p spatio --all-features --verbose
 
+      - name: Run tests (spatio-server)
+        run: cargo test -p spatio-server --all-features --verbose
+
       - name: Run doc tests
-        run: cargo test -p spatio -p spatio-types --doc
+        run: cargo test -p spatio -p spatio-types -p spatio-server --doc
 
       # Python testing
       - name: Install Python dependencies
@@ -159,7 +168,7 @@ jobs:
         run: cargo build -p spatio --all-features --verbose
 
       - name: Run tests
-        run: cargo test -p spatio -p spatio-types --all-features --verbose
+        run: cargo test -p spatio -p spatio-types -p spatio-server --all-features --verbose
 
   # Check documentation builds
   docs:
@@ -174,6 +183,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build documentation
-        run: cargo doc -p spatio -p spatio-types --no-deps --all-features
+        run: cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
