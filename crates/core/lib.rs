@@ -32,7 +32,6 @@ pub mod compute;
 pub mod config;
 pub mod db;
 pub mod error;
-pub mod storage;
 
 pub use builder::DBBuilder;
 pub use db::DB;
@@ -58,10 +57,7 @@ pub use config::{HistoryEntry, HistoryEventKind};
 
 pub use db::{Namespace, NamespaceManager};
 
-// Re-export validation utilities
 pub use compute::validation;
-
-pub use storage::LocationUpdate;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

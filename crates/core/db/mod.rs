@@ -49,8 +49,8 @@ impl DB {
         Self::open_with_config(path, Config::default())
     }
 
-    pub fn builder() -> crate::DBBuilder {
-        crate::DBBuilder::new()
+    pub fn builder() -> crate::builder::DBBuilder {
+        crate::builder::DBBuilder::new()
     }
 
     /// Open or create a database with custom configuration.

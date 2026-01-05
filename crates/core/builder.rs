@@ -1,7 +1,4 @@
-//! Database builder for flexible configuration
-//!
-//! This module provides a builder pattern for creating databases with
-//! advanced configuration options including custom persistence paths.
+//! Database builder
 
 use crate::config::Config;
 use crate::db::DB;
@@ -60,7 +57,6 @@ impl DBBuilder {
         } else if let Some(path) = self.path {
             DB::open_with_config(path, self.config)
         } else {
-            // Default to memory if no path provided but in_memory is false (shouldn't happen with current API usage but safe fallback)
             DB::memory_with_config(self.config)
         }
     }

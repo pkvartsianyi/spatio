@@ -5,14 +5,14 @@ default:
 # =============
 
 build:
-    cargo build -p spatio -p spatio-types -p spatio-server --release
+    cargo build -p spatio -p spatio-types -p spatio-server -p spatio-rpc -p spatio-client --release
 
 test:
-    cargo test -p spatio -p spatio-types -p spatio-server --all-features
+    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-rpc -p spatio-client --all-features
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-py --all-targets --all-features -- -D warnings
+    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-rpc -p spatio-client -p spatio-py --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -21,7 +21,7 @@ clean:
     cargo clean
 
 doc:
-    cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features --open
+    cargo doc -p spatio -p spatio-types -p spatio-server -p spatio-rpc -p spatio-client --no-deps --all-features --open
 
 # Python commands (delegate to py-spatio)
 # ======================================
@@ -89,6 +89,9 @@ bump-python VERSION:
 bump-types VERSION:
     ./scripts/bump-version.sh types {{VERSION}}
 
+bump-server VERSION:
+    ./scripts/bump-version.sh server {{VERSION}}
+
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run
 
@@ -97,6 +100,9 @@ bump-python-dry VERSION:
 
 bump-types-dry VERSION:
     ./scripts/bump-version.sh types {{VERSION}} --dry-run
+
+bump-server-dry VERSION:
+    ./scripts/bump-version.sh server {{VERSION}} --dry-run
 
 bump-core-no-commit VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --no-commit
@@ -112,11 +118,11 @@ security-audit:
     cd crates/py && bandit -r src/ && safety check
 
 benchmarks:
-    cargo bench -p spatio -p spatio-server
+    cargo bench -p spatio -p spatio-server -p spatio-rpc -p spatio-client
     cd crates/py && just bench
 
 coverage:
-    cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server --timeout 120 --out html
+    cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server -p spatio-rpc -p spatio-client --timeout 120 --out html
     cd crates/py && just coverage
 
 test-examples:

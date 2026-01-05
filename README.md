@@ -148,12 +148,19 @@ Spatio includes a dedicated server crate (`spatio-server`) for multi-process or 
 cargo run -p spatio-server
 ```
 
-Clients can then connect via the Python `SpatioClient` or direct TCP.
+Connect using the native Rust client (`spatio-client`):
+```rust
+use spatio_client::SpatioClient;
+
+let client = SpatioClient::new("127.0.0.1".to_string(), 3000);
+let stats = client.stats().await?;
+```
 
 ## Documentation
 
 - **Python docs:** [crates/py/README.md](crates/py/README.md)
 - **Server docs:** [crates/server/README.md](crates/server/README.md)
+- **Client docs:** [crates/client/README.md](crates/client/README.md)
 - **API docs:** [docs.rs/spatio](https://docs.rs/spatio)
 
 ## License

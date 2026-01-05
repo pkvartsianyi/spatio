@@ -49,6 +49,8 @@
 //! ```
 
 pub mod bbox;
+pub mod config;
 pub mod geo;
 pub mod point;
 pub mod polygon;
+pub mod stats;

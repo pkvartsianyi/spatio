@@ -1,0 +1,23 @@
+[package]
+name = "spatio-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native Rust RPC client for Spatio database"
+
+[lib]
+name = "spatio_client"
+path = "src/lib.rs"
+
+[dependencies]
+spatio-rpc = { workspace = true }
+spatio-types = { workspace = true }
+tokio = { version = "1.37", features = ["net", "time", "sync", "rt"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tokio-stream = "0.1"
+futures = "0.3"
+anyhow = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }

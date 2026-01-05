@@ -33,7 +33,6 @@ rustc-hash.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-
 # Optional dependencies
 bincode = { workspace = true, optional = true }
 geozero = { workspace = true, optional = true }

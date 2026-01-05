@@ -67,18 +67,6 @@ db.insert_trajectory(namespace, object_id, list_of_temporal_points)
 db.query_trajectory(namespace, object_id, start_ts, end_ts, limit=100)
 ```
 
-### SpatioClient (Remote Server)
-
-Connect to a running `spatio-server` instance:
-
-```python
-client = spatio.Spatio.server(host="127.0.0.1", port=3000)
-
-# Identical API to local Spatio
-client.upsert("cars", "v1", point, {"color": "red"})
-results = client.query_radius("cars", point, 1000)
-```
-
 ## Data Types
 
 ### Point

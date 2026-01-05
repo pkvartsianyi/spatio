@@ -1,4 +1,4 @@
-use crate::protocol::{Command, ResponsePayload, ResponseStatus};
+use crate::rpc::{Command, ResponsePayload, ResponseStatus};
 use spatio::Spatio;
 use std::sync::Arc;
 
@@ -165,14 +165,27 @@ impl Handler {
                 .query_trajectory(&namespace, &id, start_time, end_time, limit)
             {
                 Ok(updates) => {
-                    let formatted = updates
-                        .into_iter()
-                        .map(|upd| crate::protocol::LocationUpdate {
-                            timestamp: upd.timestamp,
-                            position: upd.position,
-                            metadata: serde_json::to_vec(&upd.metadata).unwrap_or_default(),
-                        })
-                        .collect();
+                    let mut formatted = Vec::with_capacity(updates.len());
+                    for upd in updates {
+                        match serde_json::to_vec(&upd.metadata) {
+                            Ok(metadata_bytes) => {
+                                formatted.push(crate::rpc::LocationUpdate {
+                                    timestamp: upd.timestamp,
+                                    position: upd.position,
+                                    metadata: metadata_bytes,
+                                });
+                            }
+                            Err(e) => {
+                                return (
+                                    ResponseStatus::Error,
+                                    ResponsePayload::Error(format!(
+                                        "Failed to serialize trajectory metadata: {}",
+                                        e
+                                    )),
+                                );
+                            }
+                        }
+                    }
                     (ResponseStatus::Ok, ResponsePayload::Trajectory(formatted))
                 }
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),

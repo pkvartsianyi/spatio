@@ -1351,19 +1351,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatio-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "serde",
+ "serde_json",
+ "spatio-rpc",
+ "spatio-types",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
 name = "spatio-py"
 version = "0.2.2"
 dependencies = [
- "futures",
  "geo",
- "once_cell",
  "pyo3",
  "pythonize",
  "serde_json",
  "spatio",
- "spatio-server",
  "spatio-types",
- "tokio",
+]
+
+[[package]]
+name = "spatio-rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode 1.3.3",
+ "bytes",
+ "serde",
+ "spatio-types",
+ "thiserror 1.0.69",
  "tokio-util",
 ]
 
@@ -1379,6 +1402,8 @@ dependencies = [
  "serde",
  "serde_json",
  "spatio",
+ "spatio-client",
+ "spatio-rpc",
  "spatio-types",
  "thiserror 1.0.69",
  "tokio",
