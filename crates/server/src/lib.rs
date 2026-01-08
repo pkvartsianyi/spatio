@@ -13,7 +13,7 @@ use crate::handler::Handler;
 pub use spatio_rpc as rpc;
 pub use spatio_rpc::{RpcClientCodec, RpcServerCodec};
 use std::future::Future;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 const CONN_TIMEOUT: Duration = Duration::from_secs(30);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);

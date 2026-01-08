@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use spatio::{Point3d, Spatio};
 use spatio_server::rpc::{Command, ResponsePayload, ResponseStatus};
-use spatio_server::{run_server, RpcClientCodec};
+use spatio_server::{RpcClientCodec, run_server};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -17,7 +17,7 @@ async fn test_rpc_lifecycle() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound_addr = listener.local_addr()?;
     drop(listener); // We'll re-bind in run_server, but this is a race condition risk.
-                    // Better: let run_server take the listener or use a retry.
+    // Better: let run_server take the listener or use a retry.
 
     // Actually, let's just use a fixed port for simplicity in test if possible, or refactor run_server.
     let server_db = db.clone();

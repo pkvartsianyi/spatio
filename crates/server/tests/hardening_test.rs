@@ -1,7 +1,7 @@
 use futures::{SinkExt, StreamExt};
 use spatio::Spatio;
 use spatio_server::rpc::{Command, ResponseStatus};
-use spatio_server::{run_server, RpcClientCodec};
+use spatio_server::{RpcClientCodec, run_server};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

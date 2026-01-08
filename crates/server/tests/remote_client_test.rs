@@ -3,7 +3,7 @@ use spatio_client::SpatioClient;
 use spatio_types::point::Point3d;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 async fn test_remote_client_ops() -> anyhow::Result<()> {
