@@ -5,6 +5,9 @@ This project uses **version-driven releases** with **independent versioning** fo
 ## Overview
 
 - **Rust crate** (`spatio`): Core spatio-temporal database library
+- **RPC crate** (`spatio-rpc`): shared RPC types and codecs
+- **Client crate** (`spatio-client`): Recursive RPC client
+- **Server crate** (`spatio-server`): Standalone RPC server
 - **Python package** (`spatio`): Python bindings for the Rust library
 - **Independent versions**: Each can be released separately with different version numbers
 - **Automatic releases**: GitHub Actions detects version changes and creates releases automatically
@@ -56,6 +59,18 @@ just bump-python 0.1.5
 
 # Preview changes (dry run)
 just bump-python-dry 0.1.5
+```
+
+#### RPC / Client / Server
+```bash
+# Bump RPC crate
+just bump-rpc 0.1.0
+
+# Bump Client crate
+just bump-client 0.1.0
+
+# Bump Server crate
+just bump-server 0.1.0
 ```
 
 #### Both Packages (Same Version)
@@ -146,8 +161,9 @@ You can also trigger the workflow manually via GitHub Actions:
 
 The scripts automatically update versions in:
 
-- **Rust crate**: `Cargo.toml`
+- **Rust crate**: `Cargo.toml` (and `crates/core/Cargo.toml`)
 - **Python package**: `py-spatio/Cargo.toml`
+- **Other crates**: `crates/types/Cargo.toml`, `crates/rpc/Cargo.toml`, `crates/client/Cargo.toml`, `crates/server/Cargo.toml`
 - **Lock files**: Both `Cargo.lock` files are updated
 
 ## Best Practices

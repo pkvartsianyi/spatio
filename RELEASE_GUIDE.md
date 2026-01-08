@@ -30,6 +30,8 @@ Edit `Cargo.toml`:
 version = "0.1.0-alpha.11"  # Bump from current version
 ```
 
+> **Note**: This process is identical for `spatio-rpc`, `spatio-client`, and `spatio-server`. Just edit the corresponding `crates/*/Cargo.toml` file or use `just bump-<package>`.
+
 ### 2. Commit and Push
 
 ```bash
@@ -43,7 +45,7 @@ git push origin main
 The CI workflow will:
 1. Detect that `rust-vX` doesn't exist
 2. Run tests on Linux and macOS
-3. Create a Git tag `rust-vX`
+3. Create a Git tag `rust-vX` (or `rpc-vX`, `client-vX`, `server-vX`)
 4. Create a GitHub release
 5. Publish to crates.io (if `CRATES_IO_TOKEN` is configured)
 

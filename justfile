@@ -92,6 +92,12 @@ bump-types VERSION:
 bump-server VERSION:
     ./scripts/bump-version.sh server {{VERSION}}
 
+bump-rpc VERSION:
+    ./scripts/bump-version.sh rpc {{VERSION}}
+
+bump-client VERSION:
+    ./scripts/bump-version.sh client {{VERSION}}
+
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run
 
