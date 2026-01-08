@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-types"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "geo",
  "geojson",
