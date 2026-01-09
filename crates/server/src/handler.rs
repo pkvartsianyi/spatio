@@ -12,7 +12,8 @@ impl Handler {
     }
 
     pub async fn handle(&self, cmd: Command) -> (ResponseStatus, ResponsePayload) {
-        match cmd {
+        let db = self.db.clone();
+        let result = tokio::task::spawn_blocking(move || match cmd {
             Command::Upsert {
                 namespace,
                 id,
@@ -22,12 +23,12 @@ impl Handler {
             } => {
                 let metadata_json =
                     serde_json::from_slice(&metadata).unwrap_or(serde_json::Value::Null);
-                match self.db.upsert(&namespace, &id, point, metadata_json, opts) {
+                match db.upsert(&namespace, &id, point, metadata_json, opts) {
                     Ok(_) => (ResponseStatus::Ok, ResponsePayload::Ok),
                     Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
                 }
             }
-            Command::Get { namespace, id } => match self.db.get(&namespace, &id) {
+            Command::Get { namespace, id } => match db.get(&namespace, &id) {
                 Ok(Some(loc)) => (
                     ResponseStatus::Ok,
                     ResponsePayload::Object {
@@ -47,7 +48,7 @@ impl Handler {
                 center,
                 radius,
                 limit,
-            } => match self.db.query_radius(&namespace, &center, radius, limit) {
+            } => match db.query_radius(&namespace, &center, radius, limit) {
                 Ok(results) => {
                     let formatted = results
                         .into_iter()
@@ -68,7 +69,7 @@ impl Handler {
                 namespace,
                 center,
                 k,
-            } => match self.db.knn(&namespace, &center, k) {
+            } => match db.knn(&namespace, &center, k) {
                 Ok(results) => {
                     let formatted = results
                         .into_iter()
@@ -86,14 +87,14 @@ impl Handler {
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
             Command::Stats => {
-                let stats = self.db.stats();
+                let stats = db.stats();
                 (ResponseStatus::Ok, ResponsePayload::Stats(stats))
             }
-            Command::Close => match self.db.close() {
+            Command::Close => match db.close() {
                 Ok(_) => (ResponseStatus::Ok, ResponsePayload::Ok),
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
-            Command::Delete { namespace, id } => match self.db.delete(&namespace, &id) {
+            Command::Delete { namespace, id } => match db.delete(&namespace, &id) {
                 Ok(_) => (ResponseStatus::Ok, ResponsePayload::Ok),
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
@@ -104,10 +105,7 @@ impl Handler {
                 max_x,
                 max_y,
                 limit,
-            } => match self
-                .db
-                .query_bbox(&namespace, min_x, min_y, max_x, max_y, limit)
-            {
+            } => match db.query_bbox(&namespace, min_x, min_y, max_x, max_y, limit) {
                 Ok(results) => {
                     let formatted = results
                         .into_iter()
@@ -133,10 +131,7 @@ impl Handler {
                 limit,
             } => {
                 let center = spatio_types::geo::Point::new(center_x, center_y);
-                match self
-                    .db
-                    .query_within_cylinder(&namespace, center, min_z, max_z, radius, limit)
-                {
+                match db.query_within_cylinder(&namespace, center, min_z, max_z, radius, limit) {
                     Ok(results) => {
                         let formatted = results
                             .into_iter()
@@ -160,12 +155,10 @@ impl Handler {
                 start_time,
                 end_time,
                 limit,
-            } => match self
-                .db
-                .query_trajectory(&namespace, &id, start_time, end_time, limit)
-            {
+            } => match db.query_trajectory(&namespace, &id, start_time, end_time, limit) {
                 Ok(updates) => {
                     let mut formatted = Vec::with_capacity(updates.len());
+                    let mut error = None;
                     for upd in updates {
                         match serde_json::to_vec(&upd.metadata) {
                             Ok(metadata_bytes) => {
@@ -176,17 +169,22 @@ impl Handler {
                                 });
                             }
                             Err(e) => {
-                                return (
-                                    ResponseStatus::Error,
-                                    ResponsePayload::Error(format!(
-                                        "Failed to serialize trajectory metadata: {}",
-                                        e
-                                    )),
-                                );
+                                error = Some(e);
+                                break;
                             }
                         }
                     }
-                    (ResponseStatus::Ok, ResponsePayload::Trajectory(formatted))
+                    if let Some(e) = error {
+                        (
+                            ResponseStatus::Error,
+                            ResponsePayload::Error(format!(
+                                "Failed to serialize trajectory metadata: {}",
+                                e
+                            )),
+                        )
+                    } else {
+                        (ResponseStatus::Ok, ResponsePayload::Trajectory(formatted))
+                    }
                 }
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
@@ -194,7 +192,7 @@ impl Handler {
                 namespace,
                 id,
                 trajectory,
-            } => match self.db.insert_trajectory(&namespace, &id, &trajectory) {
+            } => match db.insert_trajectory(&namespace, &id, &trajectory) {
                 Ok(_) => (ResponseStatus::Ok, ResponsePayload::Ok),
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
@@ -207,8 +205,7 @@ impl Handler {
                 max_y,
                 max_z,
                 limit,
-            } => match self
-                .db
+            } => match db
                 .query_within_bbox_3d(&namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
             {
                 Ok(results) => {
@@ -231,7 +228,7 @@ impl Handler {
                 id,
                 radius,
                 limit,
-            } => match self.db.query_near(&namespace, &id, radius, limit) {
+            } => match db.query_near(&namespace, &id, radius, limit) {
                 Ok(results) => {
                     let formatted = results
                         .into_iter()
@@ -248,6 +245,15 @@ impl Handler {
                 }
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
+        })
+        .await;
+
+        match result {
+            Ok(response) => response,
+            Err(e) => (
+                ResponseStatus::Error,
+                ResponsePayload::Error(format!("Task failed: {}", e)),
+            ),
         }
     }
 }
