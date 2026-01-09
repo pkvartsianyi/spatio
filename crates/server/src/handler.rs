@@ -245,6 +245,70 @@ impl Handler {
                 }
                 Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
             },
+            Command::Contains {
+                namespace,
+                polygon,
+                limit,
+            } => match db.query_polygon(&namespace, &polygon, limit) {
+                Ok(results) => {
+                    let formatted = results
+                        .into_iter()
+                        .map(|loc| {
+                            (
+                                loc.object_id,
+                                loc.position,
+                                serde_json::to_vec(&loc.metadata).unwrap_or_default(),
+                            )
+                        })
+                        .collect();
+                    (ResponseStatus::Ok, ResponsePayload::ObjectList(formatted))
+                }
+                Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
+            },
+            Command::Distance {
+                namespace,
+                id1,
+                id2,
+                metric,
+            } => {
+                let m = metric.unwrap_or_default();
+                match db.distance_between(&namespace, &id1, &id2, m) {
+                    Ok(dist) => (ResponseStatus::Ok, ResponsePayload::OptionalDistance(dist)),
+                    Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
+                }
+            }
+            Command::DistanceTo {
+                namespace,
+                id,
+                point,
+                metric,
+            } => {
+                let m = metric.unwrap_or_default();
+                let geo_point = spatio_types::geo::Point::new(point.x(), point.y());
+                match db.distance_to(&namespace, &id, &geo_point, m) {
+                    Ok(dist) => (ResponseStatus::Ok, ResponsePayload::OptionalDistance(dist)),
+                    Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
+                }
+            }
+            Command::ConvexHull { namespace } => match db.convex_hull(&namespace) {
+                Ok(Some(poly)) => (ResponseStatus::Ok, ResponsePayload::Polygon(poly)),
+                Ok(None) => (
+                    ResponseStatus::Error,
+                    ResponsePayload::Error("No objects found to compute hull".into()),
+                ),
+                Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
+            },
+            Command::BoundingBox { namespace } => match db.bounding_box(&namespace) {
+                Ok(Some(rect)) => {
+                    let bbox = spatio_types::bbox::BoundingBox2D::from_rect(rect);
+                    (ResponseStatus::Ok, ResponsePayload::BoundingBox(bbox))
+                }
+                Ok(None) => (
+                    ResponseStatus::Error,
+                    ResponsePayload::Error("No objects found".into()),
+                ),
+                Err(e) => (ResponseStatus::Error, ResponsePayload::Error(e.to_string())),
+            },
         })
         .await;
 

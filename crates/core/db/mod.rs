@@ -445,6 +445,62 @@ impl DB {
             memory_usage_bytes: hot_memory + cold_buffer_bytes,
         }
     }
+    /// Query objects within a polygon
+    pub fn query_polygon(
+        &self,
+        namespace: &str,
+        polygon: &spatio_types::geo::Polygon,
+        limit: usize,
+    ) -> Result<Vec<CurrentLocation>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.query_polygon(namespace, polygon, limit))
+    }
+
+    /// Calculate distance between two objects
+    pub fn distance_between(
+        &self,
+        namespace: &str,
+        id1: &str,
+        id2: &str,
+        metric: crate::compute::spatial::DistanceMetric,
+    ) -> Result<Option<f64>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.distance_between(namespace, id1, id2, metric))
+    }
+
+    /// Calculate distance from object to point
+    pub fn distance_to(
+        &self,
+        namespace: &str,
+        id: &str,
+        point: &spatio_types::geo::Point,
+        metric: crate::compute::spatial::DistanceMetric,
+    ) -> Result<Option<f64>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.distance_to(namespace, id, point, metric))
+    }
+
+    /// Compute convex hull of all objects in namespace
+    pub fn convex_hull(&self, namespace: &str) -> Result<Option<spatio_types::geo::Polygon>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.convex_hull(namespace))
+    }
+
+    /// Compute bounding box of all objects in namespace
+    pub fn bounding_box(&self, namespace: &str) -> Result<Option<geo::Rect>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        Ok(self.hot.bounding_box(namespace))
+    }
 }
 
 pub use DB as Spatio;

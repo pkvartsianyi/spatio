@@ -102,6 +102,29 @@ pub enum Command {
         radius: f64,
         limit: usize,
     },
+    Contains {
+        namespace: String,
+        polygon: spatio_types::geo::Polygon,
+        limit: usize,
+    },
+    Distance {
+        namespace: String,
+        id1: String,
+        id2: String,
+        metric: Option<spatio_types::geo::DistanceMetric>,
+    },
+    DistanceTo {
+        namespace: String,
+        id: String,
+        point: Point3d,
+        metric: Option<spatio_types::geo::DistanceMetric>,
+    },
+    ConvexHull {
+        namespace: String,
+    },
+    BoundingBox {
+        namespace: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -130,6 +153,10 @@ pub enum ResponsePayload {
     Objects(Vec<(String, Point3d, Vec<u8>, f64)>),
     ObjectList(Vec<(String, Point3d, Vec<u8>)>),
     Trajectory(Vec<LocationUpdate>),
+    Polygon(spatio_types::geo::Polygon),
+    BoundingBox(spatio_types::bbox::BoundingBox2D),
+    Distance(f64),
+    OptionalDistance(Option<f64>),
     Error(String),
 }
 

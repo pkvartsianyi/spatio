@@ -10,14 +10,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 /// Distance metric for spatial calculations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DistanceMetric {
-    #[default]
-    Haversine,
-    Geodesic,
-    Rhumb,
-    Euclidean,
-}
+pub use spatio_types::geo::DistanceMetric;
 
 /// Distance between two points in meters.
 pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) -> f64 {

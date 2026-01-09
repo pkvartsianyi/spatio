@@ -18,6 +18,16 @@ pub enum GeoJsonError {
     InvalidCoordinates(String),
 }
 
+/// Distance metric for spatial calculations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DistanceMetric {
+    #[default]
+    Haversine,
+    Geodesic,
+    Rhumb,
+    Euclidean,
+}
+
 impl std::fmt::Display for GeoJsonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

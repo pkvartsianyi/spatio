@@ -236,6 +236,8 @@ impl HotState {
 
     /// Query objects within a 3D bounding box
     #[allow(clippy::too_many_arguments)]
+    /// Query objects within a 3D bounding box
+    #[allow(clippy::too_many_arguments)]
     pub fn query_within_bbox_3d(
         &self,
         namespace: &str,
@@ -263,6 +265,112 @@ impl HotState {
             .take(limit)
             .filter_map(|(key,)| self.current_locations.get(&key).map(|v| v.value().clone()))
             .collect()
+    }
+
+    /// Query objects within a polygon (2D only)
+    pub fn query_polygon(
+        &self,
+        namespace: &str,
+        polygon: &spatio_types::geo::Polygon,
+        limit: usize,
+    ) -> Vec<CurrentLocation> {
+        use geo::BoundingRect;
+        // 1. Get polygon bbox for broad phase
+        let Some(bbox) = polygon.inner().bounding_rect() else {
+            return Vec::new();
+        };
+
+        let min = bbox.min();
+        let max = bbox.max();
+
+        // 2. Query spatial index with bbox
+        let candidates = self.query_within_bbox(
+            namespace,
+            min.x,
+            min.y,
+            max.x,
+            max.y,
+            // Fetch more than limit because we'll filter
+            limit * 2,
+        );
+
+        // 3. Precise filter
+        candidates
+            .into_iter()
+            .filter(|loc| {
+                let pt = spatio_types::geo::Point::new(loc.position.x(), loc.position.y());
+                polygon.contains(&pt)
+            })
+            .take(limit)
+            .collect()
+    }
+
+    /// Calculate distance between two objects
+    pub fn distance_between(
+        &self,
+        namespace: &str,
+        id1: &str,
+        id2: &str,
+        metric: crate::compute::spatial::DistanceMetric,
+    ) -> Option<f64> {
+        let loc1 = self.get_current_location(namespace, id1)?;
+        let loc2 = self.get_current_location(namespace, id2)?;
+
+        let p1 = spatio_types::geo::Point::new(loc1.position.x(), loc1.position.y());
+        let p2 = spatio_types::geo::Point::new(loc2.position.x(), loc2.position.y());
+
+        Some(crate::compute::spatial::distance_between(&p1, &p2, metric))
+    }
+
+    /// Calculate distance from object to point
+    pub fn distance_to(
+        &self,
+        namespace: &str,
+        id: &str,
+        point: &spatio_types::geo::Point,
+        metric: crate::compute::spatial::DistanceMetric,
+    ) -> Option<f64> {
+        let loc = self.get_current_location(namespace, id)?;
+        let p1 = spatio_types::geo::Point::new(loc.position.x(), loc.position.y());
+
+        Some(crate::compute::spatial::distance_between(
+            &p1, point, metric,
+        ))
+    }
+
+    /// Compute convex hull of all objects in namespace
+    pub fn convex_hull(&self, namespace: &str) -> Option<spatio_types::geo::Polygon> {
+        let prefix = Self::make_key(namespace, "");
+        // Only strip the "::" suffix if make_key adds it, but make_key is "namespace::id".
+        // make_key(namespace, "") -> "namespace::"
+
+        let points: Vec<spatio_types::geo::Point> = self
+            .current_locations
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| {
+                let pos = &entry.value().position;
+                spatio_types::geo::Point::new(pos.x(), pos.y())
+            })
+            .collect();
+
+        crate::compute::spatial::convex_hull(&points)
+    }
+
+    /// Compute bounding box of all objects in namespace
+    pub fn bounding_box(&self, namespace: &str) -> Option<geo::Rect> {
+        let prefix = Self::make_key(namespace, "");
+        let points: Vec<spatio_types::geo::Point> = self
+            .current_locations
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| {
+                let pos = &entry.value().position;
+                spatio_types::geo::Point::new(pos.x(), pos.y())
+            })
+            .collect();
+
+        crate::compute::spatial::bounding_rect_for_points(&points)
     }
 
     /// Get total number of tracked objects
