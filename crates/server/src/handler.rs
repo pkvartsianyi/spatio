@@ -27,15 +27,8 @@ impl SpatioService for Handler {
         metadata: serde_json::Value,
         opts: Option<UpsertOptions>,
     ) -> Result<(), String> {
-        // Convert RPC options to internal options if necessary, or pass through
-        // Here we assume internal API options match or we ignore for now,
-        // but `upsert` in DB takes `Option<UpsertOptions>`?
-        // Let's check DB signature. The DB.upsert takes `Option<UpsertOptions>`.
-        // We need to make sure the types align or convert.
-        // `protocol` module UpsertOptions struct is defined there.
-        // `spatio-core` has its own UpsertOptions? Let's check.
-        // Assuming we need to convert or if they are compatible.
-        // For now, let's map the fields manually to be safe if types differ, or use serde.
+        // Convert RPC options to internal options
+        // DB.upsert takes Option<UpsertOptions> which needs to be mapped to internal config type
 
         let db_opts = opts.map(|o| spatio::config::SetOptions {
             ttl: Some(o.ttl),
@@ -240,7 +233,8 @@ impl SpatioService for Handler {
         let updates: Vec<spatio::config::TemporalPoint> = trajectory
             .into_iter()
             .map(|(ts, p, _meta)| {
-                // Note: Current DB insert_trajectory uses TemporalPoint (2D) and drops Z/metadata
+                // TODO: Current DB insert_trajectory uses TemporalPoint (2D) and drops Z/metadata
+                // We need to update spatio-core to support 3D points and metadata in trajectory storage
                 let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(ts);
                 spatio::config::TemporalPoint::new(*p.point_2d(), timestamp)
             })

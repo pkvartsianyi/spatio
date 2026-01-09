@@ -38,13 +38,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
     let shutdown = async {
         tokio::signal::ctrl_c()
             .await
             .expect("Failed to listen for ctrl_c signal");
     };
 
-    run_server(addr, Arc::new(db), Box::pin(shutdown)).await?;
+    run_server(listener, Arc::new(db), Box::pin(shutdown)).await?;
 
     Ok(())
 }

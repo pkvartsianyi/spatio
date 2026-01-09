@@ -13,16 +13,14 @@ async fn spawn_test_server() -> anyhow::Result<std::net::SocketAddr> {
         .try_init()
         .ok();
     let db = Arc::new(Spatio::builder().build()?);
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-
-    // Explicitly drop listener to free the port so the server can bind to it
-    drop(listener);
 
     // Spawn server in background
     tokio::spawn(async move {
         // Use pending future for shutdown signal to keep running indefinitely during test
-        let _ = run_server(bound_addr, db, futures::future::pending()).await;
+        let _ = run_server(listener, db, futures::future::pending()).await;
     });
 
     // Give it a moment to start

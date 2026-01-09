@@ -4,7 +4,7 @@
 
 use futures::prelude::*;
 use spatio::Spatio;
-use std::net::SocketAddr;
+
 use std::sync::Arc;
 use tarpc::server::{self, Channel};
 use tarpc::tokio_serde::formats::Json;
@@ -13,24 +13,31 @@ use tracing::{error, info};
 use crate::handler::Handler;
 use crate::protocol::SpatioService;
 
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
 /// Run the tarpc RPC server
 pub async fn run_server(
-    addr: SocketAddr,
+    listener: tokio::net::TcpListener,
     db: Arc<Spatio>,
     mut shutdown: impl Future<Output = ()> + Unpin + Send + 'static,
 ) -> anyhow::Result<()> {
     let handler = Handler::new(db);
 
-    let mut listener = tarpc::serde_transport::tcp::listen(&addr, Json::default).await?;
-    info!("Spatio RPC Server listening on {}", listener.local_addr());
+    info!("Spatio RPC Server listening on {}", listener.local_addr()?);
 
     loop {
         tokio::select! {
-            next = listener.next() => {
-                match next {
-                    Some(Ok(transport)) => {
+            accept_result = listener.accept() => {
+                match accept_result {
+                    Ok((socket, _)) => {
                         let server = handler.clone();
                         tokio::spawn(async move {
+                            let framed = Framed::new(socket, LengthDelimitedCodec::new());
+                            let transport = tarpc::serde_transport::new(
+                                framed,
+                                Json::default()
+                            );
+
                             server::BaseChannel::with_defaults(transport)
                                 .execute(server.serve())
                                 .for_each(|response| async move {
@@ -39,10 +46,9 @@ pub async fn run_server(
                                 .await;
                         });
                     }
-                    Some(Err(e)) => {
+                    Err(e) => {
                         error!("Accept error: {}", e);
                     }
-                    None => break,
                 }
             }
             _ = &mut shutdown => {
