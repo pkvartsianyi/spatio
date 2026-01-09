@@ -12,12 +12,26 @@ name = "spatio_client"
 path = "src/lib.rs"
 
 [dependencies]
-spatio-rpc = { workspace = true }
+spatio-server = { workspace = true }
 spatio-types = { workspace = true }
 tokio = { version = "1.37", features = ["net", "time", "sync", "rt"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1"
 futures = "0.3"
 anyhow = "1.0"
+thiserror = "1.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
+tarpc = { version = "0.34", features = [
+    "serde-transport",
+    "serde-transport-json",
+    "tcp",
+] }
+tokio-serde = { version = "0.9.0", features = ["json"] }
+
+# Optional HTTP transport
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[features]
+default = []
+http = ["reqwest"]

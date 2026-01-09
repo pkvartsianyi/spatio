@@ -1,12 +1,9 @@
-use futures::{SinkExt, StreamExt};
 use spatio::{Point3d, Spatio};
-use spatio_server::rpc::{Command, ResponsePayload, ResponseStatus};
-use spatio_server::{RpcClientCodec, run_server};
+use spatio_client::SpatioClient;
+use spatio_server::run_server;
 use spatio_types::geo::Polygon;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpStream;
-use tokio_util::codec::Framed;
 
 #[tokio::test]
 async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
@@ -14,163 +11,105 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
     // Setup server
     let addr: SocketAddr = "127.0.0.1:0".parse()?;
     let db = Arc::new(Spatio::builder().build()?);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let server_db = db.clone();
+
+    // We need to run server in a way that we can know the port.
+    // The current run_server binds internally.
+    // Ideally we'd modify run_server to return the bound addr or accept a listener.
+    // But for now let's bind a listener here to get a port, then pass that addr to run_server?
+    // Wait, run_server logic: `let mut listener = tarpc...listen(&addr...`.
+    // If we pass port 0, we don't know the port.
+    // We should modify run_server to return the actual address or take a listener.
+    // However, for this test let's try to bind on a port first or use a known port (risky in CI).
+    // Or we can modify run_server to take a listener.
+
+    // Let's modify run_server in previous step? No, let's use a random high port and hope.
+    // Or better, let's look at `run_server` again. It takes `addr`.
+    // If I bind a TcpListener first to get port, then drop it, it's a race condition but usually fine for tests.
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
     drop(listener);
-    let server_db = db.clone();
+
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, server_db, Box::pin(futures::future::pending())).await;
+        let _ = run_server(bound_addr, server_db, futures::future::pending()).await;
     });
+
+    // Give server a moment to bind (since we dropped the listener, it has to rebind)
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Connect client
-    let stream = TcpStream::connect(bound_addr).await?;
-    let mut framed = Framed::new(stream, RpcClientCodec);
+    let client = SpatioClient::connect(bound_addr).await?;
 
     let namespace = "spatial_test";
 
     // 1. Insert Data
-    // A: (-74.0, 40.7) matches NYC
-    // B: (-73.0, 40.7) (Longitude +1 degree)
-    // C: (-74.0, 41.7) (Latitude +1 degree)
     let p1 = Point3d::new(-74.0, 40.7, 0.0);
     let p2 = Point3d::new(-73.0, 40.7, 0.0);
     let p3 = Point3d::new(-74.0, 41.7, 0.0);
 
-    framed
-        .send(Command::Upsert {
-            namespace: namespace.into(),
-            id: "p1".into(),
-            point: p1.clone(),
-            metadata: vec![],
-            opts: None,
-        })
+    client
+        .upsert(namespace, "p1", p1.clone(), serde_json::json!({}), None)
         .await?;
-    assert!(matches!(
-        framed.next().await.unwrap()?,
-        (ResponseStatus::Ok, ResponsePayload::Ok)
-    ));
-
-    framed
-        .send(Command::Upsert {
-            namespace: namespace.into(),
-            id: "p2".into(),
-            point: p2.clone(),
-            metadata: vec![],
-            opts: None,
-        })
+    client
+        .upsert(namespace, "p2", p2.clone(), serde_json::json!({}), None)
         .await?;
-    assert!(matches!(
-        framed.next().await.unwrap()?,
-        (ResponseStatus::Ok, ResponsePayload::Ok)
-    ));
-
-    framed
-        .send(Command::Upsert {
-            namespace: namespace.into(),
-            id: "p3".into(),
-            point: p3.clone(),
-            metadata: vec![],
-            opts: None,
-        })
+    client
+        .upsert(namespace, "p3", p3.clone(), serde_json::json!({}), None)
         .await?;
-    assert!(matches!(
-        framed.next().await.unwrap()?,
-        (ResponseStatus::Ok, ResponsePayload::Ok)
-    ));
 
     // 2. Test Distance (between p1 and p2)
-    framed
-        .send(Command::Distance {
-            namespace: namespace.into(),
-            id1: "p1".into(),
-            id2: "p2".into(),
-            metric: None, // Default Haversine
-        })
-        .await?;
-
-    if let Some(Ok((status, payload))) = framed.next().await {
-        assert!(matches!(status, ResponseStatus::Ok));
-        if let ResponsePayload::OptionalDistance(Some(d)) = payload {
-            // Distance ~84km at 40N
-            assert!(
-                d > 80_000.0 && d < 90_000.0,
-                "Distance {} not in expected range",
-                d
-            );
-        } else {
-            panic!("Expected OptionalDistance(Some(f64)), got {:?}", payload);
-        }
+    // Default metric is Haversine
+    let dist = client.distance(namespace, "p1", "p2", None).await?;
+    if let Some(d) = dist {
+        // Distance ~84km at 40N.
+        // Wait, longitude change of 1 degree at 40N is ~85km.
+        assert!(
+            d > 80_000.0 && d < 90_000.0,
+            "Distance {} not in expected range",
+            d
+        );
     } else {
-        panic!("Distance failed response");
+        panic!("Expected distance, got None");
     }
 
     // 3. Test DistanceTo (p1 to origin 0,0)
-    framed
-        .send(Command::DistanceTo {
-            namespace: namespace.into(),
-            id: "p1".into(),
-            point: Point3d::new(0.0, 0.0, 0.0),
-            metric: None,
-        })
+    let dist_to = client
+        .distance_to(
+            namespace,
+            "p1",
+            spatio_types::geo::Point::new(0.0, 0.0),
+            None,
+        )
         .await?;
-    if let Some(Ok((status, payload))) = framed.next().await {
-        assert!(matches!(status, ResponseStatus::Ok));
-        if let ResponsePayload::OptionalDistance(Some(d)) = payload {
-            assert!(d > 1_000_000.0);
-        } else {
-            panic!("Expected OptionalDistance(Some(f64)), got {:?}", payload);
-        }
+    if let Some(d) = dist_to {
+        assert!(d > 1_000_000.0);
     } else {
-        panic!("DistanceTo failed response");
+        panic!("Expected distance_to, got None");
     }
 
     // 4. Test BoundingBox
-    framed
-        .send(Command::BoundingBox {
-            namespace: namespace.into(),
-        })
-        .await?;
-    if let Some(Ok((status, payload))) = framed.next().await {
-        assert!(matches!(status, ResponseStatus::Ok));
-        if let ResponsePayload::BoundingBox(bbox) = payload {
-            assert!((bbox.min_x() - -74.0).abs() < 1e-6);
-            assert!((bbox.max_x() - -73.0).abs() < 1e-6);
-            assert!((bbox.min_y() - 40.7).abs() < 1e-6);
-            assert!((bbox.max_y() - 41.7).abs() < 1e-6);
-        } else {
-            panic!("Expected BoundingBox, got {:?}", payload);
-        }
+    let bbox = client.bounding_box(namespace).await?;
+    if let Some(bbox) = bbox {
+        assert!((bbox.min_x() - -74.0).abs() < 1e-6);
+        assert!((bbox.max_x() - -73.0).abs() < 1e-6);
+        assert!((bbox.min_y() - 40.7).abs() < 1e-6);
+        assert!((bbox.max_y() - 41.7).abs() < 1e-6);
     } else {
-        panic!("BoundingBox failed response");
+        panic!("Expected BoundingBox, got None");
     }
 
     // 5. Test ConvexHull
-    framed
-        .send(Command::ConvexHull {
-            namespace: namespace.into(),
-        })
-        .await?;
-    if let Some(Ok((status, payload))) = framed.next().await {
-        assert!(matches!(status, ResponseStatus::Ok));
-        if let ResponsePayload::Polygon(poly) = payload {
-            // With 3 points, hull should be triangle (4 coords closed)
-            if poly.exterior().coords().count() < 3 {
-                panic!(
-                    "Convex Hull should have at least 3 points, got {}",
-                    poly.exterior().coords().count()
-                );
-            }
-        } else {
-            panic!("Expected Polygon, got {:?}", payload);
+    let hull = client.convex_hull(namespace).await?;
+    if let Some(poly) = hull {
+        if poly.exterior().coords().count() < 3 {
+            panic!("Convex Hull should have at least 3 points");
         }
     } else {
-        panic!("ConvexHull failed response");
+        panic!("Expected ConvexHull, got None");
     }
 
-    // 6. Test Contains (formerly QueryPolygon)
-    // Create polygon surrounding p1 (-74.0, 40.7) only
-    // Box from (-74.1, 40.6) to (-73.9, 40.8)
+    // 6. Test Contains
     let poly = Polygon::from_coords(
         &[
             (-74.1, 40.6),
@@ -182,24 +121,9 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
         vec![],
     );
 
-    framed
-        .send(Command::Contains {
-            namespace: namespace.into(),
-            polygon: poly,
-            limit: 10,
-        })
-        .await?;
-    if let Some(Ok((status, payload))) = framed.next().await {
-        assert!(matches!(status, ResponseStatus::Ok));
-        if let ResponsePayload::ObjectList(list) = payload {
-            assert_eq!(list.len(), 1);
-            assert_eq!(list[0].0, "p1");
-        } else {
-            panic!("Expected ObjectList, got {:?}", payload);
-        }
-    } else {
-        panic!("Contains failed response");
-    }
+    let contains = client.contains(namespace, poly, 10).await?;
+    assert_eq!(contains.len(), 1);
+    assert_eq!(contains[0].object_id, "p1");
 
     Ok(())
 }

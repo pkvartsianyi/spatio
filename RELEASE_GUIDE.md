@@ -30,7 +30,7 @@ Edit `Cargo.toml`:
 version = "0.1.0-alpha.11"  # Bump from current version
 ```
 
-> **Note**: This process is identical for `spatio-rpc`, `spatio-client`, and `spatio-server`. Just edit the corresponding `crates/*/Cargo.toml` file or use `just bump-<package>`.
+> **Note**: This process is identical for `spatio-client` and `spatio-server`. Just edit the corresponding `crates/*/Cargo.toml` file or use `just bump-<package>`.
 
 ### 2. Commit and Push
 

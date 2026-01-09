@@ -658,6 +658,70 @@ impl SpatialIndexManager {
         }
     }
 
+    /// Get the bounding box of all points in a namespace.
+    pub fn namespace_bbox_2d(&self, prefix: &str) -> Option<(f64, f64, f64, f64)> {
+        let tree = self.indexes.get(prefix)?;
+        if tree.size() == 0 {
+            return None;
+        }
+
+        // Use the root envelope if available and matches our needs,
+        // otherwise iterate (O(N) for that namespace is still better than O(N) for whole DB)
+        // rstar RTree::envelope() returns the AABB of the root.
+        let envelope = tree.root().envelope();
+        let min = envelope.lower();
+        let max = envelope.upper();
+
+        Some((min.x, min.y, max.x, max.y))
+    }
+
+    /// Get all points in a namespace (e.g., for convex hull).
+    pub fn namespace_points(&self, prefix: &str) -> Vec<GeoPoint> {
+        let Some(tree) = self.indexes.get(prefix) else {
+            return Vec::new();
+        };
+
+        tree.iter().map(|p| GeoPoint::new(p.x, p.y)).collect()
+    }
+
+    /// Query points within a polygon (2D).
+    ///
+    /// Performs exact polygon containment check on points within the polygon's bounding box.
+    pub fn query_within_polygon_2d(
+        &self,
+        prefix: &str,
+        polygon: &spatio_types::geo::Polygon,
+        limit: usize,
+    ) -> Vec<(f64, f64, String)> {
+        use geo::BoundingRect;
+
+        let Some(tree) = self.indexes.get(prefix) else {
+            return Vec::new();
+        };
+
+        // 1. Get polygon bbox for broad phase
+        let Some(bbox) = polygon.inner().bounding_rect() else {
+            return Vec::new();
+        };
+
+        let min = bbox.min();
+        let max = bbox.max();
+
+        let min_corner = IndexedPoint3D::new(min.x, min.y, f64::MIN, String::new());
+        let max_corner = IndexedPoint3D::new(max.x, max.y, f64::MAX, String::new());
+        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
+
+        // 2. Iterate, filter by polygon containment, then take(limit)
+        tree.locate_in_envelope_intersecting(&envelope)
+            .filter(|p| {
+                let pt = GeoPoint::new(p.x, p.y);
+                polygon.contains(&pt)
+            })
+            .take(limit)
+            .map(|p| (p.x, p.y, p.key.clone()))
+            .collect()
+    }
+
     /// Clear all indexes.
     pub fn clear(&mut self) {
         self.indexes.clear();

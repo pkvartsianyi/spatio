@@ -36,7 +36,7 @@ show_usage() {
 Usage: $0 <package> <new_version> [options]
 
 ARGUMENTS:
-    <package>        Which package to bump: 'core', 'python', 'types', 'server', 'rpc', 'client', or 'all'
+    <package>        Which package to bump: 'core', 'python', 'types', 'server', 'client', or 'all'
     <new_version>    The new version to set (e.g., 0.1.1, 0.2.0-alpha.1, 1.0.0-beta.2)
 
 OPTIONS:
@@ -49,7 +49,6 @@ EXAMPLES:
     $0 python 0.2.0                  # Bump Python package to 0.2.0
     $0 types 0.1.9                   # Bump spatio-types to 0.1.9
     $0 server 0.1.0                  # Bump spatio-server to 0.1.0
-    $0 rpc 0.1.0                     # Bump spatio-rpc to 0.1.0
     $0 client 0.1.0                  # Bump spatio-client to 0.1.0
     $0 all 0.1.9                     # Bump all packages to same version
     $0 python 0.2.0-alpha.1 --dry-run # Show what would change for Python pre-release
@@ -59,7 +58,6 @@ The script will update versions in:
     - python: crates/py/Cargo.toml (Python bindings)
     - types: crates/types/Cargo.toml (Core types)
     - server: crates/server/Cargo.toml (RPC server)
-    - rpc: crates/rpc/Cargo.toml (RPC types)
     - client: crates/client/Cargo.toml (RPC client)
     - all: All Cargo.toml files (same version)
 
@@ -110,7 +108,7 @@ done
 
 # Validate arguments
 if [[ -z "$PACKAGE" ]]; then
-    print_error "Package is required (core, python, types, server, rpc, client, or all)"
+    print_error "Package is required (core, python, types, server, client, or all)"
     show_usage
     exit 1
 fi
@@ -122,8 +120,8 @@ if [[ -z "$NEW_VERSION" ]]; then
 fi
 
 # Validate package argument
-if [[ "$PACKAGE" != "core" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "server" && "$PACKAGE" != "rpc" && "$PACKAGE" != "client" && "$PACKAGE" != "all" ]]; then
-    print_error "Invalid package: $PACKAGE. Must be 'core', 'python', 'types', 'server', 'rpc', 'client', or 'all'"
+if [[ "$PACKAGE" != "core" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "server" && "$PACKAGE" != "client" && "$PACKAGE" != "all" ]]; then
+    print_error "Invalid package: $PACKAGE. Must be 'core', 'python', 'types', 'server', 'client', or 'all'"
     show_usage
     exit 1
 fi
@@ -166,8 +164,6 @@ CURRENT_TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null 
     grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
 CURRENT_SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
     grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-CURRENT_RPC_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
-    grep -o '"name":"spatio-rpc","version":"[^"]*"' | head -1 | cut -d'"' -f8)
 CURRENT_CLIENT_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
     grep -o '"name":"spatio-client","version":"[^"]*"' | head -1 | cut -d'"' -f8)
 
@@ -184,9 +180,6 @@ fi
 if [[ -z "$CURRENT_SERVER_VERSION" ]]; then
     CURRENT_SERVER_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/server/Cargo.toml)
 fi
-if [[ -z "$CURRENT_RPC_VERSION" ]]; then
-    CURRENT_RPC_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/rpc/Cargo.toml)
-fi
 if [[ -z "$CURRENT_CLIENT_VERSION" ]]; then
     CURRENT_CLIENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/client/Cargo.toml)
 fi
@@ -196,7 +189,6 @@ print_info "  spatio (core): $CURRENT_CORE_VERSION"
 print_info "  spatio-py: $CURRENT_PYTHON_VERSION"
 print_info "  spatio-types: $CURRENT_TYPES_VERSION"
 print_info "  spatio-server: $CURRENT_SERVER_VERSION"
-print_info "  spatio-rpc: $CURRENT_RPC_VERSION"
 print_info "  spatio-client: $CURRENT_CLIENT_VERSION"
 print_info ""
 print_info "Updating: $PACKAGE"
@@ -217,14 +209,11 @@ case "$PACKAGE" in
     "server")
         FILES_TO_UPDATE=("crates/server/Cargo.toml")
         ;;
-    "rpc")
-        FILES_TO_UPDATE=("crates/rpc/Cargo.toml")
-        ;;
     "client")
         FILES_TO_UPDATE=("crates/client/Cargo.toml")
         ;;
     "all")
-        FILES_TO_UPDATE=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/rpc/Cargo.toml" "crates/client/Cargo.toml")
+        FILES_TO_UPDATE=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml")
         ;;
 esac
 
@@ -435,14 +424,11 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
         "server")
             FILES_TO_ADD=("crates/server/Cargo.toml" "Cargo.lock")
             ;;
-        "rpc")
-            FILES_TO_ADD=("crates/rpc/Cargo.toml" "Cargo.lock")
-            ;;
         "client")
             FILES_TO_ADD=("crates/client/Cargo.toml" "Cargo.lock")
             ;;
         "all")
-            FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/rpc/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
             ;;
     esac
 
@@ -499,10 +485,6 @@ case "$PACKAGE" in
         print_info "  - Create GitHub release with server-v$NEW_VERSION tag"
         print_info "  - Publish spatio-server to crates.io"
         ;;
-    "rpc")
-        print_info "  - Create GitHub release with rpc-v$NEW_VERSION tag"
-        print_info "  - Publish spatio-rpc to crates.io"
-        ;;
     "client")
         print_info "  - Create GitHub release with client-v$NEW_VERSION tag"
         print_info "  - Publish spatio-client to crates.io"
@@ -513,7 +495,6 @@ case "$PACKAGE" in
         print_info "  - Publish spatio-py to PyPI"
         print_info "  - Publish spatio-types to crates.io"
         print_info "  - Publish spatio-server to crates.io"
-        print_info "  - Publish spatio-rpc to crates.io"
         print_info "  - Publish spatio-client to crates.io"
         ;;
 esac

@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - "crates/types/Cargo.toml"
-      - "crates/rpc/Cargo.toml"
       - "crates/client/Cargo.toml"
       - "crates/core/Cargo.toml"
       - "crates/py/Cargo.toml"
@@ -34,9 +33,6 @@ jobs:
       python-version: ${{ steps.check-python.outputs.version }}
       server-version: ${{ steps.check-server.outputs.version }}
       types-previous: ${{ steps.check-types.outputs.previous }}
-      rpc-changed: ${{ steps.check-rpc.outputs.changed }}
-      rpc-version: ${{ steps.check-rpc.outputs.version }}
-      rpc-previous: ${{ steps.check-rpc.outputs.previous }}
       client-changed: ${{ steps.check-client.outputs.changed }}
       client-version: ${{ steps.check-client.outputs.version }}
       client-previous: ${{ steps.check-client.outputs.previous }}
@@ -62,25 +58,6 @@ jobs:
           PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/types/Cargo.toml | tail -1)
           if [ -n "$PREVIOUS_COMMIT" ]; then
             PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/types/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check spatio-rpc version changes
-        id: check-rpc
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/rpc/Cargo.toml)
-          TAG_NAME="rpc-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/rpc/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/rpc/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
           else
             PREVIOUS_VERSION=""
           fi
@@ -170,7 +147,6 @@ jobs:
           echo "| Crate | Previous | Current | Changed |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-types | ${{ steps.check-types.outputs.previous }} | ${{ steps.check-types.outputs.version }} | ${{ steps.check-types.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-rpc | ${{ steps.check-rpc.outputs.previous }} | ${{ steps.check-rpc.outputs.version }} | ${{ steps.check-rpc.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-client | ${{ steps.check-client.outputs.previous }} | ${{ steps.check-client.outputs.version }} | ${{ steps.check-client.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio | ${{ steps.check-core.outputs.previous }} | ${{ steps.check-core.outputs.version }} | ${{ steps.check-core.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-py | ${{ steps.check-python.outputs.previous }} | ${{ steps.check-python.outputs.version }} | ${{ steps.check-python.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
@@ -208,36 +184,6 @@ jobs:
       - run: cargo test -p spatio-types --doc
       - run: cd crates/types && cargo package --allow-dirty
         if: matrix.os == 'ubuntu-latest'
-
-  test-rpc:
-    name: Test spatio-rpc (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.rpc-changed == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-rpc-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio-rpc --all-targets --all-features -- -D warnings
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio-rpc --all-features --verbose
-      - run: cargo test -p spatio-rpc --all-features --verbose
-      - run: cargo test -p spatio-rpc --doc
 
   test-client:
     name: Test spatio-client (${{ matrix.os }})
@@ -403,76 +349,15 @@ jobs:
           git tag "$TAG" -m "Release spatio-types $VERSION"
           git push origin "$TAG"
 
-  release-rpc:
-    name: Release spatio-rpc
-    runs-on: ubuntu-latest
-    needs: [test-rpc, detect-changes, release-types]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.rpc-changed == 'true' &&
-      needs.test-rpc.result == 'success' &&
-      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Wait for spatio-types to be available on crates.io
-        if: needs.release-types.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-types v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          echo "Warning: spatio-types v$VERSION not confirmed on crates.io after $MAX_ATTEMPTS attempts"
-          exit 0
-
-      - name: Publish spatio-rpc to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/rpc
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.rpc-version }}"
-          TAG="rpc-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-rpc $VERSION"
-          git push origin "$TAG"
-
   release-client:
     name: Release spatio-client
     runs-on: ubuntu-latest
-    needs: [test-client, detect-changes, release-rpc]
+    needs: [test-client, detect-changes, release-server]
     if: |
       always() &&
       needs.detect-changes.outputs.client-changed == 'true' &&
       needs.test-client.result == 'success' &&
-      (needs.release-rpc.result == 'success' || needs.release-rpc.result == 'skipped')
+      (needs.release-server.result == 'success' || needs.release-server.result == 'skipped')
     permissions:
       contents: write
     steps:
@@ -481,22 +366,22 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio-rpc to be available on crates.io
-        if: needs.release-rpc.result == 'success'
+      - name: Wait for spatio-server to be available on crates.io
+        if: needs.release-server.result == 'success'
         run: |
-          VERSION="${{ needs.detect-changes.outputs.rpc-version }}"
+          VERSION="${{ needs.detect-changes.outputs.server-version }}"
           MAX_ATTEMPTS=10
           ATTEMPT=1
           SLEEP_TIME=5
 
-          echo "Waiting for spatio-rpc v$VERSION to be available on crates.io..."
+          echo "Waiting for spatio-server v$VERSION to be available on crates.io..."
 
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
             sleep $SLEEP_TIME
 
-            if curl -sf "https://crates.io/api/v1/crates/spatio-rpc" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-rpc v$VERSION is now available on crates.io"
+            if curl -sf "https://crates.io/api/v1/crates/spatio-server" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio-server v$VERSION is now available on crates.io"
               exit 0
             fi
 
@@ -593,13 +478,13 @@ jobs:
   release-server:
     name: Release spatio server
     runs-on: ubuntu-latest
-    needs: [test-server, detect-changes, release-rpc]
+    needs: [test-server, detect-changes, release-types]
     if: |
       always() &&
       needs.detect-changes.outputs.server-changed == 'true' &&
       needs.test-server.result == 'success' &&
-      (needs.release-rpc.result == 'success' || needs.release-rpc.result == 'skipped') &&
-      needs.release-rpc.result != 'failure'
+      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped') &&
+      needs.release-types.result != 'failure'
     permissions:
       contents: write
     steps:
@@ -608,22 +493,22 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio-rpc to be available on crates.io
-        if: needs.release-rpc.result == 'success'
+      - name: Wait for spatio-types to be available on crates.io
+        if: needs.release-types.result == 'success'
         run: |
-          VERSION="${{ needs.detect-changes.outputs.rpc-version }}"
+          VERSION="${{ needs.detect-changes.outputs.types-version }}"
           MAX_ATTEMPTS=10
           ATTEMPT=1
           SLEEP_TIME=5
 
-          echo "Waiting for spatio-rpc v$VERSION to be available on crates.io..."
+          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
 
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
             sleep $SLEEP_TIME
 
-            if curl -sf "https://crates.io/api/v1/crates/spatio-rpc" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-rpc v$VERSION is now available on crates.io"
+            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio-types v$VERSION is now available on crates.io"
               exit 0
             fi
 
@@ -784,7 +669,7 @@ jobs:
   summary:
     name: Release Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, release-types, release-rpc, release-client, release-core, release-server, publish-to-pypi, build-and-push-docker]
+    needs: [detect-changes, release-types, release-client, release-core, release-server, publish-to-pypi, build-and-push-docker]
     if: always()
     steps:
       - run: |
@@ -793,9 +678,7 @@ jobs:
           echo "| Crate | Version | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-types | ${{ needs.detect-changes.outputs.types-version }} | ${{ needs.release-types.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-rpc | ${{ needs.detect-changes.outputs.rpc-version }} | ${{ needs.release-rpc.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-client | ${{ needs.detect-changes.outputs.client-version }} | ${{ needs.release-client.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio | ${{ needs.detect-changes.outputs.core-version }} | ${{ needs.release-core.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-py | ${{ needs.detect-changes.outputs.python-version }} | ${{ needs.publish-to-pypi.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-server | ${{ needs.detect-changes.outputs.server-version }} | ${{ needs.release-server.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| docker-image | ${{ needs.detect-changes.outputs.server-version }} | ${{ needs.build-and-push-docker.result }} |" >> $GITHUB_STEP_SUMMARY

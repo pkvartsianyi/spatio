@@ -1,82 +1,28 @@
-use futures::SinkExt;
-use spatio::Spatio;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
-use tokio_stream::StreamExt;
-use tokio_util::codec::Framed;
-use tracing::{debug, error, info};
+//! Spatio Server
+//!
+//! High-performance server for Spatio spatio-temporal database.
+//!
+//! # Transports
+//!
+//! - **RPC** (default): High-performance tarpc-based transport
+//! - **HTTP** (optional): REST API, enable with `http` feature
+//!
+//! # Example
+//!
+//! ```ignore
+//! use spatio_server::run_server;
+//!
+//! run_server(addr, db, shutdown).await?;
+//! ```
 
 pub mod handler;
+pub mod protocol;
+pub mod transport;
 
-use crate::handler::Handler;
-pub use spatio_rpc as rpc;
-pub use spatio_rpc::{RpcClientCodec, RpcServerCodec};
-use std::future::Future;
-use tokio::time::{Duration, timeout};
+// Re-export protocol types for client usage
+pub use protocol::{
+    CurrentLocation, LocationUpdate, SpatioService, SpatioServiceClient, Stats, UpsertOptions,
+};
 
-const CONN_TIMEOUT: Duration = Duration::from_secs(30);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-
-pub struct AppState {
-    pub handler: Arc<Handler>,
-}
-
-pub async fn run_server(
-    addr: SocketAddr,
-    db: Arc<Spatio>,
-    mut shutdown: impl Future<Output = ()> + Unpin + Send + 'static,
-) -> anyhow::Result<()> {
-    let state = Arc::new(AppState {
-        handler: Arc::new(crate::handler::Handler::new(db)),
-    });
-
-    let listener = TcpListener::bind(addr).await?;
-    info!("Spatio RPC Server listening on {}", addr);
-
-    loop {
-        tokio::select! {
-            accept_res = listener.accept() => {
-                match accept_res {
-                    Ok((socket, _)) => {
-                        let state = state.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_connection(socket, state).await {
-                                debug!("Connection closed: {}", e);
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("Accept error: {}", e);
-                    }
-                }
-            }
-            _ = &mut shutdown => {
-                info!("Shutdown signal received, stopping server...");
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn handle_connection(socket: TcpStream, state: Arc<AppState>) -> anyhow::Result<()> {
-    let mut framed = Framed::new(socket, RpcServerCodec);
-
-    while let Ok(Some(request)) = timeout(IDLE_TIMEOUT, framed.next()).await {
-        match request {
-            Ok(cmd) => {
-                debug!("Received command: {:?}", cmd);
-                let response = state.handler.handle(cmd).await;
-                timeout(CONN_TIMEOUT, framed.send(response)).await??;
-            }
-            Err(e) => {
-                error!("Failed to decode frame: {}", e);
-                return Err(e);
-            }
-        }
-    }
-
-    Ok(())
-}
+// Re-export default transport for convenience
+pub use transport::rpc::run_server;
