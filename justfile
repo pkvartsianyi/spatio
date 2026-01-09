@@ -151,3 +151,13 @@ lint-all: lint py-lint
 clean-all: clean py-clean
 
 ci-all: ci py-ci
+
+# Docker commands
+# ===============
+
+docker-build-server:
+    docker build -f crates/server/Dockerfile -t spatio-server:latest .
+
+docker-run-server:
+    docker run -it --rm -p 3000:3000 spatio-server:latest
+

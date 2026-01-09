@@ -651,6 +651,50 @@ jobs:
           git tag "$TAG" -m "Release spatio-server $VERSION"
           git push origin "$TAG"
 
+  build-and-push-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [test-server, detect-changes]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.server-changed == 'true' &&
+      needs.test-server.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}-server
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ needs.detect-changes.outputs.server-version }}
+            type=sha,prefix=
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: crates/server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
   build-python-artifacts:
     name: Build Python Wheels (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -740,7 +784,7 @@ jobs:
   summary:
     name: Release Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, release-types, release-rpc, release-client, release-core, release-server, publish-to-pypi]
+    needs: [detect-changes, release-types, release-rpc, release-client, release-core, release-server, publish-to-pypi, build-and-push-docker]
     if: always()
     steps:
       - run: |
@@ -754,3 +798,4 @@ jobs:
           echo "| spatio | ${{ needs.detect-changes.outputs.core-version }} | ${{ needs.release-core.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-py | ${{ needs.detect-changes.outputs.python-version }} | ${{ needs.publish-to-pypi.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-server | ${{ needs.detect-changes.outputs.server-version }} | ${{ needs.release-server.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docker-image | ${{ needs.detect-changes.outputs.server-version }} | ${{ needs.build-and-push-docker.result }} |" >> $GITHUB_STEP_SUMMARY
