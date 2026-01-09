@@ -2252,6 +2252,7 @@ dependencies = [
  "spatio-client",
  "spatio-server",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2282,7 +2283,7 @@ dependencies = [
  "spatio-client",
  "spatio-types",
  "tarpc",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-serde 0.9.0",
  "tokio-stream",

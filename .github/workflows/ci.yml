@@ -68,29 +68,32 @@ jobs:
 
       # Rust building
       - name: Build spatio-types
-        run: cargo build -p spatio-types --verbose
+        run: cargo build -p spatio-types
 
       - name: Build spatio (default features)
-        run: cargo build -p spatio --verbose
+        run: cargo build -p spatio
 
       - name: Build spatio (all features)
-        run: cargo build -p spatio --all-features --verbose
+        run: cargo build -p spatio --all-features
 
       - name: Build spatio-server
-        run: cargo build -p spatio-server --all-features --verbose
+        run: cargo build -p spatio-server --all-features
 
       # Rust testing
       - name: Run tests (spatio-types)
-        run: cargo test -p spatio-types --verbose
+        run: cargo test -p spatio-types
 
       - name: Run tests (spatio - default features)
-        run: cargo test -p spatio --verbose
+        run: cargo test -p spatio
 
       - name: Run tests (spatio - all features)
-        run: cargo test -p spatio --all-features --verbose
+        run: cargo test -p spatio --all-features
 
       - name: Run tests (spatio-server)
-        run: cargo test -p spatio-server --all-features --verbose
+        run: cargo test -p spatio-server --all-features
+
+      - name: Run tests (spatio-integration-tests)
+        run: cargo test -p spatio-integration-tests --all-features
 
       - name: Run doc tests
         run: cargo test -p spatio -p spatio-types -p spatio-server --doc
@@ -110,7 +113,7 @@ jobs:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
           echo "Building Python package..."
-          maturin build --out dist --verbose
+          maturin build --out dist
 
       - name: Install Python package
         working-directory: crates/py
@@ -123,7 +126,7 @@ jobs:
             exit 1
           fi
           echo "Found wheel file: $wheel_file"
-          pip install "$wheel_file" --force-reinstall --no-deps --verbose
+          pip install "$wheel_file" --force-reinstall --no-deps
           echo "Verifying installation..."
           python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
 
@@ -165,10 +168,10 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build spatio
-        run: cargo build -p spatio --all-features --verbose
+        run: cargo build -p spatio --all-features
 
       - name: Run tests
-        run: cargo test -p spatio -p spatio-types -p spatio-server --all-features --verbose
+        run: cargo test -p spatio -p spatio-types -p spatio-server -p spatio-integration-tests --all-features
 
   # Check documentation builds
   docs:

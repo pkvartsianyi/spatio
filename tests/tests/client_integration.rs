@@ -5,6 +5,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 async fn spawn_test_server() -> anyhow::Result<std::net::SocketAddr> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "spatio_server=info,spatio=info,info".into()),
+        )
+        .try_init()
+        .ok();
     let db = Arc::new(Spatio::builder().build()?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;

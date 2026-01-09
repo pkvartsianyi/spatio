@@ -7,8 +7,11 @@ default:
 build:
     cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client --release
 
-test:
-    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client --all-features
+test *args:
+    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-integration-tests --all-features -- {{args}}
+
+test-integration *args:
+    cargo test -p spatio-integration-tests --all-features -- {{args}}
 
 lint:
     cargo fmt --all
