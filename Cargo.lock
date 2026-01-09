@@ -2196,7 +2196,7 @@ dependencies = [
 
 [[package]]
 name = "spatio"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "bincode 2.0.1",
  "bytes",
