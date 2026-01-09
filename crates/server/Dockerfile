@@ -1,3 +1,4 @@
+# Builder stage
 FROM rustlang/rust:nightly AS builder
 
 WORKDIR /app
@@ -6,18 +7,32 @@ COPY . .
 # Build the server binary
 RUN cargo build --release --bin spatio-server
 
-# Runtime stage
-FROM debian:bookworm-slim
+# TzData stage
+FROM cgr.dev/chainguard/wolfi-base AS tzdata
+RUN apk add --no-cache tzdata
 
-# Install OpenSSL for dependencies if needed (though pure rust deps might not need it, it's safer for networking)
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+# Setup stage (for permissions)
+FROM cgr.dev/chainguard/wolfi-base AS setup
+RUN mkdir /data \
+    && chown 65532:65532 /data \
+    && chmod 777 /data
 
-WORKDIR /app
+# Final stage
+FROM cgr.dev/chainguard/glibc-dynamic:latest
 
-COPY --from=builder /app/target/release/spatio-server /usr/local/bin/
+# Copy timezone data
+COPY --from=tzdata /usr/share/zoneinfo /usr/share/zoneinfo
 
-# Expose the default port
-EXPOSE 3000
+# Copy data directory with permissions
+COPY --from=setup --chown=65532:65532 /data /data
 
-# Run the server binding to all interfaces
+# Copy binary
+COPY --from=builder /app/target/release/spatio-server /usr/local/bin/spatio-server
+
+# User nonroot (65532)
+USER 65532:65532
+
+VOLUME ["/data"]
+
 ENTRYPOINT ["spatio-server", "--host", "0.0.0.0"]
+CMD ["--data-dir", "/data/spatio.db"]
