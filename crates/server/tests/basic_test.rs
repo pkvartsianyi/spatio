@@ -11,11 +11,10 @@ async fn test_rpc_lifecycle() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     let server_db = db.clone();
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, server_db, futures::future::pending()).await;
+        let _ = run_server(listener, server_db, futures::future::pending()).await;
     });
 
     // Wait for server to start
@@ -50,11 +49,10 @@ async fn test_trajectory_rpc() -> anyhow::Result<()> {
     let db = Arc::new(Spatio::builder().build()?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     let server_db = db.clone();
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, server_db, futures::future::pending()).await;
+        let _ = run_server(listener, server_db, futures::future::pending()).await;
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

@@ -28,10 +28,9 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, server_db, futures::future::pending()).await;
+        let _ = run_server(listener, server_db, futures::future::pending()).await;
     });
 
     // Give server a moment to bind (since we dropped the listener, it has to rebind)

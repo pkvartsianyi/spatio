@@ -48,4 +48,4 @@ http = ["axum", "tower"]
 
 [dev-dependencies]
 tokio-test = "0.4"
-spatio-client = { path = "../client", workspace = true }
+spatio-client = { workspace = true }

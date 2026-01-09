@@ -12,10 +12,9 @@ async fn test_max_frame_size() -> anyhow::Result<()> {
     let db = Arc::new(Spatio::builder().build()?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, db, futures::future::pending()).await;
+        let _ = run_server(listener, db, futures::future::pending()).await;
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -46,10 +45,9 @@ async fn test_idle_timeout() -> anyhow::Result<()> {
     let db = Arc::new(Spatio::builder().build()?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     tokio::spawn(async move {
-        let _ = run_server(bound_addr, db, futures::future::pending()).await;
+        let _ = run_server(listener, db, futures::future::pending()).await;
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

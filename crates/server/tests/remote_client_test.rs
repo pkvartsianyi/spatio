@@ -12,12 +12,11 @@ async fn test_remote_client_ops() -> anyhow::Result<()> {
     let db = Arc::new(Spatio::builder().build()?);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
-    drop(listener);
 
     let db_for_server = db.clone();
     tokio::spawn(async move {
         let _ =
-            spatio_server::run_server(bound_addr, db_for_server, futures::future::pending()).await;
+            spatio_server::run_server(listener, db_for_server, futures::future::pending()).await;
     });
 
     // Wait for server to start
