@@ -2242,6 +2242,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatio-integration-tests"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "serde_json",
+ "spatio",
+ "spatio-client",
+ "spatio-server",
+ "tokio",
+]
+
+[[package]]
 name = "spatio-py"
 version = "0.2.2"
 dependencies = [

@@ -6,6 +6,7 @@ members = [
     "crates/types",
     "crates/server",
     "crates/client",
+    "tests",
 ]
 
 [workspace.package]
@@ -39,6 +40,9 @@ smallvec = "1.11"
 thiserror = "2.0.17"
 toml = "0.9.8"
 uuid = { version = "1.0", features = ["v4"] }
+anyhow = "1.0"
+futures = "0.3"
+tokio = { version = "1.37", features = ["full"] }
 
 # Python bindings
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
