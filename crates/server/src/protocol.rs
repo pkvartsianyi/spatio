@@ -2,6 +2,8 @@
 //!
 //! This module contains the service trait and types used for RPC communication.
 
+#![allow(clippy::too_many_arguments)]
+
 use serde::{Deserialize, Serialize};
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
@@ -32,6 +34,7 @@ pub struct CurrentLocation {
     pub metadata: Vec<u8>,
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tarpc::service]
 pub trait SpatioService {
     async fn upsert(

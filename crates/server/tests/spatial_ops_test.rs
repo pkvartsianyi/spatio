@@ -2,14 +2,13 @@ use spatio::{Point3d, Spatio};
 use spatio_client::SpatioClient;
 use spatio_server::run_server;
 use spatio_types::geo::Polygon;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
     tracing_subscriber::fmt::try_init().ok();
     // Setup server
-    let addr: SocketAddr = "127.0.0.1:0".parse()?;
+    let _addr: std::net::SocketAddr = "127.0.0.1:0".parse()?;
     let db = Arc::new(Spatio::builder().build()?);
     let server_db = db.clone();
 

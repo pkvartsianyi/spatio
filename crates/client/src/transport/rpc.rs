@@ -2,6 +2,8 @@
 //!
 //! This is the default high-performance RPC client.
 
+#![allow(clippy::too_many_arguments)]
+
 use spatio_server::SpatioServiceClient;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;

@@ -1,7 +1,6 @@
 use spatio::{Point3d, Spatio};
 use spatio_client::SpatioClient;
 use spatio_server::run_server;
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 #[tokio::test]

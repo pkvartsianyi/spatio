@@ -1,7 +1,6 @@
 use spatio::Spatio;
 use spatio_client::SpatioClient;
 use spatio_server::run_server;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -57,8 +56,8 @@ async fn test_idle_timeout() -> anyhow::Result<()> {
 
     // Connect with SpatioClient and verify stats works
     let client = SpatioClient::connect(bound_addr).await?;
-    let stats = client.stats().await?;
-    assert!(stats.object_count >= 0);
+    // Just verify stats() works - the value itself is usize so always >= 0
+    let _stats = client.stats().await?;
 
     Ok(())
 }

@@ -242,7 +242,7 @@ impl SpatioService for Handler {
             .map(|(ts, p, _meta)| {
                 // Note: Current DB insert_trajectory uses TemporalPoint (2D) and drops Z/metadata
                 let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(ts);
-                spatio::config::TemporalPoint::new(p.point_2d().clone(), timestamp)
+                spatio::config::TemporalPoint::new(*p.point_2d(), timestamp)
             })
             .collect();
 

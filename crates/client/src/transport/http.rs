@@ -20,6 +20,7 @@ use std::time::Duration;
 
 /// HTTP client for Spatio (placeholder)
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct SpatioHttpClient {
     base_url: String,
     // TODO: reqwest::Client
