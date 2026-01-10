@@ -40,7 +40,8 @@ pub use error::{Result, SpatioError};
 #[cfg(feature = "sync")]
 pub use db::SyncDB;
 
-pub type Spatio = DB;
+#[doc(inline)]
+pub use db::DB as Spatio;
 
 pub use geo::Rect;
 pub use spatio_types::geo::{Point, Polygon};

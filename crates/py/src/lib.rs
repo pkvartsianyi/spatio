@@ -8,7 +8,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Spatio};
+use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Polygon as RustPolygon, Spatio};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -162,6 +162,60 @@ impl PyTemporalPoint {
         format!(
             "TemporalPoint(point={:?}, timestamp={})",
             self.point, self.timestamp
+        )
+    }
+}
+
+/// Python wrapper for Polygon
+#[pyclass(name = "Polygon")]
+#[derive(Clone, Debug)]
+pub struct PyPolygon {
+    inner: RustPolygon,
+}
+
+#[pymethods]
+impl PyPolygon {
+    #[new]
+    #[pyo3(signature = (exterior, interiors=None))]
+    fn new(exterior: Vec<(f64, f64)>, interiors: Option<Vec<Vec<(f64, f64)>>>) -> PyResult<Self> {
+        let interior_coords = interiors.unwrap_or_default();
+        Ok(PyPolygon {
+            inner: RustPolygon::from_coords(&exterior, interior_coords),
+        })
+    }
+
+    #[getter]
+    fn exterior(&self) -> Vec<(f64, f64)> {
+        self.inner.exterior().coords().map(|c| (c.x, c.y)).collect()
+    }
+
+    #[getter]
+    fn interiors(&self) -> Vec<Vec<(f64, f64)>> {
+        self.inner
+            .interiors()
+            .iter()
+            .map(|ring| ring.coords().map(|c| (c.x, c.y)).collect())
+            .collect()
+    }
+
+    fn to_geojson(&self) -> PyResult<String> {
+        self.inner
+            .to_geojson()
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[staticmethod]
+    fn from_geojson(json: &str) -> PyResult<Self> {
+        let inner =
+            RustPolygon::from_geojson(json).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyPolygon { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Polygon(exterior_points={}, interiors={})",
+            self.inner.exterior().coords().count(),
+            self.inner.interiors().len()
         )
     }
 }
@@ -615,6 +669,102 @@ impl PySpatio {
         })
     }
 
+    /// Get current location of an object
+    #[pyo3(signature = (namespace, object_id))]
+    fn get(&self, namespace: &str, object_id: &str) -> PyResult<Option<Py<PyAny>>> {
+        let result = handle_error(self.db.get(namespace, object_id))?;
+
+        if let Some(loc) = result {
+            Python::attach(|py| {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                let ts = loc
+                    .timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64();
+
+                // (point, metadata, timestamp)
+                let tuple = (py_point, py_meta, ts).into_pyobject(py)?;
+                Ok(Some(tuple.unbind().into_any()))
+            })
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Delete an object
+    #[pyo3(signature = (namespace, object_id))]
+    fn delete(&self, namespace: &str, object_id: &str) -> PyResult<()> {
+        handle_error(self.db.delete(namespace, object_id))
+    }
+
+    /// Query objects within a polygon
+    #[pyo3(signature = (namespace, polygon, limit=100))]
+    fn query_polygon(
+        &self,
+        namespace: &str,
+        polygon: &PyPolygon,
+        limit: usize,
+    ) -> PyResult<Py<PyList>> {
+        let results = handle_error(self.db.query_polygon(namespace, &polygon.inner, limit))?;
+
+        Python::attach(|py| {
+            let py_list = PyList::empty(py);
+            for loc in results {
+                let py_point = PyPoint {
+                    inner: loc.position,
+                };
+                let py_meta = pythonize::pythonize(py, &loc.metadata)?;
+                // (object_id, point, metadata)
+                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                py_list.append(tuple)?;
+            }
+            Ok(py_list.unbind())
+        })
+    }
+
+    /// Calculate distance between two objects
+    #[pyo3(signature = (namespace, id1, id2, metric))]
+    fn distance_between(
+        &self,
+        namespace: &str,
+        id1: &str,
+        id2: &str,
+        metric: &PyDistanceMetric,
+    ) -> PyResult<Option<f64>> {
+        handle_error(self.db.distance_between(namespace, id1, id2, metric.inner))
+    }
+
+    /// Calculate distance from object to point
+    #[pyo3(signature = (namespace, id, point, metric))]
+    fn distance_to(
+        &self,
+        namespace: &str,
+        id: &str,
+        point: &PyPoint,
+        metric: &PyDistanceMetric,
+    ) -> PyResult<Option<f64>> {
+        let p = spatio::Point::new(point.inner.x(), point.inner.y());
+        handle_error(self.db.distance_to(namespace, id, &p, metric.inner))
+    }
+
+    /// Compute convex hull
+    #[pyo3(signature = (namespace))]
+    fn convex_hull(&self, namespace: &str) -> PyResult<Option<PyPolygon>> {
+        let result = handle_error(self.db.convex_hull(namespace))?;
+        Ok(result.map(|inner| PyPolygon { inner }))
+    }
+
+    /// Compute bounding box
+    #[pyo3(signature = (namespace))]
+    fn bounding_box(&self, namespace: &str) -> PyResult<Option<(f64, f64, f64, f64)>> {
+        let result = handle_error(self.db.bounding_box(namespace))?;
+        Ok(result.map(|rect| (rect.min().x, rect.min().y, rect.max().x, rect.max().y)))
+    }
+
     /// Get database statistics
     fn stats(&self) -> PyResult<Py<PyAny>> {
         let stats = self.db.stats();
@@ -664,6 +814,7 @@ impl PySetOptions {
 #[pymodule]
 fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpatio>()?;
+    m.add_class::<PyPolygon>()?;
     m.add_class::<PyPoint>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;

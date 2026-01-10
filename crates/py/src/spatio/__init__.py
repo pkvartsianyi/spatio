@@ -30,6 +30,8 @@ from spatio._spatio import Point as _Point
 from spatio._spatio import TemporalPoint as _TemporalPoint
 from spatio._spatio import SetOptions as _SetOptions
 from spatio._spatio import Spatio as _Spatio
+from spatio._spatio import Polygon as _Polygon
+from spatio._spatio import DistanceMetric as _DistanceMetric
 from spatio._spatio import __version__
 
 # Re-export main classes
@@ -39,6 +41,8 @@ __all__ = [
     "TemporalPoint",
     "SetOptions",
     "Spatio",
+    "Polygon",
+    "DistanceMetric",
     "__version__",
 ]
 
@@ -48,6 +52,8 @@ Point = _Point
 TemporalPoint = _TemporalPoint
 SetOptions = _SetOptions
 Config = _Config
+Polygon = _Polygon
+DistanceMetric = _DistanceMetric
 
 # Package metadata
 __author__ = "Petro Kvartsianyi"
