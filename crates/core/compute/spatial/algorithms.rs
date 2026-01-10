@@ -22,7 +22,7 @@ pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) 
     }
 }
 
-/// Helper struct for KNN heap ordering (max-heap by distance, so we pop largest)
+/// Helper struct for KNN heap ordering (max-heap by distance, so largest is popped)
 #[derive(Clone)]
 struct KnnEntry<'a, T> {
     point: Point,
@@ -311,7 +311,7 @@ pub fn expand_bbox(bbox: &Rect, distance_meters: f64) -> Rect {
     let min_y = (bbox.min().y - lat_offset).max(-90.0);
     let max_y = (bbox.max().y + lat_offset).min(90.0);
 
-    // Longitude expansion depends on latitude. We use the latitude closest to the pole
+    // Longitude expansion depends on latitude. Latitude closest to the pole
     // (max absolute latitude) to be conservative (larger expansion).
     let max_abs_lat = bbox.min().y.abs().max(bbox.max().y.abs());
 

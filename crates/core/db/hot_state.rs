@@ -76,7 +76,7 @@ impl HotState {
         let pos_z = new_location.position.z();
 
         // Atomic update in main map (DashMap handles concurrency)
-        // We only update if the new timestamp is newer than or equal to existing
+        // Update only if the new timestamp is newer than or equal to existing
         enum UpdateAction {
             Updated(CurrentLocation),
             Inserted,
@@ -117,7 +117,7 @@ impl HotState {
                 Ok(None)
             }
             UpdateAction::Ignored => {
-                // Return None to indicate no change (or we could return the current value?)
+                // Return None to indicate no change (or return the current value?)
                 // For now, None mimics "no old value replaced" which is technically true
                 Ok(None)
             }

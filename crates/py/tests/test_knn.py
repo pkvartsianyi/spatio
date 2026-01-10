@@ -64,12 +64,12 @@ def test_knn_3d(db):
     # Query from (0,0, 100)
     results = db.knn(namespace, Point(0, 0, 100), 10)
     
-    # Check that we got results back and they have valid structure
+    # Check that results were obtained and have valid structure
     assert len(results) >= 2
     ids = [r[0] for r in results]
     
     # due to unweighted R-tree metric (deg vs meters), 'far' (1 deg) is "closer" than 'air' (900m) in the index space.
-    # We just verify that the wrapper correctly returns 3D points.
+    # Verify that the wrapper correctly returns 3D points.
     assert "ground" in ids
     
     air_point = next(p for i, p, m, d in results if i == "air")

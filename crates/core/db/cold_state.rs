@@ -14,6 +14,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::config::PersistenceConfig;
 use crate::error::Result;
 
 /// Single location update in history
@@ -35,20 +36,24 @@ pub struct ColdState {
 
     /// Buffer size per object (e.g., last 100 updates)
     buffer_capacity: usize,
+
+    #[allow(dead_code)] // Used for debug/inspection
+    config: PersistenceConfig,
 }
 
 impl ColdState {
     /// Create a new cold state
-    pub fn new(log_path: &Path, buffer_capacity: usize) -> Result<Self> {
+    pub fn new(log_path: &Path, buffer_capacity: usize, config: PersistenceConfig) -> Result<Self> {
         // Ensure directory exists
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open(log_path)?),
+            trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size)?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
+            config,
         })
     }
 
@@ -115,6 +120,12 @@ impl ColdState {
         Ok(())
     }
 
+    /// Force flush of the trajectory log to disk
+    pub fn flush(&self) -> Result<()> {
+        let mut log = self.trajectory_log.lock();
+        log.flush()
+    }
+
     /// Query trajectory history
     pub fn query_trajectory(
         &self,
@@ -154,7 +165,7 @@ impl ColdState {
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(file);
 
-        // Use a set to track timestamps we already have from buffer
+        // Use a set to track timestamps already retrieved from buffer
         let buffer_timestamps: std::collections::HashSet<SystemTime> =
             from_buffer.iter().map(|u| u.timestamp).collect();
 
@@ -342,15 +353,19 @@ impl ColdState {
 struct TrajectoryLog {
     writer: BufWriter<File>,
     path: std::path::PathBuf,
+    pending_writes: usize,
+    buffer_limit: usize,
 }
 
 impl TrajectoryLog {
-    fn open(path: &Path) -> Result<Self> {
+    fn open(path: &Path, buffer_limit: usize) -> Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self {
             writer: BufWriter::new(file),
             path: path.to_path_buf(),
+            pending_writes: 0,
+            buffer_limit,
         })
     }
 
@@ -371,9 +386,9 @@ impl TrajectoryLog {
         let json_str =
             serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
 
-        // We use a simple pipe-separated format
+        // Use a simple pipe-separated format
         // Note: This assumes namespace and object_id don't contain pipes.
-        // In a real impl, we'd escape or use binary format.
+        // In a real impl, specialized escaping or binary format should be used.
         writeln!(
             self.writer,
             "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
@@ -387,11 +402,18 @@ impl TrajectoryLog {
             json_str,
         )?;
 
-        // Flush periodically or on every write?
-        // For durability, we flush on every write (slower but safer)
-        // In production, we might want to buffer more.
-        self.writer.flush()?;
+        self.pending_writes += 1;
+        if self.pending_writes >= self.buffer_limit {
+            self.writer.flush()?;
+            self.pending_writes = 0;
+        }
 
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.writer.flush()?;
+        self.pending_writes = 0;
         Ok(())
     }
 }
@@ -399,6 +421,7 @@ impl TrajectoryLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PersistenceConfig;
     use std::time::Duration;
     use tempfile::tempdir;
 
@@ -406,7 +429,7 @@ mod tests {
     fn test_append_and_query_buffer() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10).unwrap();
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig::default()).unwrap();
 
         let pos1 = Point3d::new(-74.0, 40.7, 0.0);
         let pos2 = Point3d::new(-74.1, 40.8, 0.0);
@@ -450,7 +473,8 @@ mod tests {
     fn test_buffer_capacity() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 2).unwrap(); // Capacity 2
+
+        let cold = ColdState::new(&log_path, 2, PersistenceConfig { buffer_size: 0 }).unwrap(); // Capacity 2
 
         let pos = Point3d::new(0.0, 0.0, 0.0);
 
@@ -487,7 +511,8 @@ mod tests {
     fn test_recover_current_locations() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10).unwrap();
+
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);
@@ -547,7 +572,8 @@ mod tests {
     fn test_disk_based_trajectory_query() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 2).unwrap(); // Small buffer to force disk scan
+
+        let cold = ColdState::new(&log_path, 2, PersistenceConfig { buffer_size: 0 }).unwrap(); // Small buffer to force disk scan
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);

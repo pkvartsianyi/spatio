@@ -88,6 +88,24 @@ Spatio follows a specialized architecture for tracking millions of moving object
 - **Cross-language:** Native high-performance Python bindings via PyO3.
 - **Server Mode:** Includes an optional lightweight TCP server for remote access.
 
+## Configuration
+
+Spatio exposes a `Config` builder for tuning performance and persistence.
+
+```rust
+use spatio::config::{Config, PersistenceConfig};
+
+let config = Config::default()
+    .with_buffer_capacity(100)
+    // Configure write buffer for high throughput
+    .with_persistence(PersistenceConfig {
+        // Buffer 512 updates in memory before flushing to disk
+        buffer_size: 512,
+    });
+
+let db = Spatio::open_with_config("path/to/db", config)?;
+```
+
 ## Examples
 
 ### Tracking Moving Objects

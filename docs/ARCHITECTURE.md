@@ -58,29 +58,25 @@ graph TD
     end
 
     subgraph "Core Engine"
-        Core[spatio (Core)]
+        Core["spatio Core"]
         Types[spatio-types]
     end
 
     subgraph "Storage"
-        HotState[Hot State (RAM)]
-        ColdState[Cold State (Disk)]
+        HotState["Hot State - RAM"]
+        ColdState["Cold State - Disk"]
     end
 
-    %% Dependencies
+    %% Flows & Dependencies
     Core --> Types
     ClientLib --> Types
     PyBindings --> Types
     TcpServer --> Types
-
-    %% Flows
     RustApp --> ClientLib
-    ClientLib -- TCP RPC --> TcpServer
+    ClientLib -- "TCP RPC" --> TcpServer
     TcpServer --> Core
-    
     PyApp --> PyBindings
-    PyBindings -- FFI --> Core
-
+    PyBindings -- "FFI" --> Core
     Core --> HotState
     Core --> ColdState
 ```
@@ -90,7 +86,10 @@ graph TD
 ### Write Path (Upsert)
 1. **Request**: A location update is received (via embedded call, Python call, or RPC).
 2. **Hot State Update**: The current position is updated in the in-memory `DashMap` and Spatial Index. This is lock-free or uses fine-grained locking for high currency.
-3. **Cold State Append**: The update is appended to the `WAL` (Write Ahead Log) / Trajectory Log on disk for durability.
+3. **Cold State Append**: The update is buffered in an in-memory write buffer.
+   - **Buffering**: Writes are not immediately flushed to disk. They are stored in a count-based buffer (default: 512 records).
+   - **Flushing**: When the buffer is full (`pending_writes >= buffer_size`), the data is explicitly flushed to the log file.
+   - **Configuration**: Controlled via `PersistenceConfig` (`buffer_size`).
 
 ### Read Path (Spatial Query)
 1. **Hot Query**: Radius/BBox queries scan the in-memory R*-tree.

@@ -64,9 +64,14 @@ impl DB {
             Arc::new(ColdState::new(
                 &temp_dir.join("traj.log"),
                 config.buffer_capacity,
+                config.persistence.clone(),
             )?)
         } else {
-            Arc::new(ColdState::new(path_ref, config.buffer_capacity)?)
+            Arc::new(ColdState::new(
+                path_ref,
+                config.buffer_capacity,
+                config.persistence.clone(),
+            )?)
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
@@ -436,7 +441,7 @@ impl DB {
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0, // Placeholder as we don't track expired cleanup count globally yet
+            expired_count: 0, // Placeholder as expired cleanup count is not tracked globally yet
             operations_count: self.ops_count.load(Ordering::Relaxed),
             size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,

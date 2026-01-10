@@ -267,7 +267,7 @@ impl SpatioService for Handler {
                 .into_iter()
                 .map(|(ts, p, _meta)| {
                     // TODO: Current DB insert_trajectory uses TemporalPoint (2D) and drops Z/metadata
-                    // We need to update spatio-core to support 3D points and metadata in trajectory storage
+                    // Spatio-core needs update to support 3D points and metadata in trajectory storage
                     let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(ts);
                     spatio::config::TemporalPoint::new(*p.point_2d(), timestamp)
                 })

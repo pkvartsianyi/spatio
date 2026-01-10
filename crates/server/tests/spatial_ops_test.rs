@@ -11,21 +11,6 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
     let _addr: std::net::SocketAddr = "127.0.0.1:0".parse()?;
     let db = Arc::new(Spatio::builder().build()?);
     let server_db = db.clone();
-
-    // We need to run server in a way that we can know the port.
-    // The current run_server binds internally.
-    // Ideally we'd modify run_server to return the bound addr or accept a listener.
-    // But for now let's bind a listener here to get a port, then pass that addr to run_server?
-    // Wait, run_server logic: `let mut listener = tarpc...listen(&addr...`.
-    // If we pass port 0, we don't know the port.
-    // We should modify run_server to return the actual address or take a listener.
-    // However, for this test let's try to bind on a port first or use a known port (risky in CI).
-    // Or we can modify run_server to take a listener.
-
-    // Let's modify run_server in previous step? No, let's use a random high port and hope.
-    // Or better, let's look at `run_server` again. It takes `addr`.
-    // If I bind a TcpListener first to get port, then drop it, it's a race condition but usually fine for tests.
-
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let bound_addr = listener.local_addr()?;
 
@@ -33,7 +18,7 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
         let _ = run_server(listener, server_db, futures::future::pending()).await;
     });
 
-    // Give server a moment to bind (since we dropped the listener, it has to rebind)
+    // Give server a moment to bind (since the listener was dropped, it has to rebind)
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Connect client

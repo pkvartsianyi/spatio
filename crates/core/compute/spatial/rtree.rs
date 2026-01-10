@@ -136,7 +136,7 @@ impl PartialOrd for QueryCandidate {
 }
 impl Ord for QueryCandidate {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap: larger distances have higher priority (so we can pop the worst)
+        // Max-heap: larger distances have higher priority (so the worst can be popped)
         self.distance
             .partial_cmp(&other.distance)
             .unwrap_or(Ordering::Equal)
