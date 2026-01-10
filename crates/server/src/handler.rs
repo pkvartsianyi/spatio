@@ -145,10 +145,7 @@ impl SpatioService for Handler {
             }
         })
         .await
-        .unwrap_or_else(|_| Stats {
-            object_count: 0,
-            memory_usage_bytes: 0,
-        })
+        .unwrap()
     }
 
     async fn query_bbox(
