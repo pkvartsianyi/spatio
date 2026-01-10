@@ -124,9 +124,18 @@ security-audit:
     cargo audit
     cd crates/py && bandit -r src/ && safety check
 
-benchmarks:
     cargo bench -p spatio -p spatio-server -p spatio-client
     cd crates/py && just bench
+
+bench-core *args:
+    cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
+
+bench-server *args:
+    ./scripts/run_bench_server.sh {{args}}
+
+bench-all *args:
+    just bench-core {{args}}
+    just bench-server {{args}}
 
 coverage:
     cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server -p spatio-client --timeout 120 --out html

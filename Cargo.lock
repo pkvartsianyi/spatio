@@ -2375,6 +2375,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatio-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "serde_json",
+ "spatio",
+ "spatio-client",
+ "spatio-types",
+ "tokio",
+]
+
+[[package]]
 name = "spatio-client"
 version = "0.1.4"
 dependencies = [
