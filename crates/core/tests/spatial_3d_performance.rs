@@ -44,7 +44,7 @@ fn test_3d_sphere_query_scales_sublinearly() {
 
         query_times_ms.push(elapsed.as_secs_f64() * 1000.0);
 
-        // Sanity check that we got results
+        // Sanity check that results were obtained
         assert!(
             !results.is_empty(),
             "Should find results for dataset size {}",
@@ -183,7 +183,7 @@ fn test_3d_knn_with_large_dataset() {
 
     // Note: R*-tree uses Euclidean distance in coordinate space for KNN ordering,
     // which differs from Haversine distance. Results are ordered by R*-tree's
-    // internal metric, not by the Haversine distances we compute afterward.
+    // internal metric, not by the Haversine distances computed afterward.
     // This is expected behavior for geographic KNN queries.
 }
 
@@ -223,5 +223,4 @@ fn test_3d_sphere_query_correctness() {
 
     // All results should be within radius
     // Note: query_current_within_radius returns CurrentLocation, which doesn't have distance.
-    // We can't check distance here unless we calculate it.
 }

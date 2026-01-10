@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let control_center = Point3d::new(-74.0065, 40.7133, 100.0);
     let search_radius = 200.0; // 200 meters in 3D space
 
-    // Persist control center so we can query relative to it (using key)
+    // Persist control center for relative query (using key)
     db.upsert(
         "drones",
         "control_center",

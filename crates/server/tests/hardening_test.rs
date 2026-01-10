@@ -23,7 +23,6 @@ async fn test_max_frame_size() -> anyhow::Result<()> {
     let mut stream = TcpStream::connect(bound_addr).await?;
 
     // Send garbage data that's too large - tarpc/serde will reject it
-    // Note: With tarpc's JSON transport, we can just send garbage
     let garbage = vec![0u8; 11 * 1024 * 1024]; // 11MB
     let _ = stream.write_all(&garbage).await;
 

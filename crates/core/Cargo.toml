@@ -34,7 +34,7 @@ smallvec.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 # Optional dependencies
-bincode = { workspace = true, optional = true }
+
 geozero = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 
@@ -42,15 +42,13 @@ toml = { workspace = true, optional = true }
 spatio-types = { workspace = true, features = ["geojson"] }
 
 [features]
-default = ["snapshot", "geojson", "time-index"]
+default = ["geojson", "time-index"]
 geojson = ["dep:geozero"]
-aof = ["dep:bincode"]
-snapshot = ["dep:bincode"]
 toml = ["dep:toml"]
 time-index = []
 bench-prof = []
 sync = []
-full = ["geojson", "aof", "snapshot", "toml", "time-index", "sync"]
+full = ["geojson", "toml", "time-index", "sync"]
 
 [dev-dependencies]
 criterion.workspace = true
@@ -68,12 +66,4 @@ name = "spatial_queries"
 name = "trajectory_tracking"
 
 [[example]]
-name = "persistence_lifecycle"
-required-features = ["aof"]
-
-[[example]]
 name = "3d_spatial_tracking"
-
-[[test]]
-name = "aof_rewrite_test"
-required-features = ["aof"]

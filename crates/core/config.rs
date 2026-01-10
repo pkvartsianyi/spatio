@@ -34,17 +34,36 @@ pub struct Config {
     #[serde(default)]
     pub history_capacity: Option<usize>,
 
-    #[cfg(feature = "snapshot")]
-    #[serde(default)]
-    pub snapshot_auto_ops: Option<usize>,
-
     /// Buffer capacity per object for recent history in ColdState
     #[serde(default = "Config::default_buffer_capacity")]
     pub buffer_capacity: usize,
 
-    /// Snapshot interval in seconds (0 = disabled)
-    #[serde(default = "Config::default_snapshot_interval_seconds")]
-    pub snapshot_interval_seconds: u64,
+    /// Persistence configuration
+    #[serde(default)]
+    pub persistence: PersistenceConfig,
+}
+
+/// Configuration for data persistence and durability
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistenceConfig {
+    /// Number of writes to buffer in memory before flushing to disk
+    #[serde(default = "PersistenceConfig::default_buffer_size")]
+    pub buffer_size: usize,
+}
+
+impl PersistenceConfig {
+    const fn default_buffer_size() -> usize {
+        512
+    }
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            buffer_size: Self::default_buffer_size(),
+        }
+    }
 }
 
 impl Config {
@@ -54,12 +73,6 @@ impl Config {
 
     const fn default_sync_policy() -> SyncPolicy {
         SyncPolicy::EverySecond
-    }
-
-    #[cfg(feature = "snapshot")]
-    pub fn with_snapshot_auto_ops(mut self, ops: usize) -> Self {
-        self.snapshot_auto_ops = Some(ops);
-        self
     }
 
     pub fn with_default_ttl(mut self, ttl: Duration) -> Self {
@@ -117,18 +130,14 @@ impl Config {
         100
     }
 
-    const fn default_snapshot_interval_seconds() -> u64 {
-        3600
-    }
-
     pub fn with_buffer_capacity(mut self, capacity: usize) -> Self {
         assert!(capacity > 0, "Buffer capacity must be greater than zero");
         self.buffer_capacity = capacity;
         self
     }
 
-    pub fn with_snapshot_interval(mut self, seconds: u64) -> Self {
-        self.snapshot_interval_seconds = seconds;
+    pub fn with_persistence(mut self, config: PersistenceConfig) -> Self {
+        self.persistence = config;
         self
     }
 
@@ -205,10 +214,9 @@ impl Default for Config {
             sync_batch_size: Self::default_sync_batch_size(),
             #[cfg(feature = "time-index")]
             history_capacity: None,
-            #[cfg(feature = "snapshot")]
-            snapshot_auto_ops: None,
+
             buffer_capacity: Self::default_buffer_capacity(),
-            snapshot_interval_seconds: Self::default_snapshot_interval_seconds(),
+            persistence: PersistenceConfig::default(),
         }
     }
 }
