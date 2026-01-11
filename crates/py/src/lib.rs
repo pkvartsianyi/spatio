@@ -363,11 +363,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -389,11 +389,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -410,11 +410,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -430,11 +430,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -500,11 +500,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata) - no distance for bbox
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -532,11 +532,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -566,11 +566,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata)
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -596,11 +596,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata)
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -627,11 +627,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for (loc, dist) in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata, distance)
-                let tuple = (loc.object_id, py_point, py_meta, dist).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -658,11 +658,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata)
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
@@ -677,7 +677,7 @@ impl PySpatio {
         if let Some(loc) = result {
             Python::attach(|py| {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 let ts = loc
@@ -715,11 +715,11 @@ impl PySpatio {
             let py_list = PyList::empty(py);
             for loc in results {
                 let py_point = PyPoint {
-                    inner: loc.position,
+                    inner: loc.position.clone(),
                 };
                 let py_meta = pythonize::pythonize(py, &loc.metadata)?;
                 // (object_id, point, metadata)
-                let tuple = (loc.object_id, py_point, py_meta).into_pyobject(py)?;
+                let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
                 py_list.append(tuple)?;
             }
             Ok(py_list.unbind())
