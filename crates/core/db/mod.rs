@@ -187,7 +187,6 @@ impl DB {
                 serde_json::json!({}),
                 Some(SetOptions {
                     timestamp: Some(tp.timestamp),
-                    ..Default::default()
                 }),
             )?;
         }
