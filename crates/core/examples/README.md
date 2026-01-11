@@ -14,7 +14,7 @@ Quick intro covering all basics in one file.
 cargo run --example getting_started
 ```
 
-Shows: key-value ops, spatial indexing, radius queries, bounding boxes, trajectories, TTL, atomic batches, stats.
+Shows: key-value ops, spatial indexing, radius queries, bounding boxes, trajectories, atomic batches, stats.
 
 ### `spatial_queries`
 All spatial query types.
@@ -50,7 +50,7 @@ End-to-end feature showcase.
 cargo run --example comprehensive_demo
 ```
 
-Shows: Everything in one place - key-value, TTL, atomics, spatial queries, POI management, trajectories.
+Shows: Everything in one place - key-value, atomics, spatial queries, POI management, trajectories.
 
 ### `persistence_lifecycle`
 AOF (Append-Only File) persistence demo.

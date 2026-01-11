@@ -308,6 +308,36 @@ if [[ "$PACKAGE" == "types" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false 
     fi
 fi
 
+# Update workspace dependency for spatio (core) if needed
+if [[ "$PACKAGE" == "core" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false ]]; then
+    print_info "Updating spatio workspace dependency..."
+    WORKSPACE_CARGO="Cargo.toml"
+
+    if [[ -f "$WORKSPACE_CARGO" ]]; then
+        # Update spatio version in workspace dependencies
+        cp "$WORKSPACE_CARGO" "$WORKSPACE_CARGO.backup"
+
+        # Use awk for BSD sed compatibility
+        awk -v new_ver="$NEW_VERSION" '
+            /^spatio = { version = / {
+                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
+            }
+            { print }
+        ' "$WORKSPACE_CARGO" > "$WORKSPACE_CARGO.tmp"
+
+        # Check if awk succeeded
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to update workspace dependency (awk command failed)"
+            mv "$WORKSPACE_CARGO.backup" "$WORKSPACE_CARGO" 2>/dev/null || true
+            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+        else
+            mv "$WORKSPACE_CARGO.tmp" "$WORKSPACE_CARGO"
+            rm -f "$WORKSPACE_CARGO.backup" 2>/dev/null || true
+            print_success "Updated workspace dependency for spatio"
+        fi
+    fi
+fi
+
 # Update Cargo.lock files
 UPDATE_FAILED=false
 if [[ "$DRY_RUN" == false ]]; then
@@ -413,7 +443,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     declare -a FILES_TO_ADD=()
     case "$PACKAGE" in
         "core")
-            FILES_TO_ADD=("crates/core/Cargo.toml" "Cargo.lock")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "python")
             FILES_TO_ADD=("crates/py/Cargo.toml" "Cargo.lock")

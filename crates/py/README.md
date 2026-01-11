@@ -82,7 +82,6 @@ db.query_trajectory(namespace, object_id, start_ts, end_ts, limit=100)
 
 1. **Namespaces**: Use namespaces to logically separate different types of objects (e.g., "delivery_trucks", "warehouses").
 2. **Object Queries**: Use `query_near` or `knn_near_object` whenever possible, as they avoid re-passing coordinates and leverage the internal Hot State index directly.
-3. **Lazy TTL**: TTL expiration is passive. If you use TTL for ephemeral data, it will be filtered on read but only removed from storage when overwritten or manually cleaned up.
 
 ## License
 

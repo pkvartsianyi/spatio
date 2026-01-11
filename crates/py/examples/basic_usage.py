@@ -7,7 +7,6 @@ This example demonstrates the core functionality of Spatio including:
 - Basic key-value operations
 - Geographic point operations
 - Spatial queries
-- TTL functionality
 """
 
 import time
@@ -70,21 +69,6 @@ def _demonstrate_geographic_operations(db):
     return nyc, london, paris
 
 
-def _demonstrate_ttl_functionality(db):
-    print("\n5. TTL (Time-To-Live) functionality...")
-    ttl_options = spatio.SetOptions.with_ttl(2.0)
-    db.insert(b"session:temp", b"temporary_data", ttl_options)
-
-    temp_data = db.get(b"session:temp")
-    print(f"[OK] Temporary data: {temp_data.decode() if temp_data else 'None'}")
-
-    print("[WAIT] Waiting 3 seconds for TTL expiration...")
-    time.sleep(3)
-
-    expired_data = db.get(b"session:temp")
-    print(
-        f"[OK] After TTL: {expired_data.decode() if expired_data else 'Expired/None'}"
-    )
 
 
 def _demonstrate_sequential_operations(db):
