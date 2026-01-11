@@ -28,13 +28,7 @@ async fn test_remote_client_ops() -> anyhow::Result<()> {
     // 3. Perform operations
     let nyc = Point3d::new(-74.0060, 40.7128, 0.0);
     client
-        .upsert(
-            "cities",
-            "nyc",
-            nyc,
-            serde_json::json!({"pop": 8000000}),
-            None,
-        )
+        .upsert("cities", "nyc", nyc, serde_json::json!({"pop": 8000000}))
         .await?;
 
     // 4. Verify with get

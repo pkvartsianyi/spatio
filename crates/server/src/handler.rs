@@ -1,6 +1,6 @@
 //! Handler implementation for Spatio RPC service
 
-use crate::protocol::{CurrentLocation, LocationUpdate, SpatioService, Stats, UpsertOptions};
+use crate::protocol::{CurrentLocation, LocationUpdate, SpatioService, Stats};
 use crate::reader::Reader;
 use crate::writer::WriteOp;
 use spatio::Spatio;
@@ -31,14 +31,12 @@ impl SpatioService for Handler {
         id: String,
         point: Point3d,
         metadata: serde_json::Value,
-        opts: Option<UpsertOptions>,
     ) -> Result<(), String> {
         let op = WriteOp::Upsert {
             namespace,
             id,
             point,
             metadata,
-            opts,
         };
 
         self.write_tx

@@ -1,17 +1,10 @@
-//! Embedded spatio-temporal database with 2D/3D indexing, persistence, and lazy TTL support.
+//! Embedded spatio-temporal database with 2D/3D indexing and persistence.
 //!
 //! ## Features
 //! - **Spatial indexing**: 2D/3D points, polygons, bounding boxes with R*-tree spatial indexing
 //! - **Persistence**: Append-only file (AOF) with configurable sync policies
-//! - **Lazy TTL**: Expired items are filtered on read, manual cleanup available
 //! - **Atomic batches**: Group multiple operations atomically
 //! - **Temporal queries**: Filter by creation time (with `time-index` feature)
-//!
-//! ## TTL Behavior
-//! TTL is **passive/lazy**:
-//! - Expired items return `None` on `get()` and are skipped in queries
-//! - Items remain in storage until overwritten or manually cleaned with `cleanup_expired()`
-//! - No automatic background cleanup or deletion on insert
 //!
 //! ## Example
 //! ```

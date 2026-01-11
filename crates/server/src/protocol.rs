@@ -8,12 +8,6 @@ use serde::{Deserialize, Serialize};
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
 
-/// Options for upsert operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertOptions {
-    pub ttl: std::time::Duration,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationUpdate {
     pub timestamp: f64,
@@ -42,7 +36,6 @@ pub trait SpatioService {
         id: String,
         point: Point3d,
         metadata: serde_json::Value,
-        opts: Option<UpsertOptions>,
     ) -> Result<(), String>;
 
     async fn get(namespace: String, id: String) -> Result<Option<CurrentLocation>, String>;

@@ -32,13 +32,13 @@ async fn test_spatial_rpc_commands() -> anyhow::Result<()> {
     let p3 = Point3d::new(-74.0, 41.7, 0.0);
 
     client
-        .upsert(namespace, "p1", p1.clone(), serde_json::json!({}), None)
+        .upsert(namespace, "p1", p1.clone(), serde_json::json!({}))
         .await?;
     client
-        .upsert(namespace, "p2", p2.clone(), serde_json::json!({}), None)
+        .upsert(namespace, "p2", p2.clone(), serde_json::json!({}))
         .await?;
     client
-        .upsert(namespace, "p3", p3.clone(), serde_json::json!({}), None)
+        .upsert(namespace, "p3", p3.clone(), serde_json::json!({}))
         .await?;
 
     // 2. Test Distance (between p1 and p2)

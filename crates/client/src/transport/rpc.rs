@@ -55,7 +55,6 @@ impl SpatioClient {
         id: &str,
         point: Point3d,
         metadata: serde_json::Value,
-        opts: Option<spatio_server::UpsertOptions>,
     ) -> Result<()> {
         self.client
             .upsert(
@@ -64,7 +63,6 @@ impl SpatioClient {
                 id.to_string(),
                 point,
                 metadata,
-                opts,
             )
             .await?
             .map_err(ClientError::Server)

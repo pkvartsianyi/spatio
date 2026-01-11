@@ -8,7 +8,7 @@
 //! use spatio_client::transport::http::SpatioHttpClient;
 //!
 //! let client = SpatioHttpClient::new("http://localhost:8080")?;
-//! client.upsert("ns", "id", point, metadata, None).await?;
+//! client.upsert("ns", "id", point, metadata).await?;
 //! ```
 
 // TODO: Implement HTTP client using reqwest
@@ -16,7 +16,6 @@
 // Should mirror the same API as the tarpc SpatioClient for easy switching.
 
 use spatio_types::point::Point3d;
-use std::time::Duration;
 
 /// HTTP client for Spatio (placeholder)
 #[derive(Clone)]
@@ -43,7 +42,6 @@ impl SpatioHttpClient {
         _id: &str,
         _point: Point3d,
         _metadata: serde_json::Value,
-        _ttl: Option<Duration>,
     ) -> Result<(), HttpClientError> {
         unimplemented!("HTTP client not yet implemented")
     }

@@ -47,7 +47,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &format!("obj:{}", i),
                         spatio_types::point::Point3d::new(x as f64 * 0.01, y as f64 * 0.01, 0.0),
                         serde_json::Value::Null,
-                        None,
                     )
                     .await
             }

@@ -30,7 +30,6 @@ async fn test_rpc_lifecycle() -> anyhow::Result<()> {
             "obj1",
             Point3d::new(1.0, 2.0, 3.0),
             serde_json::json!({"key": "val"}),
-            None,
         )
         .await?;
 

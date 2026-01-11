@@ -22,9 +22,7 @@ pub mod transport;
 pub mod writer;
 
 // Re-export protocol types for client usage
-pub use protocol::{
-    CurrentLocation, LocationUpdate, SpatioService, SpatioServiceClient, Stats, UpsertOptions,
-};
+pub use protocol::{CurrentLocation, LocationUpdate, SpatioService, SpatioServiceClient, Stats};
 
 // Re-export default transport for convenience
 pub use transport::rpc::run_server;

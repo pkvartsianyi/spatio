@@ -41,7 +41,6 @@ async fn test_client_lifecycle_and_crud() -> anyhow::Result<()> {
             "p1",
             Point3d::new(10.0, 20.0, 30.0),
             serde_json::json!({"city": "Berlin"}),
-            None,
         )
         .await?;
 
@@ -84,7 +83,6 @@ async fn test_spatial_queries() -> anyhow::Result<()> {
             "p1",
             Point3d::new(0.0, 0.0, 0.0),
             serde_json::json!({}),
-            None,
         )
         .await?;
     client
@@ -93,7 +91,6 @@ async fn test_spatial_queries() -> anyhow::Result<()> {
             "p2",
             Point3d::new(0.0001, 0.0, 0.0),
             serde_json::json!({}),
-            None,
         )
         .await?;
     client
@@ -102,7 +99,6 @@ async fn test_spatial_queries() -> anyhow::Result<()> {
             "p3",
             Point3d::new(1.0, 0.0, 0.0),
             serde_json::json!({}),
-            None,
         )
         .await?;
 

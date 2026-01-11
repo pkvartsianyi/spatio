@@ -1,6 +1,4 @@
-use crate::protocol::UpsertOptions;
 use spatio::Spatio;
-use spatio::config::SetOptions;
 use spatio_types::point::Point3d;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -13,7 +11,6 @@ pub enum WriteOp {
         id: String,
         point: Point3d,
         metadata: serde_json::Value,
-        opts: Option<UpsertOptions>,
     },
     Delete {
         namespace: String,
@@ -39,13 +36,8 @@ pub fn spawn_background_writer(db: Arc<Spatio>, buffer_size: usize) -> mpsc::Sen
                     id,
                     point,
                     metadata,
-                    opts,
                 } => {
-                    let db_opts = opts.map(|o| SetOptions {
-                        ttl: Some(o.ttl),
-                        ..Default::default()
-                    });
-                    if let Err(e) = db.upsert(&namespace, &id, point, metadata, db_opts) {
+                    if let Err(e) = db.upsert(&namespace, &id, point, metadata, None) {
                         tracing::error!("Background write failed (upsert): {}", e);
                     }
                 }
