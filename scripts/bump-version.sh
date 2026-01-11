@@ -338,6 +338,60 @@ if [[ "$PACKAGE" == "core" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false ]
     fi
 fi
 
+# Update workspace dependency for spatio-server if needed
+if [[ "$PACKAGE" == "server" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false ]]; then
+    print_info "Updating spatio-server workspace dependency..."
+    WORKSPACE_CARGO="Cargo.toml"
+
+    if [[ -f "$WORKSPACE_CARGO" ]]; then
+        cp "$WORKSPACE_CARGO" "$WORKSPACE_CARGO.backup"
+
+        awk -v new_ver="$NEW_VERSION" '
+            /^spatio-server = { version = / {
+                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
+            }
+            { print }
+        ' "$WORKSPACE_CARGO" > "$WORKSPACE_CARGO.tmp"
+
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to update workspace dependency (awk command failed)"
+            mv "$WORKSPACE_CARGO.backup" "$WORKSPACE_CARGO" 2>/dev/null || true
+            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+        else
+            mv "$WORKSPACE_CARGO.tmp" "$WORKSPACE_CARGO"
+            rm -f "$WORKSPACE_CARGO.backup" 2>/dev/null || true
+            print_success "Updated workspace dependency for spatio-server"
+        fi
+    fi
+fi
+
+# Update workspace dependency for spatio-client if needed
+if [[ "$PACKAGE" == "client" || "$PACKAGE" == "all" ]] && [[ "$DRY_RUN" == false ]]; then
+    print_info "Updating spatio-client workspace dependency..."
+    WORKSPACE_CARGO="Cargo.toml"
+
+    if [[ -f "$WORKSPACE_CARGO" ]]; then
+        cp "$WORKSPACE_CARGO" "$WORKSPACE_CARGO.backup"
+
+        awk -v new_ver="$NEW_VERSION" '
+            /^spatio-client = { version = / {
+                sub(/version = "[^"]*"/, "version = \"" new_ver "\"")
+            }
+            { print }
+        ' "$WORKSPACE_CARGO" > "$WORKSPACE_CARGO.tmp"
+
+        if [[ $? -ne 0 ]]; then
+            print_error "Failed to update workspace dependency (awk command failed)"
+            mv "$WORKSPACE_CARGO.backup" "$WORKSPACE_CARGO" 2>/dev/null || true
+            rm -f "$WORKSPACE_CARGO.tmp" 2>/dev/null || true
+        else
+            mv "$WORKSPACE_CARGO.tmp" "$WORKSPACE_CARGO"
+            rm -f "$WORKSPACE_CARGO.backup" 2>/dev/null || true
+            print_success "Updated workspace dependency for spatio-client"
+        fi
+    fi
+fi
+
 # Update Cargo.lock files
 UPDATE_FAILED=false
 if [[ "$DRY_RUN" == false ]]; then
@@ -452,10 +506,10 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             FILES_TO_ADD=("crates/types/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "server")
-            FILES_TO_ADD=("crates/server/Cargo.toml" "Cargo.lock")
+            FILES_TO_ADD=("crates/server/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "client")
-            FILES_TO_ADD=("crates/client/Cargo.toml" "Cargo.lock")
+            FILES_TO_ADD=("crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "all")
             FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
