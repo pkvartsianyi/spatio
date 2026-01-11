@@ -45,6 +45,9 @@ async fn test_client_lifecycle_and_crud() -> anyhow::Result<()> {
         )
         .await?;
 
+    // Wait for background writer to process
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
     // Get
     let loc = client.get("test_ns", "p1").await?.expect("should exist");
     assert_eq!(loc.object_id, "p1");
@@ -56,6 +59,10 @@ async fn test_client_lifecycle_and_crud() -> anyhow::Result<()> {
 
     // Delete
     client.delete("test_ns", "p1").await?;
+
+    // Wait for background writer to process delete
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
     let loc = client.get("test_ns", "p1").await?;
     assert!(loc.is_none());
 
@@ -98,6 +105,9 @@ async fn test_spatial_queries() -> anyhow::Result<()> {
             None,
         )
         .await?;
+
+    // Wait for background writer to process all upserts
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Query Radius (search around 0,0 with r=15 meters -> expect p1, p2)
     let results = client
@@ -149,6 +159,9 @@ async fn test_trajectory() -> anyhow::Result<()> {
     ];
 
     client.insert_trajectory("traj", "v1", points).await?;
+
+    // Wait for background writer to process
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Query whole range
     let traj = client
