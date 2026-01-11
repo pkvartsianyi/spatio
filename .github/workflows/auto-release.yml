@@ -19,10 +19,24 @@ permissions:
   contents: read
 
 jobs:
-  # ---------------- STAGE 1: DETECT ----------------
+  # ---------------- STAGE 1: WAIT FOR CI ----------------
+  wait-for-ci:
+    name: Wait for CI Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI workflow to complete
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: "Test Suite"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
+  # ---------------- STAGE 2: DETECT ----------------
   detect-changes:
     name: Detect Version Changes
     runs-on: ubuntu-latest
+    needs: wait-for-ci
     outputs:
       types-changed: ${{ steps.check-types.outputs.changed }}
       core-changed: ${{ steps.check-core.outputs.changed }}
@@ -152,174 +166,12 @@ jobs:
           echo "| spatio-py | ${{ steps.check-python.outputs.previous }} | ${{ steps.check-python.outputs.version }} | ${{ steps.check-python.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
           echo "| spatio-server | ${{ steps.check-server.outputs.previous }} | ${{ steps.check-server.outputs.version }} | ${{ steps.check-server.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
 
-  # ---------------- STAGE 2: TEST ----------------
-  test-types:
-    name: Test spatio-types (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.types-changed == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-types-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio-types --all-targets --all-features -- -D warnings
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio-types --all-features --verbose
-      - run: cargo test -p spatio-types --all-features --verbose
-      - run: cargo test -p spatio-types --doc
-      - run: cd crates/types && cargo package --allow-dirty
-        if: matrix.os == 'ubuntu-latest'
-
-  test-client:
-    name: Test spatio-client (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.client-changed == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-client-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio-client --all-targets --all-features -- -D warnings
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio-client --all-features --verbose
-      - run: cargo test -p spatio-client --all-features --verbose
-      - run: cargo test -p spatio-client --doc
-
-  test-core:
-    name: Test spatio core (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.core-changed == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-core-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio --all-targets --all-features -- -D warnings
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio --all-features --verbose
-      - run: cargo test -p spatio --all-features --verbose
-      - run: cargo test -p spatio --doc
-
-  test-server:
-    name: Test spatio server (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.server-changed == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-server-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo clippy -p spatio-server --all-targets --all-features -- -D warnings
-        if: matrix.os == 'ubuntu-latest'
-      - run: cargo build -p spatio-server --all-features --verbose
-      - run: cargo test -p spatio-server --all-features --verbose
-      - run: cargo test -p spatio-server --doc
-
-  test-python:
-    name: Test Python (${{ matrix.os }}, py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    needs: detect-changes
-    if: needs.detect-changes.outputs.python-changed == 'true'
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies
-        working-directory: crates/py
-        run: |
-          python -m pip install --upgrade pip
-          pip install setuptools maturin pytest -r requirements-dev.txt
-
-      - name: Build wheel
-        working-directory: crates/py
-        env:
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
-        run: maturin build --release --out dist --interpreter python
-
-      - name: Install wheel
-        working-directory: crates/py
-        shell: bash
-        run: |
-          WHEEL=$(find dist -name "*.whl" | head -n 1)
-          python -m pip install "$WHEEL" --force-reinstall --no-deps
-
-      - name: Run tests
-        run: pytest crates/py/tests -v --tb=short -x --maxfail=5
-
   # ---------------- STAGE 3: RELEASE ----------------
   release-types:
     name: Release spatio-types
     runs-on: ubuntu-latest
-    needs: [test-types, detect-changes]
-    if: needs.detect-changes.outputs.types-changed == 'true' && needs.test-types.result == 'success'
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.types-changed == 'true'
     permissions:
       contents: write
     steps:
@@ -344,14 +196,131 @@ jobs:
           git tag "$TAG" -m "Release spatio-types $VERSION"
           git push origin "$TAG"
 
+  release-core:
+    name: Release spatio core
+    runs-on: ubuntu-latest
+    needs: [detect-changes, release-types]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.core-changed == 'true' &&
+      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Wait for spatio-types to be available on crates.io
+        if: needs.release-types.result == 'success'
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.types-version }}"
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          SLEEP_TIME=5
+
+          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
+            sleep $SLEEP_TIME
+
+            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio-types v$VERSION is now available on crates.io"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            SLEEP_TIME=$((SLEEP_TIME * 2))
+            if [ $SLEEP_TIME -gt 60 ]; then
+              SLEEP_TIME=60
+            fi
+          done
+          exit 0
+
+      - name: Publish spatio to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/core
+          cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Tag and release
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.core-version }}"
+          TAG="core-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Release spatio $VERSION"
+          git push origin "$TAG"
+
+  release-server:
+    name: Release spatio server
+    runs-on: ubuntu-latest
+    needs: [detect-changes, release-types]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.server-changed == 'true' &&
+      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Wait for spatio-types to be available on crates.io
+        if: needs.release-types.result == 'success'
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.types-version }}"
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          SLEEP_TIME=5
+
+          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
+
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
+            sleep $SLEEP_TIME
+
+            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio-types v$VERSION is now available on crates.io"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            SLEEP_TIME=$((SLEEP_TIME * 2))
+            if [ $SLEEP_TIME -gt 60 ]; then
+              SLEEP_TIME=60
+            fi
+          done
+          exit 0
+
+      - name: Publish spatio-server to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          cd crates/server
+          cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Tag and release
+        run: |
+          VERSION="${{ needs.detect-changes.outputs.server-version }}"
+          TAG="server-v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Release spatio-server $VERSION"
+          git push origin "$TAG"
+
   release-client:
     name: Release spatio-client
     runs-on: ubuntu-latest
-    needs: [test-client, detect-changes, release-server]
+    needs: [detect-changes, release-server]
     if: |
       always() &&
       needs.detect-changes.outputs.client-changed == 'true' &&
-      needs.test-client.result == 'success' &&
       (needs.release-server.result == 'success' || needs.release-server.result == 'skipped')
     permissions:
       contents: write
@@ -404,141 +373,11 @@ jobs:
           git tag "$TAG" -m "Release spatio-client $VERSION"
           git push origin "$TAG"
 
-  release-core:
-    name: Release spatio core
-    runs-on: ubuntu-latest
-    needs: [test-core, detect-changes, release-types]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.core-changed == 'true' &&
-      needs.test-core.result == 'success' &&
-      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped') &&
-      needs.release-types.result != 'failure'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Wait for spatio-types to be available on crates.io
-        if: needs.release-types.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            # Check if the version is available on crates.io
-            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-types v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            # Exponential backoff: 5s, 10s, 20s, 40s, 60s (capped at 60s)
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-
-          echo "Warning: spatio-types v$VERSION not confirmed on crates.io after $MAX_ATTEMPTS attempts"
-          echo "Proceeding anyway - cargo publish will fail if dependency is not available"
-          exit 0
-
-      - name: Publish spatio to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/core
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.core-version }}"
-          TAG="core-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio $VERSION"
-          git push origin "$TAG"
-
-  release-server:
-    name: Release spatio server
-    runs-on: ubuntu-latest
-    needs: [test-server, detect-changes, release-types]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.server-changed == 'true' &&
-      needs.test-server.result == 'success' &&
-      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped') &&
-      needs.release-types.result != 'failure'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Wait for spatio-types to be available on crates.io
-        if: needs.release-types.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-types v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          exit 0
-
-      - name: Publish spatio-server to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/server
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.server-version }}"
-          TAG="server-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-server $VERSION"
-          git push origin "$TAG"
-
   build-and-push-docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [test-server, detect-changes]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.server-changed == 'true' &&
-      needs.test-server.result == 'success'
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.server-changed == 'true'
     permissions:
       contents: read
       packages: write
@@ -578,8 +417,8 @@ jobs:
   build-python-artifacts:
     name: Build Python Wheels (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    needs: [test-python, detect-changes]
-    if: needs.detect-changes.outputs.python-changed == 'true' && needs.test-python.result == 'success'
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.python-changed == 'true'
     strategy:
       fail-fast: true
       matrix:
