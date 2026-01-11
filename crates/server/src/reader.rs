@@ -179,6 +179,7 @@ impl Reader {
             .map_err(|e| e.to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn query_bbox_3d(
         &self,
         namespace: &str,
