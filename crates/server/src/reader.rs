@@ -17,8 +17,8 @@ impl Reader {
     pub fn get(&self, namespace: &str, id: &str) -> Result<Option<CurrentLocation>, String> {
         match self.db.get(namespace, id) {
             Ok(Some(loc)) => Ok(Some(CurrentLocation {
-                object_id: loc.object_id,
-                position: loc.position,
+                object_id: loc.object_id.clone(),
+                position: loc.position.clone(),
                 metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
             })),
             Ok(None) => Ok(None),
@@ -42,8 +42,8 @@ impl Reader {
                     .map(|(loc, dist)| {
                         (
                             CurrentLocation {
-                                object_id: loc.object_id,
-                                position: loc.position,
+                                object_id: loc.object_id.clone(),
+                                position: loc.position.clone(),
                                 metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                             },
                             dist,
@@ -68,8 +68,8 @@ impl Reader {
                     .map(|(loc, dist)| {
                         (
                             CurrentLocation {
-                                object_id: loc.object_id,
-                                position: loc.position,
+                                object_id: loc.object_id.clone(),
+                                position: loc.position.clone(),
                                 metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                             },
                             dist,
@@ -103,8 +103,8 @@ impl Reader {
                 results
                     .into_iter()
                     .map(|loc| CurrentLocation {
-                        object_id: loc.object_id,
-                        position: loc.position,
+                        object_id: loc.object_id.clone(),
+                        position: loc.position.clone(),
                         metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                     })
                     .collect()
@@ -129,8 +129,8 @@ impl Reader {
                     .map(|(loc, dist)| {
                         (
                             CurrentLocation {
-                                object_id: loc.object_id,
-                                position: loc.position,
+                                object_id: loc.object_id.clone(),
+                                position: loc.position.clone(),
                                 metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                             },
                             dist,
@@ -197,8 +197,8 @@ impl Reader {
                 results
                     .into_iter()
                     .map(|loc| CurrentLocation {
-                        object_id: loc.object_id,
-                        position: loc.position,
+                        object_id: loc.object_id.clone(),
+                        position: loc.position.clone(),
                         metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                     })
                     .collect()
@@ -221,8 +221,8 @@ impl Reader {
                     .map(|(loc, dist)| {
                         (
                             CurrentLocation {
-                                object_id: loc.object_id,
-                                position: loc.position,
+                                object_id: loc.object_id.clone(),
+                                position: loc.position.clone(),
                                 metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                             },
                             dist,
@@ -245,8 +245,8 @@ impl Reader {
                 results
                     .into_iter()
                     .map(|loc| CurrentLocation {
-                        object_id: loc.object_id,
-                        position: loc.position,
+                        object_id: loc.object_id.clone(),
+                        position: loc.position.clone(),
                         metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
                     })
                     .collect()

@@ -6,6 +6,7 @@
 
 use dashmap::DashMap;
 use spatio_types::point::Point3d;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::compute::spatial::rtree::SpatialIndexManager;
@@ -30,7 +31,7 @@ pub struct CurrentLocation {
 /// - Lock-free concurrent access
 pub struct HotState {
     /// One entry per object (keyed by "namespace::object_id")
-    current_locations: DashMap<String, CurrentLocation>,
+    current_locations: DashMap<String, Arc<CurrentLocation>>,
 
     /// Spatial index manager (wrapped in RwLock for interior mutability)
     spatial_index: RwLock<SpatialIndexManager>,
@@ -59,16 +60,16 @@ impl HotState {
         position: Point3d,
         metadata: serde_json::Value,
         timestamp: SystemTime,
-    ) -> Result<Option<CurrentLocation>> {
+    ) -> Result<Option<Arc<CurrentLocation>>> {
         let full_key = Self::make_key(namespace, object_id);
 
-        let new_location = CurrentLocation {
+        let new_location = Arc::new(CurrentLocation {
             object_id: object_id.to_string(),
             namespace: namespace.to_string(),
             position,
             metadata: metadata.clone(),
             timestamp,
-        };
+        });
 
         // Extract coordinates before moving new_location
         let pos_x = new_location.position.x();
@@ -78,7 +79,7 @@ impl HotState {
         // Atomic update in main map (DashMap handles concurrency)
         // Update only if the new timestamp is newer than or equal to existing
         enum UpdateAction {
-            Updated(CurrentLocation),
+            Updated(Arc<CurrentLocation>),
             Inserted,
             Ignored,
         }
@@ -129,7 +130,7 @@ impl HotState {
         &self,
         namespace: &str,
         object_id: &str,
-    ) -> Option<CurrentLocation> {
+    ) -> Option<Arc<CurrentLocation>> {
         let key = Self::make_key(namespace, object_id);
         self.current_locations.get(&key).map(|v| v.value().clone())
     }
@@ -141,7 +142,7 @@ impl HotState {
         center: &Point3d,
         radius: f64,
         limit: usize,
-    ) -> Vec<(CurrentLocation, f64)> {
+    ) -> Vec<(Arc<CurrentLocation>, f64)> {
         let spatial_idx = self.spatial_index.read();
         let results = spatial_idx.query_within_sphere(namespace, center, radius, limit);
 
@@ -164,7 +165,7 @@ impl HotState {
         max_x: f64,
         max_y: f64,
         limit: usize,
-    ) -> Vec<CurrentLocation> {
+    ) -> Vec<Arc<CurrentLocation>> {
         let spatial_idx = self.spatial_index.read();
         let results =
             spatial_idx.query_within_bbox_2d_points(namespace, min_x, min_y, max_x, max_y, limit);
@@ -177,7 +178,7 @@ impl HotState {
     }
 
     /// Remove an object
-    pub fn remove_object(&self, namespace: &str, object_id: &str) -> Option<CurrentLocation> {
+    pub fn remove_object(&self, namespace: &str, object_id: &str) -> Option<Arc<CurrentLocation>> {
         let key = Self::make_key(namespace, object_id);
 
         // Remove from map
@@ -201,7 +202,7 @@ impl HotState {
         max_z: f64,
         radius: f64,
         limit: usize,
-    ) -> Vec<(CurrentLocation, f64)> {
+    ) -> Vec<(Arc<CurrentLocation>, f64)> {
         let spatial_idx = self.spatial_index.read();
         let query = crate::compute::spatial::rtree::CylinderQuery {
             center,
@@ -223,7 +224,7 @@ impl HotState {
         namespace: &str,
         center: &Point3d,
         k: usize,
-    ) -> Vec<(CurrentLocation, f64)> {
+    ) -> Vec<(Arc<CurrentLocation>, f64)> {
         let keys = self.spatial_index.read().knn_3d(namespace, center, k);
         keys.into_iter()
             .filter_map(|(key, distance)| {
@@ -248,7 +249,7 @@ impl HotState {
         max_y: f64,
         max_z: f64,
         limit: usize,
-    ) -> Vec<CurrentLocation> {
+    ) -> Vec<Arc<CurrentLocation>> {
         let spatial_idx = self.spatial_index.read();
         let query = crate::compute::spatial::rtree::BBoxQuery {
             min_x,
@@ -273,7 +274,7 @@ impl HotState {
         namespace: &str,
         polygon: &spatio_types::geo::Polygon,
         limit: usize,
-    ) -> Vec<CurrentLocation> {
+    ) -> Vec<Arc<CurrentLocation>> {
         let spatial_idx = self.spatial_index.read();
 
         // Use optimized query that filters by polygon during iteration

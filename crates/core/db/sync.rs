@@ -64,7 +64,11 @@ impl SyncDB {
     }
 
     /// Get current location of an object.
-    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<CurrentLocation>> {
+    pub fn get(
+        &self,
+        namespace: &str,
+        object_id: &str,
+    ) -> Result<Option<std::sync::Arc<CurrentLocation>>> {
         self.inner.get(namespace, object_id)
     }
 
@@ -80,7 +84,7 @@ impl SyncDB {
         center: &spatio_types::point::Point3d,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(std::sync::Arc<CurrentLocation>, f64)>> {
         self.inner.query_radius(namespace, center, radius, limit)
     }
 
@@ -91,7 +95,7 @@ impl SyncDB {
         object_id: &str,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(std::sync::Arc<CurrentLocation>, f64)>> {
         self.inner.query_near(namespace, object_id, radius, limit)
     }
 

@@ -155,7 +155,7 @@ impl DB {
     }
 
     /// Get current location of an object.
-    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<CurrentLocation>> {
+    pub fn get(&self, namespace: &str, object_id: &str) -> Result<Option<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -200,7 +200,7 @@ impl DB {
         center: &spatio_types::point::Point3d,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -218,7 +218,7 @@ impl DB {
         max_x: f64,
         max_y: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -236,7 +236,7 @@ impl DB {
         max_z: f64,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -251,7 +251,7 @@ impl DB {
         namespace: &str,
         center: &spatio_types::point::Point3d,
         k: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -270,7 +270,7 @@ impl DB {
         max_y: f64,
         max_z: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -286,7 +286,7 @@ impl DB {
         object_id: &str,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -309,7 +309,7 @@ impl DB {
         width: f64,
         height: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -342,7 +342,7 @@ impl DB {
         max_z: f64,
         radius: f64,
         limit: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -366,7 +366,7 @@ impl DB {
         height: f64,
         depth: f64,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -399,7 +399,7 @@ impl DB {
         namespace: &str,
         object_id: &str,
         k: usize,
-    ) -> Result<Vec<(CurrentLocation, f64)>> {
+    ) -> Result<Vec<(Arc<CurrentLocation>, f64)>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
@@ -455,7 +455,7 @@ impl DB {
         namespace: &str,
         polygon: &spatio_types::geo::Polygon,
         limit: usize,
-    ) -> Result<Vec<CurrentLocation>> {
+    ) -> Result<Vec<Arc<CurrentLocation>>> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
