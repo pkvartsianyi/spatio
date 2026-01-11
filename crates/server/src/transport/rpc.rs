@@ -21,7 +21,10 @@ pub async fn run_server(
     db: Arc<Spatio>,
     mut shutdown: impl Future<Output = ()> + Unpin + Send + 'static,
 ) -> anyhow::Result<()> {
-    let handler = Handler::new(db);
+    // Spawn background writer for async writes
+    let write_tx = crate::writer::spawn_background_writer(db.clone(), 10_000);
+
+    let handler = Handler::new(db, write_tx);
 
     info!("Spatio RPC Server listening on {}", listener.local_addr()?);
 

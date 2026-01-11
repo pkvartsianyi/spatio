@@ -1,18 +1,25 @@
+//! Handler implementation for Spatio RPC service
+
 use crate::protocol::{CurrentLocation, LocationUpdate, SpatioService, Stats, UpsertOptions};
+use crate::reader::Reader;
+use crate::writer::WriteOp;
 use spatio::Spatio;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
 use std::sync::Arc;
 use tarpc::context;
+use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct Handler {
-    db: Arc<Spatio>,
+    write_tx: mpsc::Sender<WriteOp>,
+    reader: Reader,
 }
 
 impl Handler {
-    pub fn new(db: Arc<Spatio>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<Spatio>, write_tx: mpsc::Sender<WriteOp>) -> Self {
+        let reader = Reader::new(db);
+        Self { write_tx, reader }
     }
 }
 
@@ -26,18 +33,18 @@ impl SpatioService for Handler {
         metadata: serde_json::Value,
         opts: Option<UpsertOptions>,
     ) -> Result<(), String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let db_opts = opts.map(|o| spatio::config::SetOptions {
-                ttl: Some(o.ttl),
-                ..Default::default()
-            });
+        let op = WriteOp::Upsert {
+            namespace,
+            id,
+            point,
+            metadata,
+            opts,
+        };
 
-            db.upsert(&namespace, &id, point, metadata, db_opts)
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.write_tx
+            .send(op)
+            .await
+            .map_err(|_| "Server storage is overwhelmed or shutting down".to_string())
     }
 
     async fn get(
@@ -46,18 +53,7 @@ impl SpatioService for Handler {
         namespace: String,
         id: String,
     ) -> Result<Option<CurrentLocation>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || match db.get(&namespace, &id) {
-            Ok(Some(loc)) => Ok(Some(CurrentLocation {
-                object_id: loc.object_id,
-                position: loc.position,
-                metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-            })),
-            Ok(None) => Ok(None),
-            Err(e) => Err(e.to_string()),
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.get(&namespace, &id)
     }
 
     async fn delete(
@@ -66,10 +62,11 @@ impl SpatioService for Handler {
         namespace: String,
         id: String,
     ) -> Result<(), String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || db.delete(&namespace, &id).map_err(|e| e.to_string()))
+        let op = WriteOp::Delete { namespace, id };
+        self.write_tx
+            .send(op)
             .await
-            .map_err(|e| format!("Internal error: {}", e))?
+            .map_err(|_| "Server storage is overwhelmed or shutting down".to_string())
     }
 
     async fn query_radius(
@@ -80,28 +77,7 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_radius(&namespace, &center, radius, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(loc, dist)| {
-                            (
-                                CurrentLocation {
-                                    object_id: loc.object_id,
-                                    position: loc.position,
-                                    metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                                },
-                                dist,
-                            )
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.query_radius(&namespace, &center, radius, limit)
     }
 
     async fn knn(
@@ -111,41 +87,7 @@ impl SpatioService for Handler {
         center: Point3d,
         k: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.knn(&namespace, &center, k)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(loc, dist)| {
-                            (
-                                CurrentLocation {
-                                    object_id: loc.object_id,
-                                    position: loc.position,
-                                    metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                                },
-                                dist,
-                            )
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
-    }
-
-    async fn stats(self, _: context::Context) -> Stats {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let s = db.stats();
-            Stats {
-                object_count: s.hot_state_objects,
-                memory_usage_bytes: s.memory_usage_bytes,
-            }
-        })
-        .await
-        .unwrap()
+        self.reader.knn(&namespace, &center, k)
     }
 
     async fn query_bbox(
@@ -158,23 +100,8 @@ impl SpatioService for Handler {
         max_y: f64,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_bbox(&namespace, min_x, min_y, max_x, max_y, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|loc| CurrentLocation {
-                            object_id: loc.object_id,
-                            position: loc.position,
-                            metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader
+            .query_bbox(&namespace, min_x, min_y, max_x, max_y, limit)
     }
 
     async fn query_cylinder(
@@ -187,28 +114,8 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_within_cylinder(&namespace, center, min_z, max_z, radius, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(loc, dist)| {
-                            (
-                                CurrentLocation {
-                                    object_id: loc.object_id,
-                                    position: loc.position,
-                                    metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                                },
-                                dist,
-                            )
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader
+            .query_cylinder(&namespace, center, min_z, max_z, radius, limit)
     }
 
     async fn query_trajectory(
@@ -220,35 +127,9 @@ impl SpatioService for Handler {
         end_time: Option<f64>,
         limit: usize,
     ) -> Result<Vec<LocationUpdate>, String> {
-        let db = self.db.clone();
+        let reader = self.reader.clone();
         tokio::task::spawn_blocking(move || {
-            let start = start_time
-                .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(t))
-                .unwrap_or(std::time::UNIX_EPOCH);
-            let end = end_time
-                .map(|t| std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(t))
-                .unwrap_or_else(std::time::SystemTime::now);
-
-            db.query_trajectory(&namespace, &id, start, end, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|upd| {
-                            let timestamp = upd
-                                .timestamp
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs_f64();
-
-                            LocationUpdate {
-                                timestamp,
-                                position: upd.position,
-                                metadata: serde_json::to_vec(&upd.metadata).unwrap_or_default(),
-                            }
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
+            reader.query_trajectory(&namespace, &id, start_time, end_time, limit)
         })
         .await
         .map_err(|e| format!("Internal error: {}", e))?
@@ -261,23 +142,15 @@ impl SpatioService for Handler {
         id: String,
         trajectory: Vec<(f64, Point3d, serde_json::Value)>,
     ) -> Result<(), String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let updates: Vec<spatio::config::TemporalPoint> = trajectory
-                .into_iter()
-                .map(|(ts, p, _meta)| {
-                    // TODO: Current DB insert_trajectory uses TemporalPoint (2D) and drops Z/metadata
-                    // Spatio-core needs update to support 3D points and metadata in trajectory storage
-                    let timestamp = std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(ts);
-                    spatio::config::TemporalPoint::new(*p.point_2d(), timestamp)
-                })
-                .collect();
-
-            db.insert_trajectory(&namespace, &id, &updates)
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        let op = WriteOp::InsertTrajectory {
+            namespace,
+            id,
+            trajectory,
+        };
+        self.write_tx
+            .send(op)
+            .await
+            .map_err(|_| "Server storage is overwhelmed or shutting down".to_string())
     }
 
     async fn query_bbox_3d(
@@ -292,23 +165,8 @@ impl SpatioService for Handler {
         max_z: f64,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_within_bbox_3d(&namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|loc| CurrentLocation {
-                            object_id: loc.object_id,
-                            position: loc.position,
-                            metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader
+            .query_bbox_3d(&namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
     }
 
     async fn query_near(
@@ -319,28 +177,7 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_near(&namespace, &id, radius, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(loc, dist)| {
-                            (
-                                CurrentLocation {
-                                    object_id: loc.object_id,
-                                    position: loc.position,
-                                    metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                                },
-                                dist,
-                            )
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.query_near(&namespace, &id, radius, limit)
     }
 
     async fn contains(
@@ -350,23 +187,7 @@ impl SpatioService for Handler {
         polygon: Polygon,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.query_polygon(&namespace, &polygon, limit)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|loc| CurrentLocation {
-                            object_id: loc.object_id,
-                            position: loc.position,
-                            metadata: serde_json::to_vec(&loc.metadata).unwrap_or_default(),
-                        })
-                        .collect()
-                })
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.contains(&namespace, &polygon, limit)
     }
 
     async fn distance(
@@ -377,13 +198,7 @@ impl SpatioService for Handler {
         id2: String,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.distance_between(&namespace, &id1, &id2, metric.unwrap_or_default())
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.distance(&namespace, &id1, &id2, metric)
     }
 
     async fn distance_to(
@@ -394,13 +209,7 @@ impl SpatioService for Handler {
         point: Point,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.distance_to(&namespace, &id, &point, metric.unwrap_or_default())
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.distance_to(&namespace, &id, &point, metric)
     }
 
     async fn convex_hull(
@@ -408,10 +217,7 @@ impl SpatioService for Handler {
         _: context::Context,
         namespace: String,
     ) -> Result<Option<Polygon>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || db.convex_hull(&namespace).map_err(|e| e.to_string()))
-            .await
-            .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.convex_hull(&namespace)
     }
 
     async fn bounding_box(
@@ -419,13 +225,10 @@ impl SpatioService for Handler {
         _: context::Context,
         namespace: String,
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>, String> {
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            db.bounding_box(&namespace)
-                .map(|opt| opt.map(spatio_types::bbox::BoundingBox2D::from_rect))
-                .map_err(|e| e.to_string())
-        })
-        .await
-        .map_err(|e| format!("Internal error: {}", e))?
+        self.reader.bounding_box(&namespace)
+    }
+
+    async fn stats(self, _: context::Context) -> Stats {
+        self.reader.stats()
     }
 }

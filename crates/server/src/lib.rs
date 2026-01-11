@@ -12,12 +12,14 @@
 //! ```ignore
 //! use spatio_server::run_server;
 //!
-//! run_server(addr, db, shutdown).await?;
+//! run_server(listener, db, shutdown).await?;
 //! ```
 
 pub mod handler;
 pub mod protocol;
+pub mod reader;
 pub mod transport;
+pub mod writer;
 
 // Re-export protocol types for client usage
 pub use protocol::{
