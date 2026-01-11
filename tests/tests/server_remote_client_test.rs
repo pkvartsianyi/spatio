@@ -2,7 +2,7 @@ use spatio::prelude::*;
 use spatio_client::SpatioClient;
 use spatio_types::point::Point3d;
 use std::sync::Arc;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 #[tokio::test]
 async fn test_remote_client_ops() -> anyhow::Result<()> {

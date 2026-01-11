@@ -2437,7 +2437,6 @@ dependencies = [
  "serde",
  "serde_json",
  "spatio",
- "spatio-client",
  "spatio-types",
  "tarpc",
  "thiserror 2.0.17",

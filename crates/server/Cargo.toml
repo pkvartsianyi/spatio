@@ -47,4 +47,3 @@ http = ["axum", "tower"]
 
 [dev-dependencies]
 tokio-test = "0.4"
-spatio-client = { workspace = true }
