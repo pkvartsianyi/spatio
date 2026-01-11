@@ -526,11 +526,17 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     done
 
     COMMIT_MSG="bump $PACKAGE version to $NEW_VERSION"
-    if git commit -m "$COMMIT_MSG"; then
-        print_success "Committed version changes"
+    
+    # Check if there are actually changes to commit
+    if git diff --cached --quiet; then
+        print_warning "No changes to commit. Version was likely already at $NEW_VERSION."
     else
-        print_error "Failed to commit changes"
-        exit 1
+        if git commit -m "$COMMIT_MSG"; then
+            print_success "Committed version changes"
+        else
+            print_error "Failed to commit changes"
+            exit 1
+        fi
     fi
 fi
 
