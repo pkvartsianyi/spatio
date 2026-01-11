@@ -120,7 +120,6 @@ def main():
     print("=== Spatio-Py Basic Usage Example ===\n")
     db = _create_and_test_database()
     nyc, london, paris = _demonstrate_geographic_operations(db)
-    _demonstrate_ttl_functionality(db)
     _demonstrate_sequential_operations(db)
     _demonstrate_database_statistics(db)
     _demonstrate_distance_calculations(nyc, london, paris)

@@ -93,7 +93,6 @@ graph TD
 
 ### Read Path (Spatial Query)
 1. **Hot Query**: Radius/BBox queries scan the in-memory R*-tree.
-2. **Filtering**: Results are filtered by TTL (time-to-live) and other constraints.
 3. **Return**: Current locations are returned immediately.
 
 ### Read Path (Trajectory Query)
