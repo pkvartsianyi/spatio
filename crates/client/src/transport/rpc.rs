@@ -13,6 +13,7 @@ use tarpc::client;
 use tarpc::context;
 use tarpc::tokio_serde::formats::Json;
 use thiserror::Error;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[derive(Error, Debug)]
 pub enum ClientError {
@@ -35,9 +36,17 @@ pub struct SpatioClient {
 
 impl SpatioClient {
     pub async fn connect(addr: SocketAddr) -> Result<Self> {
-        let transport = tarpc::serde_transport::tcp::connect(addr, Json::default).await?;
+        let socket = tokio::net::TcpStream::connect(addr).await?;
+        let framed = Framed::new(socket, LengthDelimitedCodec::new());
+        let transport = tarpc::serde_transport::new(framed, Json::default());
         let client = SpatioServiceClient::new(client::Config::default(), transport).spawn();
         Ok(Self { client })
+    }
+
+    fn make_context(&self) -> context::Context {
+        let mut ctx = context::current();
+        ctx.deadline = std::time::SystemTime::now() + Duration::from_secs(30);
+        ctx
     }
 
     pub async fn upsert(
@@ -46,14 +55,11 @@ impl SpatioClient {
         id: &str,
         point: Point3d,
         metadata: serde_json::Value,
-        ttl: Option<Duration>,
+        opts: Option<spatio_server::UpsertOptions>,
     ) -> Result<()> {
-        let update_ctx = context::current();
-        let opts = ttl.map(|t| spatio_server::UpsertOptions { ttl: t });
-
         self.client
             .upsert(
-                update_ctx,
+                self.make_context(),
                 namespace.to_string(),
                 id.to_string(),
                 point,
@@ -69,17 +75,15 @@ impl SpatioClient {
         namespace: &str,
         id: &str,
     ) -> Result<Option<spatio_server::CurrentLocation>> {
-        let ctx = context::current();
         self.client
-            .get(ctx, namespace.to_string(), id.to_string())
+            .get(self.make_context(), namespace.to_string(), id.to_string())
             .await?
             .map_err(ClientError::Server)
     }
 
     pub async fn delete(&self, namespace: &str, id: &str) -> Result<()> {
-        let ctx = context::current();
         self.client
-            .delete(ctx, namespace.to_string(), id.to_string())
+            .delete(self.make_context(), namespace.to_string(), id.to_string())
             .await?
             .map_err(ClientError::Server)
     }
@@ -91,9 +95,14 @@ impl SpatioClient {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(spatio_server::CurrentLocation, f64)>> {
-        let ctx = context::current();
         self.client
-            .query_radius(ctx, namespace.to_string(), center, radius, limit)
+            .query_radius(
+                self.make_context(),
+                namespace.to_string(),
+                center,
+                radius,
+                limit,
+            )
             .await?
             .map_err(ClientError::Server)
     }
@@ -104,11 +113,14 @@ impl SpatioClient {
         center: Point3d,
         k: usize,
     ) -> Result<Vec<(spatio_server::CurrentLocation, f64)>> {
-        let ctx = context::current();
         self.client
-            .knn(ctx, namespace.to_string(), center, k)
+            .knn(self.make_context(), namespace.to_string(), center, k)
             .await?
             .map_err(ClientError::Server)
+    }
+
+    pub async fn stats(&self) -> Result<spatio_server::Stats> {
+        Ok(self.client.stats(self.make_context()).await?)
     }
 
     pub async fn query_bbox(
@@ -120,10 +132,9 @@ impl SpatioClient {
         max_y: f64,
         limit: usize,
     ) -> Result<Vec<spatio_server::CurrentLocation>> {
-        let ctx = context::current();
         self.client
             .query_bbox(
-                ctx,
+                self.make_context(),
                 namespace.to_string(),
                 min_x,
                 min_y,
@@ -144,10 +155,9 @@ impl SpatioClient {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(spatio_server::CurrentLocation, f64)>> {
-        let ctx = context::current();
         self.client
             .query_cylinder(
-                ctx,
+                self.make_context(),
                 namespace.to_string(),
                 center,
                 min_z,
@@ -167,10 +177,9 @@ impl SpatioClient {
         end_time: Option<f64>,
         limit: usize,
     ) -> Result<Vec<spatio_server::LocationUpdate>> {
-        let ctx = context::current();
         self.client
             .query_trajectory(
-                ctx,
+                self.make_context(),
                 namespace.to_string(),
                 id.to_string(),
                 start_time,
@@ -187,9 +196,13 @@ impl SpatioClient {
         id: &str,
         trajectory: Vec<(f64, Point3d, serde_json::Value)>,
     ) -> Result<()> {
-        let ctx = context::current();
         self.client
-            .insert_trajectory(ctx, namespace.to_string(), id.to_string(), trajectory)
+            .insert_trajectory(
+                self.make_context(),
+                namespace.to_string(),
+                id.to_string(),
+                trajectory,
+            )
             .await?
             .map_err(ClientError::Server)
     }
@@ -205,10 +218,9 @@ impl SpatioClient {
         max_z: f64,
         limit: usize,
     ) -> Result<Vec<spatio_server::CurrentLocation>> {
-        let ctx = context::current();
         self.client
             .query_bbox_3d(
-                ctx,
+                self.make_context(),
                 namespace.to_string(),
                 min_x,
                 min_y,
@@ -229,9 +241,14 @@ impl SpatioClient {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(spatio_server::CurrentLocation, f64)>> {
-        let ctx = context::current();
         self.client
-            .query_near(ctx, namespace.to_string(), id.to_string(), radius, limit)
+            .query_near(
+                self.make_context(),
+                namespace.to_string(),
+                id.to_string(),
+                radius,
+                limit,
+            )
             .await?
             .map_err(ClientError::Server)
     }
@@ -242,9 +259,8 @@ impl SpatioClient {
         polygon: Polygon,
         limit: usize,
     ) -> Result<Vec<spatio_server::CurrentLocation>> {
-        let ctx = context::current();
         self.client
-            .contains(ctx, namespace.to_string(), polygon, limit)
+            .contains(self.make_context(), namespace.to_string(), polygon, limit)
             .await?
             .map_err(ClientError::Server)
     }
@@ -256,10 +272,9 @@ impl SpatioClient {
         id2: &str,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>> {
-        let ctx = context::current();
         self.client
             .distance(
-                ctx,
+                self.make_context(),
                 namespace.to_string(),
                 id1.to_string(),
                 id2.to_string(),
@@ -276,17 +291,21 @@ impl SpatioClient {
         point: Point,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>> {
-        let ctx = context::current();
         self.client
-            .distance_to(ctx, namespace.to_string(), id.to_string(), point, metric)
+            .distance_to(
+                self.make_context(),
+                namespace.to_string(),
+                id.to_string(),
+                point,
+                metric,
+            )
             .await?
             .map_err(ClientError::Server)
     }
 
     pub async fn convex_hull(&self, namespace: &str) -> Result<Option<Polygon>> {
-        let ctx = context::current();
         self.client
-            .convex_hull(ctx, namespace.to_string())
+            .convex_hull(self.make_context(), namespace.to_string())
             .await?
             .map_err(ClientError::Server)
     }
@@ -295,15 +314,9 @@ impl SpatioClient {
         &self,
         namespace: &str,
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>> {
-        let ctx = context::current();
         self.client
-            .bounding_box(ctx, namespace.to_string())
+            .bounding_box(self.make_context(), namespace.to_string())
             .await?
             .map_err(ClientError::Server)
-    }
-
-    pub async fn stats(&self) -> Result<spatio_server::Stats> {
-        let ctx = context::current();
-        Ok(self.client.stats(ctx).await?)
     }
 }

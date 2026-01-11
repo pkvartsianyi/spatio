@@ -6,6 +6,7 @@ members = [
     "crates/types",
     "crates/server",
     "crates/client",
+    "crates/benchmarks",
     "tests",
 ]
 

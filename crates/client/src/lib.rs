@@ -1,25 +1,20 @@
 //! Spatio Client
 //!
-//! Native Rust client for Spatio spatio-temporal database.
-//!
-//! # Transports
-//!
-//! - **RPC** (default): High-performance tarpc-based transport
-//! - **HTTP** (optional): REST API client, enable with `http` feature
+//! Native Rust RPC client for Spatio database.
 //!
 //! # Example
 //!
 //! ```ignore
 //! use spatio_client::SpatioClient;
 //!
-//! let client = SpatioClient::connect(addr).await?;
+//! let client = SpatioClient::connect("127.0.0.1:3000".parse()?).await?;
 //! client.upsert("ns", "id", point, metadata, None).await?;
 //! ```
 
-pub mod transport;
+mod transport;
 
-// Re-export the default (RPC) client for convenience
+// Re-export transport
 pub use transport::rpc::{ClientError, Result, SpatioClient};
 
-#[cfg(feature = "http")]
-pub use transport::http::{HttpClientError, SpatioHttpClient};
+// Re-export server types for convenience
+pub use spatio_server::{CurrentLocation, LocationUpdate, Stats, UpsertOptions};

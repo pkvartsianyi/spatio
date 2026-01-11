@@ -124,9 +124,37 @@ security-audit:
     cargo audit
     cd crates/py && bandit -r src/ && safety check
 
-benchmarks:
     cargo bench -p spatio -p spatio-server -p spatio-client
     cd crates/py && just bench
+
+bench-core *args:
+    cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
+
+bench-all:
+    @echo "=== CORE BENCHMARKS ==="
+    just bench-core -q
+    @echo ""
+    @echo "=== SERVER BENCHMARKS ==="
+    just bench-server
+
+bench-server:
+    #!/usr/bin/env bash
+    set -e
+    echo "Building release binaries..."
+    cargo build -p spatio-server -p spatio-benchmarks --release --quiet
+
+    pkill spatio-server || true
+
+    echo "Starting optimized server (RUST_LOG=error)..."
+    RUST_LOG=error ./target/release/spatio-server --port 3000 > /dev/null 2>&1 &
+    SERVER_PID=$!
+
+    trap "kill $SERVER_PID" EXIT
+
+    sleep 3
+
+    echo "Running benchmark..."
+    ./target/release/bench_server -q
 
 coverage:
     cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server -p spatio-client --timeout 120 --out html

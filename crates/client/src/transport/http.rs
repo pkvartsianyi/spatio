@@ -28,6 +28,7 @@ pub struct SpatioHttpClient {
 
 impl SpatioHttpClient {
     /// Create a new HTTP client
+    #[allow(dead_code)]
     pub fn new(base_url: &str) -> Result<Self, HttpClientError> {
         Ok(Self {
             base_url: base_url.to_string(),
@@ -35,6 +36,7 @@ impl SpatioHttpClient {
     }
 
     /// Upsert an object (placeholder)
+    #[allow(dead_code)]
     pub async fn upsert(
         &self,
         _namespace: &str,
@@ -51,6 +53,7 @@ impl SpatioHttpClient {
 
 /// Error type for HTTP client operations
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum HttpClientError {
     #[error("HTTP request failed: {0}")]
     Request(String),

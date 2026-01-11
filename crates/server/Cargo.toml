@@ -20,7 +20,6 @@ spatio = { workspace = true }
 spatio-types = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["codec"] }
-bincode = "1.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = "1.6"
