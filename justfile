@@ -141,12 +141,6 @@ patch-all:
     ./scripts/bump-version.sh client "$NEW_CLIENT" --no-commit
     
     echo ""
-    echo "=== Building in order: core > server > client ==="
-    cargo build -p spatio --release
-    cargo build -p spatio-server --release
-    cargo build -p spatio-client --release
-    
-    echo ""
     echo "=== Committing changes ==="
     git add crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml Cargo.toml Cargo.lock
     git commit -m "bump: core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT"
@@ -154,6 +148,7 @@ patch-all:
     echo ""
     echo "=== Done! ===" 
     echo "Push to main to trigger releases."
+    echo "CI will build in order: core > server > client"
 
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run

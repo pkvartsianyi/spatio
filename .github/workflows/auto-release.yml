@@ -258,11 +258,11 @@ jobs:
   release-server:
     name: Release spatio server
     runs-on: ubuntu-latest
-    needs: [detect-changes, release-types]
+    needs: [detect-changes, release-core]
     if: |
       always() &&
       needs.detect-changes.outputs.server-changed == 'true' &&
-      (needs.release-types.result == 'success' || needs.release-types.result == 'skipped')
+      (needs.release-core.result == 'success' || needs.release-core.result == 'skipped')
     permissions:
       contents: write
     steps:
@@ -271,22 +271,22 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio-types to be available on crates.io
-        if: needs.release-types.result == 'success'
+      - name: Wait for spatio to be available on crates.io
+        if: needs.release-core.result == 'success'
         run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
+          VERSION="${{ needs.detect-changes.outputs.core-version }}"
           MAX_ATTEMPTS=10
           ATTEMPT=1
           SLEEP_TIME=5
 
-          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
+          echo "Waiting for spatio v$VERSION to be available on crates.io..."
 
           while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
             sleep $SLEEP_TIME
 
-            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-types v$VERSION is now available on crates.io"
+            if curl -sf "https://crates.io/api/v1/crates/spatio" | grep -q "\"num\":\"$VERSION\""; then
+              echo "✓ spatio v$VERSION is now available on crates.io"
               exit 0
             fi
 

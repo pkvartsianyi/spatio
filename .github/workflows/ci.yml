@@ -79,6 +79,9 @@ jobs:
       - name: Build spatio-server
         run: cargo build -p spatio-server --all-features
 
+      - name: Build spatio-client
+        run: cargo build -p spatio-client --all-features
+
       # Rust testing
       - name: Run tests (spatio-types)
         run: cargo test -p spatio-types
