@@ -143,3 +143,4 @@ settings.json
 
 # Temporary CI check files
 /tmp/clippy-*.log
+test-benchmarks

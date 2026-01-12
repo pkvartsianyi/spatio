@@ -150,8 +150,6 @@ impl Ord for QueryCandidate {
 /// index implementation to serve all spatial query types.
 pub struct SpatialIndexManager {
     pub(crate) indexes: FxHashMap<String, RTree<IndexedPoint3D>>,
-    // Map from key to list of points (usually 1) for fast removal
-    pub(crate) key_map: FxHashMap<String, Vec<IndexedPoint3D>>,
     // Separate index for bounding boxes
     pub(crate) bbox_indexes: FxHashMap<String, RTree<IndexedBBox>>,
 }
@@ -160,7 +158,6 @@ impl SpatialIndexManager {
     pub fn new() -> Self {
         Self {
             indexes: FxHashMap::default(),
-            key_map: FxHashMap::default(),
             bbox_indexes: FxHashMap::default(),
         }
     }
@@ -170,15 +167,12 @@ impl SpatialIndexManager {
     }
 
     pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String) {
-        let point = IndexedPoint3D::new(x, y, z, key.clone());
+        let point = IndexedPoint3D::new(x, y, z, key);
 
         self.indexes
             .entry(prefix.to_string())
             .or_default()
-            .insert(point.clone());
-
-        // Track for fast removal
-        self.key_map.entry(key).or_default().push(point);
+            .insert(point);
     }
 
     pub fn insert_bbox(&mut self, prefix: &str, bbox: &BoundingBox2D, key: String, data: Bytes) {
@@ -606,19 +600,20 @@ impl SpatialIndexManager {
     }
 
     /// Remove a point from the index.
+    /// Uses O(N) scan since key_map was removed for faster inserts.
     pub fn remove_entry(&mut self, prefix: &str, key: &str) -> bool {
-        let Some(points) = self.key_map.remove(key) else {
-            return false;
-        };
-
         let Some(tree) = self.indexes.get_mut(prefix) else {
             return false;
         };
 
-        let mut removed = false;
-        for point in points {
-            removed |= tree.remove(&point).is_some();
-        }
+        // Scan R-tree to find point with matching key (O(N) but removals are rare)
+        let to_remove: Option<IndexedPoint3D> = tree.iter().find(|p| p.key == key).cloned();
+
+        let removed = if let Some(point) = to_remove {
+            tree.remove(&point).is_some()
+        } else {
+            false
+        };
 
         // Also remove from bbox index if present
         if let Some(bbox_tree) = self.bbox_indexes.get_mut(prefix) {
@@ -725,7 +720,6 @@ impl SpatialIndexManager {
     /// Clear all indexes.
     pub fn clear(&mut self) {
         self.indexes.clear();
-        self.key_map.clear();
         self.bbox_indexes.clear();
     }
 }
