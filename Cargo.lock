@@ -2340,7 +2340,7 @@ dependencies = [
 
 [[package]]
 name = "spatio"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "bytes",
  "criterion",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-client"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "futures",
@@ -2427,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-server"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "axum",
