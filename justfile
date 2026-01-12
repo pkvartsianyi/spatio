@@ -99,6 +99,62 @@ bump-server VERSION:
 bump-client VERSION:
     ./scripts/bump-version.sh client {{VERSION}}
 
+# Bump patch versions for core, server, client (in dependency order)
+patch-all:
+    #!/usr/bin/env bash
+    set -e
+    
+    # Get current versions
+    CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+    SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+    CLIENT_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-client","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+    
+    # Function to bump patch version
+    bump_patch() {
+        local version=$1
+        local major=$(echo "$version" | cut -d. -f1)
+        local minor=$(echo "$version" | cut -d. -f2)
+        local patch=$(echo "$version" | cut -d. -f3 | cut -d- -f1)
+        echo "$major.$minor.$((patch + 1))"
+    }
+    
+    NEW_CORE=$(bump_patch "$CORE_VERSION")
+    NEW_SERVER=$(bump_patch "$SERVER_VERSION")
+    NEW_CLIENT=$(bump_patch "$CLIENT_VERSION")
+    
+    echo "=== Patch Version Bump ==="
+    echo "  core:   $CORE_VERSION -> $NEW_CORE"
+    echo "  server: $SERVER_VERSION -> $NEW_SERVER"
+    echo "  client: $CLIENT_VERSION -> $NEW_CLIENT"
+    echo ""
+    
+    # Bump in dependency order: core > server > client
+    echo "=== Bumping core ==="
+    ./scripts/bump-version.sh core "$NEW_CORE" --no-commit
+    
+    echo ""
+    echo "=== Bumping server ==="
+    ./scripts/bump-version.sh server "$NEW_SERVER" --no-commit
+    
+    echo ""
+    echo "=== Bumping client ==="
+    ./scripts/bump-version.sh client "$NEW_CLIENT" --no-commit
+    
+    echo ""
+    echo "=== Building in order: core > server > client ==="
+    cargo build -p spatio --release
+    cargo build -p spatio-server --release
+    cargo build -p spatio-client --release
+    
+    echo ""
+    echo "=== Committing changes ==="
+    git add crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml Cargo.toml Cargo.lock
+    git commit -m "bump: core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT"
+    
+    echo ""
+    echo "=== Done! ===" 
+    echo "Push to main to trigger releases."
+
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run
 
