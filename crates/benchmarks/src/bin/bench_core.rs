@@ -2,11 +2,9 @@ use cpu_time::ProcessTime;
 use serde::Serialize;
 use spatio::{Point3d, Spatio};
 use std::fs::File;
-use std::io::Write;
 use std::time::{Duration, Instant};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
-/// Benchmark configuration
 struct BenchConfig {
     dataset_size: usize,
     warmup_runs: usize,
@@ -27,7 +25,6 @@ impl Default for BenchConfig {
     }
 }
 
-/// Collected metrics for a benchmark run
 #[derive(Debug, Clone, Serialize)]
 struct BenchMetrics {
     name: String,
@@ -70,7 +67,6 @@ impl BenchMetrics {
     }
 }
 
-/// Benchmark runner with metrics collection
 struct BenchRunner {
     system: System,
     process_id: Pid,
@@ -98,15 +94,12 @@ impl BenchRunner {
     where
         F: FnMut(),
     {
-        // Capture start metrics
         let cpu_start = ProcessTime::try_now().ok();
         let wall_start = Instant::now();
         let mem_before = self.get_memory_mb();
 
-        // Run the benchmark
         f();
 
-        // Capture end metrics
         let wall_elapsed = wall_start.elapsed();
         let cpu_elapsed = if let (Some(start), Ok(end)) = (cpu_start, ProcessTime::try_now()) {
             end.duration_since(start)
@@ -128,7 +121,6 @@ impl BenchRunner {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
-    // Parse args
     let config = BenchConfig {
         dataset_size: args
             .iter()
@@ -170,11 +162,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runner = BenchRunner::new();
 
-    // Generate test data
     let side_len = (config.dataset_size as f64).sqrt() as usize;
     let actual_count = side_len * side_len;
 
-    // Pre-generate points for consistent benchmarking
     let points: Vec<(String, Point3d)> = (0..side_len)
         .flat_map(|x| {
             (0..side_len).map(move |y| {
@@ -185,7 +175,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    // ══════════════ WARMUP ══════════════
     if !config.quiet {
         println!("Warming up...");
     }
@@ -199,10 +188,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Capture all metrics for valid JSON output
     let mut all_metrics = Vec::new();
 
-    // ══════════════ UPSERT ══════════════
     if !config.quiet {
         println!("\nUPSERT benchmark:");
     }
@@ -225,13 +212,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
-    // Create DB with data for read benchmarks
     let db = Spatio::memory()?;
     for (id, point) in &points {
         db.upsert("bench", id, point.clone(), serde_json::Value::Null, None)?;
     }
-
-    // ══════════════ GET (by ID) ══════════════
     if !config.quiet {
         println!("\nGET benchmark:");
     }
@@ -251,7 +235,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
-    // ══════════════ RADIUS QUERY ══════════════
     if !config.quiet {
         println!("\nRADIUS QUERY benchmark:");
     }
@@ -275,7 +258,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
-    // ══════════════ KNN ══════════════
     if !config.quiet {
         println!("\nKNN benchmark:");
     }
@@ -298,7 +280,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
-    // ══════════════ DISTANCE BETWEEN ══════════════
     if !config.quiet {
         println!("\nDISTANCE benchmark:");
     }
@@ -325,7 +306,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
-    // ══════════════ SUMMARY ══════════════
     println!("\n════════════════════════════════════════════════════════════════");
     println!(
         "  SUMMARY (averages across {} runs)",
@@ -378,7 +358,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("════════════════════════════════════════════════════════════════\n");
 
-    // Write JSON if requested
     if let Some(path) = config.json_output {
         #[derive(Serialize)]
         struct Output {

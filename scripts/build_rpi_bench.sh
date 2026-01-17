@@ -20,8 +20,20 @@ if ! command -v cargo-zigbuild &> /dev/null; then
 fi
 
 # Build bench_core
+echo "Building bench_core..."
 cargo zigbuild --target "$TARGET" --release -p spatio-benchmarks --bin bench_core
 
+# Build bench_server
+echo "Building bench_server..."
+cargo zigbuild --target "$TARGET" --release -p spatio-benchmarks --bin bench_server
+
+# Build spatio-server
+echo "Building spatio-server..."
+cargo zigbuild --target "$TARGET" --release -p spatio-server --bin spatio-server
+
 echo "Build complete!"
-echo "Binary location: $OUTPUT_DIR/bench_core"
-echo "Transfer this binary to your RPi 5 to run benchmarks."
+echo "Binaries location: $OUTPUT_DIR"
+echo "  - bench_core"
+echo "  - bench_server"
+echo "  - spatio-server"
+echo "Transfer these binaries to your RPi 5."
