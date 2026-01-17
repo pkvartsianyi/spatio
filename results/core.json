@@ -1,0 +1,182 @@
+{
+  "platform": "aarch64",
+  "timestamp": "2026-01-17T18:31:04.181125540+00:00",
+  "dataset_size": 100000,
+  "runs": [
+    {
+      "name": "UPSERT",
+      "ops_count": 99856,
+      "total_duration_secs": 0.903968668,
+      "cpu_time_secs": 0.903759218,
+      "memory_mb": 100.78125
+    },
+    {
+      "name": "UPSERT",
+      "ops_count": 99856,
+      "total_duration_secs": 0.890669112,
+      "cpu_time_secs": 0.890557183,
+      "memory_mb": 100.53125
+    },
+    {
+      "name": "UPSERT",
+      "ops_count": 99856,
+      "total_duration_secs": 0.891219003,
+      "cpu_time_secs": 0.891114072,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "UPSERT",
+      "ops_count": 99856,
+      "total_duration_secs": 0.891251633,
+      "cpu_time_secs": 0.891138866,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "UPSERT",
+      "ops_count": 99856,
+      "total_duration_secs": 0.89149206,
+      "cpu_time_secs": 0.891297497,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "GET",
+      "ops_count": 99856,
+      "total_duration_secs": 0.039677186,
+      "cpu_time_secs": 0.039681315,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "GET",
+      "ops_count": 99856,
+      "total_duration_secs": 0.039463279,
+      "cpu_time_secs": 0.039465463,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "GET",
+      "ops_count": 99856,
+      "total_duration_secs": 0.039819612,
+      "cpu_time_secs": 0.039802241,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "GET",
+      "ops_count": 99856,
+      "total_duration_secs": 0.039784001,
+      "cpu_time_secs": 0.039786148,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "GET",
+      "ops_count": 99856,
+      "total_duration_secs": 0.039718427,
+      "cpu_time_secs": 0.039720907,
+      "memory_mb": 100.546875
+    },
+    {
+      "name": "RADIUS",
+      "ops_count": 1000,
+      "total_duration_secs": 0.002954093,
+      "cpu_time_secs": 0.002956667,
+      "memory_mb": 100.84375
+    },
+    {
+      "name": "RADIUS",
+      "ops_count": 1000,
+      "total_duration_secs": 0.002552778,
+      "cpu_time_secs": 0.002554778,
+      "memory_mb": 100.84375
+    },
+    {
+      "name": "RADIUS",
+      "ops_count": 1000,
+      "total_duration_secs": 0.00250974,
+      "cpu_time_secs": 0.002511482,
+      "memory_mb": 100.84375
+    },
+    {
+      "name": "RADIUS",
+      "ops_count": 1000,
+      "total_duration_secs": 0.00248063,
+      "cpu_time_secs": 0.00248263,
+      "memory_mb": 100.84375
+    },
+    {
+      "name": "RADIUS",
+      "ops_count": 1000,
+      "total_duration_secs": 0.00249,
+      "cpu_time_secs": 0.002491852,
+      "memory_mb": 100.84375
+    },
+    {
+      "name": "KNN",
+      "ops_count": 1000,
+      "total_duration_secs": 0.008298074,
+      "cpu_time_secs": 0.008300797,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "KNN",
+      "ops_count": 1000,
+      "total_duration_secs": 0.008122722,
+      "cpu_time_secs": 0.008125241,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "KNN",
+      "ops_count": 1000,
+      "total_duration_secs": 0.008172963,
+      "cpu_time_secs": 0.008175166,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "KNN",
+      "ops_count": 1000,
+      "total_duration_secs": 0.008225575,
+      "cpu_time_secs": 0.008228148,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "KNN",
+      "ops_count": 1000,
+      "total_duration_secs": 0.008310056,
+      "cpu_time_secs": 0.008312185,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "DISTANCE",
+      "ops_count": 1000,
+      "total_duration_secs": 0.000692556,
+      "cpu_time_secs": 0.000694074,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "DISTANCE",
+      "ops_count": 1000,
+      "total_duration_secs": 0.000528611,
+      "cpu_time_secs": 0.000529648,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "DISTANCE",
+      "ops_count": 1000,
+      "total_duration_secs": 0.000485333,
+      "cpu_time_secs": 0.000486055,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "DISTANCE",
+      "ops_count": 1000,
+      "total_duration_secs": 0.000459925,
+      "cpu_time_secs": 0.000460686,
+      "memory_mb": 100.859375
+    },
+    {
+      "name": "DISTANCE",
+      "ops_count": 1000,
+      "total_duration_secs": 0.000450722,
+      "cpu_time_secs": 0.000451463,
+      "memory_mb": 100.859375
+    }
+  ]
+}
