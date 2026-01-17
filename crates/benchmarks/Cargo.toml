@@ -12,3 +12,7 @@ tokio = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 futures.workspace = true
+cpu-time = "1.0"
+sysinfo = "0.37"
+serde = { workspace = true, features = ["derive"] }
+chrono = "0.4.43"
