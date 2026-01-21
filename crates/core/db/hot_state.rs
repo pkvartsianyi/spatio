@@ -30,10 +30,7 @@ pub struct CurrentLocation {
 /// - Spatial queries on current state
 /// - Lock-free concurrent access
 pub struct HotState {
-    /// One entry per object (keyed by "namespace::object_id")
     current_locations: DashMap<String, Arc<CurrentLocation>>,
-
-    /// Spatial index manager (wrapped in RwLock for interior mutability)
     spatial_index: RwLock<SpatialIndexManager>,
 }
 
@@ -104,7 +101,15 @@ impl HotState {
                 // Update spatial index
                 // Remove old position
                 let mut spatial_idx = self.spatial_index.write();
-                spatial_idx.remove_entry(namespace, &full_key);
+                spatial_idx.remove_entry(
+                    namespace,
+                    &full_key,
+                    Some((
+                        old_location.position.x(),
+                        old_location.position.y(),
+                        old_location.position.z(),
+                    )),
+                );
 
                 // Insert new position
                 spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
@@ -117,11 +122,7 @@ impl HotState {
                 spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
                 Ok(None)
             }
-            UpdateAction::Ignored => {
-                // Return None to indicate no change (or return the current value?)
-                // For now, None mimics "no old value replaced" which is technically true
-                Ok(None)
-            }
+            UpdateAction::Ignored => Ok(None),
         }
     }
 
@@ -185,9 +186,10 @@ impl HotState {
         let removed = self.current_locations.remove(&key).map(|(_, v)| v);
 
         // Remove from spatial index
-        if removed.is_some() {
+        if let Some(item) = &removed {
             let mut spatial_idx = self.spatial_index.write();
-            spatial_idx.remove_entry(namespace, &key);
+            let pos = item.position.clone();
+            spatial_idx.remove_entry(namespace, &key, Some((pos.x(), pos.y(), pos.z())));
         }
 
         removed
