@@ -212,6 +212,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         all_metrics.push(metrics);
     }
 
+    if !config.quiet {
+        println!("\nUPDATE benchmark:");
+    }
+    let mut update_metrics = Vec::new();
+    for run in 0..config.measurement_runs {
+        let db = Spatio::memory()?;
+        for (id, point) in &points {
+            db.upsert("bench", id, point.clone(), serde_json::Value::Null, None)
+                .unwrap();
+        }
+
+        let metrics = runner.run("UPDATE", actual_count, || {
+            for (id, point) in &points {
+                let new_point = Point3d::new(point.point.x() + 0.0001, point.point.y(), point.z);
+                let _ = db.upsert("bench", id, new_point, serde_json::Value::Null, None);
+            }
+        });
+
+        if !config.quiet {
+            print!("  Run {}: ", run + 1);
+            metrics.print(false);
+        }
+        update_metrics.push(metrics.clone());
+        all_metrics.push(metrics);
+    }
+
     let db = Spatio::memory()?;
     for (id, point) in &points {
         db.upsert("bench", id, point.clone(), serde_json::Value::Null, None)?;
@@ -330,6 +356,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         avg_throughput(&upsert_metrics),
         avg_latency(&upsert_metrics),
         avg_cpu(&upsert_metrics)
+    );
+    println!(
+        "  UPDATE:   {:>12.2} ops/s | {:>8.2}µs | CPU: {:>5.1}%",
+        avg_throughput(&update_metrics),
+        avg_latency(&update_metrics),
+        avg_cpu(&update_metrics)
     );
     println!(
         "  GET:      {:>12.2} ops/s | {:>8.2}µs | CPU: {:>5.1}%",

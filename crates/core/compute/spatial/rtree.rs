@@ -150,7 +150,6 @@ impl Ord for QueryCandidate {
 /// index implementation to serve all spatial query types.
 pub struct SpatialIndexManager {
     pub(crate) indexes: FxHashMap<String, RTree<IndexedPoint3D>>,
-    // Separate index for bounding boxes
     pub(crate) bbox_indexes: FxHashMap<String, RTree<IndexedBBox>>,
 }
 
@@ -599,14 +598,25 @@ impl SpatialIndexManager {
             })
     }
 
-    /// Remove a point from the index.
-    /// Uses O(N) scan since key_map was removed for faster inserts.
-    pub fn remove_entry(&mut self, prefix: &str, key: &str) -> bool {
+    pub fn remove_entry(
+        &mut self,
+        prefix: &str,
+        key: &str,
+        old_coords: Option<(f64, f64, f64)>,
+    ) -> bool {
         let Some(tree) = self.indexes.get_mut(prefix) else {
             return false;
         };
 
-        // Scan R-tree to find point with matching key (O(N) but removals are rare)
+        if let Some((x, y, z)) = old_coords {
+            // Fast path: O(log N) removal using known coordinates
+            let point_to_remove = IndexedPoint3D::new(x, y, z, key.to_string());
+            if tree.remove(&point_to_remove).is_some() {
+                return true;
+            }
+        }
+
+        // Slow path: O(N) scan
         let to_remove: Option<IndexedPoint3D> = tree.iter().find(|p| p.key == key).cloned();
 
         let removed = if let Some(point) = to_remove {
@@ -660,9 +670,6 @@ impl SpatialIndexManager {
             return None;
         }
 
-        // Use the root envelope if available and matches our needs,
-        // otherwise iterate (O(N) for that namespace is still better than O(N) for whole DB)
-        // rstar RTree::envelope() returns the AABB of the root.
         let envelope = tree.root().envelope();
         let min = envelope.lower();
         let max = envelope.upper();
