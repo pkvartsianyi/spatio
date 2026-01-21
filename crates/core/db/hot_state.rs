@@ -186,9 +186,9 @@ impl HotState {
         let removed = self.current_locations.remove(&key).map(|(_, v)| v);
 
         // Remove from spatial index
-        if removed.is_some() {
+        if let Some(item) = &removed {
             let mut spatial_idx = self.spatial_index.write();
-            let pos = removed.as_ref().unwrap().position.clone();
+            let pos = item.position.clone();
             spatial_idx.remove_entry(namespace, &key, Some((pos.x(), pos.y(), pos.z())));
         }
 
