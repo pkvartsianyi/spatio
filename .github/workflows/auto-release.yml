@@ -415,31 +415,53 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   build-python-artifacts:
-    name: Build Python Wheels (${{ matrix.os }}, py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
+    name: Build Python Wheels (${{ matrix.platform.os }}, ${{ matrix.platform.target }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.platform.os }}
     needs: [detect-changes]
     if: needs.detect-changes.outputs.python-changed == 'true'
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        platform:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: auto
+          # Linux aarch64 (Raspberry Pi, ARM servers) via QEMU
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: auto
+          # macOS Intel
+          - os: macos-13
+            target: x86_64
+            manylinux: ""
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64
+            manylinux: ""
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64
+            manylinux: ""
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
         with:
-          python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
-      - run: pip install maturin
-      - run: |
-          maturin build --release --out dist --interpreter python
-        working-directory: crates/py
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --interpreter python${{ matrix.python-version }}
+          manylinux: ${{ matrix.platform.manylinux || 'auto' }}
+          working-directory: crates/py
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
+
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}-py${{ matrix.python-version }}
           path: crates/py/dist/*.whl
+
 
   publish-to-pypi:
     name: Publish to PyPI
@@ -474,7 +496,6 @@ jobs:
           git tag "$TAG" -m "Release spatio-py $VERSION"
           git push origin "$TAG"
 
-  # ---------------- STAGE 4: DOCS ----------------
   # ---------------- STAGE 4: DOCS ----------------
   docs:
     name: Build and Deploy Docs
