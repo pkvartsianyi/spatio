@@ -145,3 +145,5 @@ settings.json
 /tmp/clippy-*.log
 test-benchmarks
 .DS_Store
+data
+demo
