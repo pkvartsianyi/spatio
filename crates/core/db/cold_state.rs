@@ -36,9 +36,6 @@ pub struct ColdState {
 
     /// Buffer size per object (e.g., last 100 updates)
     buffer_capacity: usize,
-
-    #[allow(dead_code)] // Used for debug/inspection
-    config: PersistenceConfig,
 }
 
 impl ColdState {
@@ -53,7 +50,6 @@ impl ColdState {
             trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size)?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
-            config,
         })
     }
 
@@ -374,21 +370,20 @@ impl TrajectoryLog {
     }
 
     fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
-        // Simple text format for now:
-        // timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|base64_metadata
+        // Log format (pipe-separated, 8 fields per line):
+        //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
+        //
+        // Coordinates are written to 6 decimal places (~0.1 m precision).
+        // Namespace and object_id must not contain the `|` character.
         let micros = update
             .timestamp
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros();
 
-        // Serialize metadata to JSON string
         let json_str =
             serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
 
-        // Use a simple pipe-separated format
-        // Note: This assumes namespace and object_id don't contain pipes.
-        // In a real impl, specialized escaping or binary format should be used.
         writeln!(
             self.writer,
             "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
