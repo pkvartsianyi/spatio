@@ -5,6 +5,3 @@
 //! - `http` - HTTP/REST API (requires `http` feature)
 
 pub mod rpc;
-
-#[cfg(feature = "http")]
-pub mod http;

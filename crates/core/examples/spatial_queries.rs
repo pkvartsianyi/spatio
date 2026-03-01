@@ -37,7 +37,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("   Added {} cities to spatial index\n", cities.len());
 
-    // 4. Populate with sample data (using upsert)
     // Create a grid of points
     for i in 0..10 {
         for j in 0..10 {
@@ -120,14 +119,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // 6. Perform Bounding Box Query (query_bbox)
     let min_x = -74.06;
     let min_y = 40.74;
     let max_x = -74.04;
     let max_y = 40.76;
 
-    println!("\n6. Bounding Box Query (query_bbox)");
-    println!("   BBox: [{}, {}] to [{}, {}]", min_x, min_y, max_x, max_y);
+    println!(
+        "\n   NYC grid narrow bbox: [{}, {}] to [{}, {}]",
+        min_x, min_y, max_x, max_y
+    );
 
     let bbox_results = db.query_bbox("nyc_grid", min_x, min_y, max_x, max_y, 100)?;
     println!("   Found {} points in bounding box", bbox_results.len());
@@ -197,23 +197,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("   Added {} London landmarks", london_landmarks.len());
 
-    // 5. Perform Radius Query (using query_radius)
-    // Note: query_radius replaces query_current_within_radius and always returns distance
     let center = Point3d::new(-74.05, 40.75, 0.0);
     let radius = 3000.0; // 3km
-    println!("\n5. Radius Query (query_radius)");
+    println!("\n   NYC grid radius query");
     println!("   Center: ({:.4}, {:.4})", center.x(), center.y());
     println!("   Radius: {:.0}m", radius);
 
     let results = db.query_radius("nyc_grid", &center, radius, 100)?;
     println!("   Found {} points within radius:", results.len());
 
-    // Verify results
     if let Some((loc, dist)) = results.first() {
         println!("     - Sample: {} at {:.1}m", loc.object_id, dist);
     }
 
-    // Performance check (optional, run many queries)
+    // Performance check
     let start = std::time::Instant::now();
     for _ in 0..1000 {
         db.query_radius("nyc_grid", &center, radius, 100)?;
@@ -237,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // === 6. QUERY LIMITS ===
+    // === 6. QUERY RESULT LIMITING ===
     println!("6. Query Result Limiting");
     println!("------------------------");
 
