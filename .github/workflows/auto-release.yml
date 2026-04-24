@@ -432,10 +432,6 @@ jobs:
           - os: ubuntu-latest
             target: aarch64
             manylinux: auto
-          # macOS Intel
-          - os: macos-13
-            target: x86_64
-            manylinux: ""
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64
@@ -446,6 +442,11 @@ jobs:
             manylinux: ""
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Build wheels
         uses: PyO3/maturin-action@v1

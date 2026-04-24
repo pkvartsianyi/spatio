@@ -48,8 +48,7 @@ impl HotState {
         format!("{}::{}", namespace, object_id)
     }
 
-    /// Update object's current location (replaces old position)
-    /// Update an object's current location
+    /// Update an object's current location (replaces old position).
     pub fn update_location(
         &self,
         namespace: &str,
@@ -237,9 +236,7 @@ impl HotState {
             .collect()
     }
 
-    /// Query objects within a 3D bounding box
-    #[allow(clippy::too_many_arguments)]
-    /// Query objects within a 3D bounding box
+    /// Query objects within a 3D bounding box.
     #[allow(clippy::too_many_arguments)]
     pub fn query_within_bbox_3d(
         &self,
