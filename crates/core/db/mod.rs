@@ -26,7 +26,6 @@ pub use sync::SyncDB;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// Deletes a temporary directory when the last DB clone holding it is dropped.
 struct TempDirGuard(std::path::PathBuf);
 
 impl Drop for TempDirGuard {
@@ -50,7 +49,6 @@ pub struct DB {
     pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // Will be used for snapshot checkpoints
     pub(crate) config: Config,
-    // Declared last so it drops after `cold` (and its open file handle).
     _temp_dir: Option<Arc<TempDirGuard>>,
 }
 
@@ -182,8 +180,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
-        self.hot.remove_object(namespace, object_id);
         self.cold.append_tombstone(namespace, object_id)?;
+        self.hot.remove_object(namespace, object_id);
         Ok(())
     }
 

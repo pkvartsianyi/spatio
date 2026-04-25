@@ -116,7 +116,6 @@ impl ColdState {
         Ok(())
     }
 
-    /// Append a tombstone for a deleted object so recovery skips it on restart.
     pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
         let micros = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -265,9 +264,11 @@ impl ColdState {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
 
-        let mut latest_positions: HashMap<String, LocationUpdate> = HashMap::new();
-        // Tracks the timestamp of the most-recent tombstone per key.
-        let mut deleted_at: HashMap<String, SystemTime> = HashMap::new();
+        struct RecoveryEntry {
+            best: Option<LocationUpdate>,
+        }
+
+        let mut entries: HashMap<String, RecoveryEntry> = HashMap::new();
 
         for (line_num, line_result) in reader.lines().enumerate() {
             let line = match line_result {
@@ -290,20 +291,11 @@ impl ColdState {
                     log::warn!("Malformed tombstone on line {}", line_num + 1);
                     continue;
                 }
-                let ts_micros: u128 = match parts[1].parse() {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                let ts = UNIX_EPOCH + std::time::Duration::from_micros(ts_micros as u64);
                 let key = format!("{}::{}", parts[2], parts[3]);
-                deleted_at
+                entries
                     .entry(key)
-                    .and_modify(|t| {
-                        if ts > *t {
-                            *t = ts;
-                        }
-                    })
-                    .or_insert(ts);
+                    .or_insert(RecoveryEntry { best: None })
+                    .best = None;
                 continue;
             }
 
@@ -325,7 +317,8 @@ impl ColdState {
                     continue;
                 }
             };
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
+            let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
+            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(micros_u64);
 
             let namespace = parts[1];
             let object_id = parts[2];
@@ -366,20 +359,22 @@ impl ColdState {
                 metadata,
             };
 
-            // Keep only the latest update for each object
-            latest_positions
+            let entry = entries
                 .entry(full_key)
-                .and_modify(|existing| {
-                    if update.timestamp > existing.timestamp {
-                        *existing = update.clone();
-                    }
-                })
-                .or_insert(update);
+                .or_insert(RecoveryEntry { best: None });
+            match &entry.best {
+                None => entry.best = Some(update),
+                Some(existing) if update.timestamp > existing.timestamp => {
+                    entry.best = Some(update);
+                }
+                _ => {}
+            }
         }
 
-        // Drop any objects whose most-recent log entry was a tombstone.
-        latest_positions
-            .retain(|key, update| deleted_at.get(key).is_none_or(|&ts| update.timestamp > ts));
+        let latest_positions = entries
+            .into_iter()
+            .filter_map(|(key, e)| e.best.map(|u| (key, u)))
+            .collect();
 
         Ok(latest_positions)
     }
@@ -615,6 +610,34 @@ mod tests {
         assert_eq!(plane.position.x(), -75.0);
         assert_eq!(plane.position.z(), 5000.0);
         assert_eq!(plane.timestamp, t3);
+    }
+
+    #[test]
+    fn test_tombstone_beats_future_timestamp_on_recovery() {
+        // An object inserted with a future SetOptions timestamp must still stay deleted
+        // after a tombstone is written, even though its timestamp is > current time.
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+
+        // Insert with a timestamp far in the future.
+        let future_ts = UNIX_EPOCH + Duration::from_secs(99_999_999_999);
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            future_ts,
+        )
+        .unwrap();
+        // Tombstone written after the insert (later in log order).
+        cold.append_tombstone("ns", "obj").unwrap();
+
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(
+            !recovered.contains_key("ns::obj"),
+            "future-timestamped object must not reappear after tombstone"
+        );
     }
 
     #[test]
