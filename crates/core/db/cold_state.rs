@@ -116,6 +116,15 @@ impl ColdState {
         Ok(())
     }
 
+    pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
+        let micros = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros();
+        let mut log = self.trajectory_log.lock();
+        log.append_tombstone(micros, namespace, object_id)
+    }
+
     /// Force flush of the trajectory log to disk
     pub fn flush(&self) -> Result<()> {
         let mut log = self.trajectory_log.lock();
@@ -228,7 +237,7 @@ impl ColdState {
 
         // Merge buffer and disk results, sort by timestamp (newest first), limit
         from_buffer.extend(from_disk);
-        from_buffer.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        from_buffer.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         from_buffer.truncate(limit);
 
         Ok(from_buffer)
@@ -255,7 +264,11 @@ impl ColdState {
         let file = std::fs::File::open(path)?;
         let reader = BufReader::new(file);
 
-        let mut latest_positions: HashMap<String, LocationUpdate> = HashMap::new();
+        struct RecoveryEntry {
+            best: Option<LocationUpdate>,
+        }
+
+        let mut entries: HashMap<String, RecoveryEntry> = HashMap::new();
 
         for (line_num, line_result) in reader.lines().enumerate() {
             let line = match line_result {
@@ -270,8 +283,23 @@ impl ColdState {
                 }
             };
 
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
             let parts: Vec<&str> = line.split('|').collect();
+
+            // Handle tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
+            if parts.first() == Some(&"TOMBSTONE") {
+                if parts.len() != 4 {
+                    log::warn!("Malformed tombstone on line {}", line_num + 1);
+                    continue;
+                }
+                let key = format!("{}::{}", parts[2], parts[3]);
+                entries
+                    .entry(key)
+                    .or_insert(RecoveryEntry { best: None })
+                    .best = None;
+                continue;
+            }
+
+            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
             if parts.len() != 8 {
                 log::warn!(
                     "Malformed log line {} (expected 8 fields, got {})",
@@ -289,7 +317,8 @@ impl ColdState {
                     continue;
                 }
             };
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
+            let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
+            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(micros_u64);
 
             let namespace = parts[1];
             let object_id = parts[2];
@@ -330,16 +359,22 @@ impl ColdState {
                 metadata,
             };
 
-            // Keep only the latest update for each object
-            latest_positions
+            let entry = entries
                 .entry(full_key)
-                .and_modify(|existing| {
-                    if update.timestamp > existing.timestamp {
-                        *existing = update.clone();
-                    }
-                })
-                .or_insert(update);
+                .or_insert(RecoveryEntry { best: None });
+            match &entry.best {
+                None => entry.best = Some(update),
+                Some(existing) if update.timestamp > existing.timestamp => {
+                    entry.best = Some(update);
+                }
+                _ => {}
+            }
         }
+
+        let latest_positions = entries
+            .into_iter()
+            .filter_map(|(key, e)| e.best.map(|u| (key, u)))
+            .collect();
 
         Ok(latest_positions)
     }
@@ -403,6 +438,20 @@ impl TrajectoryLog {
             self.pending_writes = 0;
         }
 
+        Ok(())
+    }
+
+    fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
+        writeln!(
+            self.writer,
+            "TOMBSTONE|{}|{}|{}",
+            micros, namespace, object_id
+        )?;
+        self.pending_writes += 1;
+        if self.pending_writes >= self.buffer_limit {
+            self.writer.flush()?;
+            self.pending_writes = 0;
+        }
         Ok(())
     }
 
@@ -561,6 +610,116 @@ mod tests {
         assert_eq!(plane.position.x(), -75.0);
         assert_eq!(plane.position.z(), 5000.0);
         assert_eq!(plane.timestamp, t3);
+    }
+
+    #[test]
+    fn test_tombstone_beats_future_timestamp_on_recovery() {
+        // An object inserted with a future SetOptions timestamp must still stay deleted
+        // after a tombstone is written, even though its timestamp is > current time.
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+
+        // Insert with a timestamp far in the future.
+        let future_ts = UNIX_EPOCH + Duration::from_secs(99_999_999_999);
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            future_ts,
+        )
+        .unwrap();
+        // Tombstone written after the insert (later in log order).
+        cold.append_tombstone("ns", "obj").unwrap();
+
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(
+            !recovered.contains_key("ns::obj"),
+            "future-timestamped object must not reappear after tombstone"
+        );
+    }
+
+    #[test]
+    fn test_tombstone_excludes_deleted_object_on_recovery() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+
+        let t1 = UNIX_EPOCH + Duration::from_secs(1000);
+        let t2 = UNIX_EPOCH + Duration::from_secs(2000);
+
+        cold.append_update(
+            "ns",
+            "obj_keep",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
+        cold.append_update(
+            "ns",
+            "obj_del",
+            Point3d::new(3.0, 4.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
+        cold.append_tombstone("ns", "obj_del").unwrap();
+        cold.append_update(
+            "ns",
+            "obj_keep",
+            Point3d::new(1.1, 2.1, 0.0),
+            serde_json::json!({}),
+            t2,
+        )
+        .unwrap();
+
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(
+            recovered.contains_key("ns::obj_keep"),
+            "kept object should be recovered"
+        );
+        assert!(
+            !recovered.contains_key("ns::obj_del"),
+            "deleted object must not be recovered"
+        );
+    }
+
+    #[test]
+    fn test_tombstone_then_reinsert_recovers_object() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+
+        let t1 = UNIX_EPOCH + Duration::from_secs(1000);
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
+        cold.append_tombstone("ns", "obj").unwrap();
+
+        // Re-insert with a timestamp guaranteed to be after the tombstone (now + margin).
+        let t2 = SystemTime::now() + Duration::from_secs(1);
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(5.0, 6.0, 0.0),
+            serde_json::json!({}),
+            t2,
+        )
+        .unwrap();
+
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(
+            recovered.contains_key("ns::obj"),
+            "re-inserted object should survive recovery"
+        );
+        assert_eq!(recovered["ns::obj"].position.x(), 5.0);
     }
 
     #[test]

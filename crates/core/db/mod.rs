@@ -26,6 +26,14 @@ pub use sync::SyncDB;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+struct TempDirGuard(std::path::PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Embedded spatio-temporal database.
 ///
 /// Optimized for tracking moving objects with hot/cold data separation.
@@ -41,6 +49,7 @@ pub struct DB {
     pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // Will be used for snapshot checkpoints
     pub(crate) config: Config,
+    _temp_dir: Option<Arc<TempDirGuard>>,
 }
 
 impl DB {
@@ -58,20 +67,23 @@ impl DB {
         let path_ref = path.as_ref();
         let hot = Arc::new(HotState::new());
 
-        let cold = if path_ref.to_str() == Some(":memory:") {
+        let (cold, temp_dir_guard) = if path_ref.to_str() == Some(":memory:") {
             let temp_dir =
                 std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
-            Arc::new(ColdState::new(
+            let cold = Arc::new(ColdState::new(
                 &temp_dir.join("traj.log"),
                 config.buffer_capacity,
                 config.persistence.clone(),
-            )?)
+            )?);
+            let guard = Arc::new(TempDirGuard(temp_dir));
+            (cold, Some(guard))
         } else {
-            Arc::new(ColdState::new(
+            let cold = Arc::new(ColdState::new(
                 path_ref,
                 config.buffer_capacity,
                 config.persistence.clone(),
-            )?)
+            )?);
+            (cold, None)
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
@@ -110,6 +122,7 @@ impl DB {
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
             config,
+            _temp_dir: temp_dir_guard,
         })
     }
 
@@ -167,6 +180,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        self.cold.append_tombstone(namespace, object_id)?;
         self.hot.remove_object(namespace, object_id);
         Ok(())
     }
@@ -623,6 +637,98 @@ mod tests {
             .query_trajectory(namespace, object_id, start_time, end_time, 2)
             .unwrap();
         assert_eq!(limited_trajectory.len(), 2);
+    }
+
+    #[test]
+    fn test_delete_does_not_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // First session: insert then delete.
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.delete("ns", "obj").unwrap();
+            db.close().unwrap();
+        }
+
+        // Second session: object must not reappear.
+        {
+            let db = DB::open(&db_path).unwrap();
+            assert!(
+                db.get("ns", "obj").unwrap().is_none(),
+                "deleted object must not reappear after restart"
+            );
+        }
+    }
+
+    #[test]
+    fn test_delete_then_reinsert_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test2.db");
+
+        let pos2 = Point3d::new(9.0, 8.0, 0.0);
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.delete("ns", "obj").unwrap();
+            sleep(Duration::from_millis(1)); // ensure re-insert timestamp > tombstone
+            db.upsert("ns", "obj", pos2.clone(), serde_json::json!({"v": 2}), None)
+                .unwrap();
+            db.close().unwrap();
+        }
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            let loc = db
+                .get("ns", "obj")
+                .unwrap()
+                .expect("re-inserted object must survive restart");
+            assert_eq!(loc.position, pos2);
+        }
+    }
+
+    #[test]
+    fn test_memory_db_cleans_up_temp_dir() {
+        let temp_path = {
+            let db = DB::memory().unwrap();
+            // Reach into the cold state's log path via a query (just to exercise the db)
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            // Extract the temp dir path before dropping
+            match db._temp_dir.as_ref().map(|g| g.0.clone()) {
+                Some(p) => {
+                    assert!(p.exists(), "temp dir must exist while DB is live");
+                    p
+                }
+                None => panic!("memory DB should have a temp dir guard"),
+            }
+        }; // DB dropped here
+        assert!(
+            !temp_path.exists(),
+            "temp dir must be removed after DB is dropped"
+        );
     }
 
     #[test]
