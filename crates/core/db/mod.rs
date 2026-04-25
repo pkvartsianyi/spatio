@@ -649,7 +649,14 @@ mod tests {
         // First session: insert then delete.
         {
             let db = DB::open(&db_path).unwrap();
-            db.upsert("ns", "obj", Point3d::new(1.0, 2.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
             db.delete("ns", "obj").unwrap();
             db.close().unwrap();
         }
@@ -657,7 +664,10 @@ mod tests {
         // Second session: object must not reappear.
         {
             let db = DB::open(&db_path).unwrap();
-            assert!(db.get("ns", "obj").unwrap().is_none(), "deleted object must not reappear after restart");
+            assert!(
+                db.get("ns", "obj").unwrap().is_none(),
+                "deleted object must not reappear after restart"
+            );
         }
     }
 
@@ -670,16 +680,27 @@ mod tests {
 
         {
             let db = DB::open(&db_path).unwrap();
-            db.upsert("ns", "obj", Point3d::new(1.0, 2.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
             db.delete("ns", "obj").unwrap();
             sleep(Duration::from_millis(1)); // ensure re-insert timestamp > tombstone
-            db.upsert("ns", "obj", pos2.clone(), serde_json::json!({"v": 2}), None).unwrap();
+            db.upsert("ns", "obj", pos2.clone(), serde_json::json!({"v": 2}), None)
+                .unwrap();
             db.close().unwrap();
         }
 
         {
             let db = DB::open(&db_path).unwrap();
-            let loc = db.get("ns", "obj").unwrap().expect("re-inserted object must survive restart");
+            let loc = db
+                .get("ns", "obj")
+                .unwrap()
+                .expect("re-inserted object must survive restart");
             assert_eq!(loc.position, pos2);
         }
     }
@@ -689,7 +710,14 @@ mod tests {
         let temp_path = {
             let db = DB::memory().unwrap();
             // Reach into the cold state's log path via a query (just to exercise the db)
-            db.upsert("ns", "obj", Point3d::new(0.0, 0.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
             // Extract the temp dir path before dropping
             match db._temp_dir.as_ref().map(|g| g.0.clone()) {
                 Some(p) => {
@@ -699,7 +727,10 @@ mod tests {
                 None => panic!("memory DB should have a temp dir guard"),
             }
         }; // DB dropped here
-        assert!(!temp_path.exists(), "temp dir must be removed after DB is dropped");
+        assert!(
+            !temp_path.exists(),
+            "temp dir must be removed after DB is dropped"
+        );
     }
 
     #[test]

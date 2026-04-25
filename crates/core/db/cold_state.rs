@@ -378,11 +378,8 @@ impl ColdState {
         }
 
         // Drop any objects whose most-recent log entry was a tombstone.
-        latest_positions.retain(|key, update| {
-            deleted_at
-                .get(key)
-                .is_none_or(|&ts| update.timestamp > ts)
-        });
+        latest_positions
+            .retain(|key, update| deleted_at.get(key).is_none_or(|&ts| update.timestamp > ts));
 
         Ok(latest_positions)
     }
@@ -449,13 +446,12 @@ impl TrajectoryLog {
         Ok(())
     }
 
-    fn append_tombstone(
-        &mut self,
-        micros: u128,
-        namespace: &str,
-        object_id: &str,
-    ) -> Result<()> {
-        writeln!(self.writer, "TOMBSTONE|{}|{}|{}", micros, namespace, object_id)?;
+    fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
+        writeln!(
+            self.writer,
+            "TOMBSTONE|{}|{}|{}",
+            micros, namespace, object_id
+        )?;
         self.pending_writes += 1;
         if self.pending_writes >= self.buffer_limit {
             self.writer.flush()?;
@@ -630,14 +626,41 @@ mod tests {
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);
 
-        cold.append_update("ns", "obj_keep", Point3d::new(1.0, 2.0, 0.0), serde_json::json!({}), t1).unwrap();
-        cold.append_update("ns", "obj_del", Point3d::new(3.0, 4.0, 0.0), serde_json::json!({}), t1).unwrap();
+        cold.append_update(
+            "ns",
+            "obj_keep",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
+        cold.append_update(
+            "ns",
+            "obj_del",
+            Point3d::new(3.0, 4.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
         cold.append_tombstone("ns", "obj_del").unwrap();
-        cold.append_update("ns", "obj_keep", Point3d::new(1.1, 2.1, 0.0), serde_json::json!({}), t2).unwrap();
+        cold.append_update(
+            "ns",
+            "obj_keep",
+            Point3d::new(1.1, 2.1, 0.0),
+            serde_json::json!({}),
+            t2,
+        )
+        .unwrap();
 
         let recovered = cold.recover_current_locations().unwrap();
-        assert!(recovered.contains_key("ns::obj_keep"), "kept object should be recovered");
-        assert!(!recovered.contains_key("ns::obj_del"), "deleted object must not be recovered");
+        assert!(
+            recovered.contains_key("ns::obj_keep"),
+            "kept object should be recovered"
+        );
+        assert!(
+            !recovered.contains_key("ns::obj_del"),
+            "deleted object must not be recovered"
+        );
     }
 
     #[test]
@@ -647,15 +670,32 @@ mod tests {
         let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
-        cold.append_update("ns", "obj", Point3d::new(1.0, 2.0, 0.0), serde_json::json!({}), t1).unwrap();
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(1.0, 2.0, 0.0),
+            serde_json::json!({}),
+            t1,
+        )
+        .unwrap();
         cold.append_tombstone("ns", "obj").unwrap();
 
         // Re-insert with a timestamp guaranteed to be after the tombstone (now + margin).
         let t2 = SystemTime::now() + Duration::from_secs(1);
-        cold.append_update("ns", "obj", Point3d::new(5.0, 6.0, 0.0), serde_json::json!({}), t2).unwrap();
+        cold.append_update(
+            "ns",
+            "obj",
+            Point3d::new(5.0, 6.0, 0.0),
+            serde_json::json!({}),
+            t2,
+        )
+        .unwrap();
 
         let recovered = cold.recover_current_locations().unwrap();
-        assert!(recovered.contains_key("ns::obj"), "re-inserted object should survive recovery");
+        assert!(
+            recovered.contains_key("ns::obj"),
+            "re-inserted object should survive recovery"
+        );
         assert_eq!(recovered["ns::obj"].position.x(), 5.0);
     }
 
