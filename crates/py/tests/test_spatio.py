@@ -5,14 +5,18 @@ Comprehensive tests for Spatio Python bindings
 import gc
 import os
 import time
+
 import pytest
+
 import spatio
+
 
 @pytest.fixture
 def gc_collect():
     """Fixture for test cleanup"""
     yield
     gc.collect()
+
 
 class TestPoint:
     """Test Point class functionality"""
@@ -45,6 +49,7 @@ class TestPoint:
         point = spatio.Point(-74.0060, 40.7128)
         assert "Point(x=-74.0060, y=40.7128, z=0.0000)" in str(point)
 
+
 class TestConfig:
     """Test Config class functionality"""
 
@@ -52,6 +57,7 @@ class TestConfig:
         """Test default configuration"""
         config = spatio.Config()
         assert config is not None
+
 
 class TestSpatio:
     """Test main Spatio database functionality"""
@@ -78,10 +84,10 @@ class TestSpatio:
         """Test updating location"""
         db = spatio.Spatio.memory()
         nyc = spatio.Point(-74.0060, 40.7128)
-        
+
         # Update with metadata
         db.upsert("cities", "nyc", nyc, {"name": "New York"})
-        
+
         # Query to verify
         results = db.query_radius("cities", nyc, 1000.0, 10)
         assert len(results) == 1
@@ -96,9 +102,9 @@ class TestSpatio:
         """Test updating location without metadata"""
         db = spatio.Spatio.memory()
         nyc = spatio.Point(-74.0060, 40.7128)
-        
+
         db.upsert("cities", "nyc", nyc)
-        
+
         results = db.query_radius("cities", nyc, 1000.0, 10)
         assert len(results) == 1
         # Expect (obj_id, point, meta, distance)
@@ -110,23 +116,23 @@ class TestSpatio:
         db = spatio.Spatio.memory()
         nyc = spatio.Point(-74.0060, 40.7128)
         brooklyn = spatio.Point(-73.9442, 40.6782)
-        
+
         db.upsert("cities", "nyc", nyc, {"name": "NYC"})
         db.upsert("cities", "bk", brooklyn, {"name": "Brooklyn"})
-        
+
         # Query near NYC
         results = db.query_near("cities", "nyc", 10000.0, 10)
-        
-        # Should find Brooklyn (NYC itself is excluded from near_object query usually, or included? 
-        # Rust implementation of query_near_object usually excludes the object itself if it's based on KNN, 
-        # but let's check behavior. Actually standard radius query includes it. 
+
+        # Should find Brooklyn (NYC itself is excluded from near_object query usually, or included?
+        # Rust implementation of query_near_object usually excludes the object itself if it's based on KNN,
+        # but let's check behavior. Actually standard radius query includes it.
         # Let's assume it finds neighbors.)
-        
+
         # Based on implementation, it does a radius search around the object's position.
         # It likely includes the object itself unless explicitly filtered.
         # Let's verify count.
         assert len(results) >= 1
-        
+
         found_bk = False
         # Expect (obj_id, point, meta, distance)
         for obj_id, _, _, _ in results:
@@ -137,40 +143,43 @@ class TestSpatio:
     def test_trajectory_operations(self):
         """Test trajectory tracking functionality"""
         db = spatio.Spatio.memory()
-        
+
         start_time = time.time()
-        
+
         # Add points to create trajectory
-        # Note: In a real test we'd want to control timestamps, but the Python API 
+        # Note: In a real test we'd want to control timestamps, but the Python API
         # currently uses system time for updates.
-        
+
         p1 = spatio.Point(-74.0060, 40.7128)
         db.upsert("vehicle", "truck1", p1, {"step": 1})
         time.sleep(0.01)
-        
+
         p2 = spatio.Point(-74.0040, 40.7150)
         db.upsert("vehicle", "truck1", p2, {"step": 2})
         time.sleep(0.01)
-        
+
         end_time = time.time()
-        
+
         # Query trajectory
-        path = db.query_trajectory("vehicle", "truck1", start_time - 1.0, end_time + 1.0, 10)
+        path = db.query_trajectory(
+            "vehicle", "truck1", start_time - 1.0, end_time + 1.0, 10
+        )
         assert len(path) == 2
-        
+
         # Verify order (newest first usually)
         # Rust implementation sorts by timestamp descending
-        assert path[0][1] == {"step": 2} # metadata
+        assert path[0][1] == {"step": 2}  # metadata
         assert path[1][1] == {"step": 1}
 
     def test_close_operation(self):
         """Test database close operation"""
         db = spatio.Spatio.memory()
         db.close()
-        
+
         # Operations should fail after close
         with pytest.raises(RuntimeError, match=r"Database is closed"):
             db.upsert("test", "obj", spatio.Point(0, 0))
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

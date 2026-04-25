@@ -9,8 +9,6 @@ This example demonstrates the core functionality of Spatio including:
 - Spatial queries
 """
 
-import time
-
 import spatio
 
 
@@ -67,8 +65,6 @@ def _demonstrate_geographic_operations(db):
     for point, city_name in european_cities:
         print(f"  - {city_name.decode()} at ({point.lat:.2f}, {point.lon:.2f})")
     return nyc, london, paris
-
-
 
 
 def _demonstrate_sequential_operations(db):
