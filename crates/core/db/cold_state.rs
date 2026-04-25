@@ -237,7 +237,7 @@ impl ColdState {
 
         // Merge buffer and disk results, sort by timestamp (newest first), limit
         from_buffer.extend(from_disk);
-        from_buffer.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        from_buffer.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         from_buffer.truncate(limit);
 
         Ok(from_buffer)
