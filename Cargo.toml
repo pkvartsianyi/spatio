@@ -53,7 +53,7 @@ pyo3 = { version = "0.27.1", features = ["extension-module"] }
 # Workspace crates
 spatio = { version = "0.3.6", path = "crates/core" }
 spatio-types = { version = "0.2.0", path = "crates/types" }
-spatio-server = { version = "0.2.4", path = "crates/server" }
+spatio-server = { version = "0.2.5", path = "crates/server" }
 spatio-client = { version = "0.2.4", path = "crates/client" }
 
 # Dev dependencies
