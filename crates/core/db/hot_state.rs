@@ -63,7 +63,7 @@ impl HotState {
             object_id: object_id.to_string(),
             namespace: namespace.to_string(),
             position,
-            metadata: metadata.clone(),
+            metadata,
             timestamp,
         });
 
@@ -258,11 +258,10 @@ impl HotState {
             max_y,
             max_z,
         };
-        let results = spatial_idx.query_within_bbox(namespace, query);
+        let results = spatial_idx.query_within_bbox(namespace, query, limit);
 
         results
             .into_iter()
-            .take(limit)
             .filter_map(|(key,)| self.current_locations.get(&key).map(|v| v.value().clone()))
             .collect()
     }

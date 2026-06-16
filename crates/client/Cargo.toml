@@ -14,20 +14,16 @@ path = "src/lib.rs"
 [dependencies]
 spatio-server = { workspace = true }
 spatio-types = { workspace = true }
-tokio = { version = "1.37", features = ["net", "time", "sync", "rt"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-tokio-stream = "0.1"
-futures = "0.3"
-anyhow = "1.0"
-thiserror = "1.0"
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tarpc = { version = "0.34", features = [
-    "serde-transport",
-    "serde-transport-json",
-    "tcp",
-] }
-tokio-serde = { version = "0.9.0", features = ["json"] }
+tarpc = { workspace = true }
+tokio-serde = { workspace = true }
 
 # Optional HTTP transport
 reqwest = { version = "0.12", features = ["json"], optional = true }

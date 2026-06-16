@@ -66,6 +66,9 @@ jobs:
       - name: Run clippy (spatio-server)
         run: cargo clippy -p spatio-server --all-targets --all-features -- -D warnings
 
+      - name: Run clippy (spatio-client)
+        run: cargo clippy -p spatio-client --all-targets --all-features -- -D warnings
+
       # Rust building
       - name: Build spatio-types
         run: cargo build -p spatio-types
@@ -94,6 +97,9 @@ jobs:
 
       - name: Run tests (spatio-server)
         run: cargo test -p spatio-server --all-features
+
+      - name: Run tests (spatio-client)
+        run: cargo test -p spatio-client --all-features
 
       - name: Run tests (spatio-integration-tests)
         run: cargo test -p spatio-integration-tests --all-features
@@ -152,7 +158,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout code
@@ -188,6 +194,20 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-docs-
+            ${{ runner.os }}-cargo-
 
       - name: Build documentation
         run: cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features

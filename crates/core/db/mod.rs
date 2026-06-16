@@ -47,7 +47,7 @@ pub struct DB {
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
     pub(crate) ops_count: Arc<AtomicU64>,
-    #[allow(dead_code)] // Will be used for snapshot checkpoints
+    #[allow(dead_code)] // retained for configuration introspection
     pub(crate) config: Config,
     _temp_dir: Option<Arc<TempDirGuard>>,
 }
@@ -67,6 +67,12 @@ impl DB {
         let path_ref = path.as_ref();
         let hot = Arc::new(HotState::new());
 
+        let sync = cold_state::SyncSettings {
+            policy: config.sync_policy,
+            mode: config.sync_mode,
+            batch_size: config.sync_batch_size,
+        };
+
         let (cold, temp_dir_guard) = if path_ref.to_str() == Some(":memory:") {
             let temp_dir =
                 std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
@@ -74,6 +80,7 @@ impl DB {
                 &temp_dir.join("traj.log"),
                 config.buffer_capacity,
                 config.persistence.clone(),
+                sync,
             )?);
             let guard = Arc::new(TempDirGuard(temp_dir));
             (cold, Some(guard))
@@ -82,6 +89,7 @@ impl DB {
                 path_ref,
                 config.buffer_capacity,
                 config.persistence.clone(),
+                sync,
             )?);
             (cold, None)
         };
@@ -442,10 +450,10 @@ impl DB {
             .query_trajectory(namespace, object_id, start_time, end_time, limit)
     }
 
-    /// Close the database
+    /// Close the database, flushing and syncing any buffered writes to disk.
     pub fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::Release);
-        Ok(())
+        self.cold.flush()
     }
 
     /// Get database statistics
@@ -454,7 +462,7 @@ impl DB {
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0, // Reserved for future TTL/expiry support; not yet tracked
+            expired_count: 0, // TTL/expiry is not implemented; always zero
             operations_count: self.ops_count.load(Ordering::Relaxed),
             size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,

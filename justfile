@@ -175,9 +175,6 @@ security-audit:
     cargo audit
     cd crates/py && bandit -r src/ && safety check
 
-    cargo bench -p spatio -p spatio-server -p spatio-client
-    cd crates/py && just bench
-
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
 

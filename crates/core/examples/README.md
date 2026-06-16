@@ -34,38 +34,6 @@ cargo run --example trajectory_tracking
 
 Shows: storing paths, querying time ranges, tracking multiple objects, high-frequency updates.
 
-### `advanced_spatial`
-Full spatial operations suite using georust/geo.
-
-```bash
-cargo run --example advanced_spatial
-```
-
-Shows: 4 distance metrics, K-nearest-neighbors, polygon queries, bounding box ops, convex hull, distance matrices.
-
-### `comprehensive_demo`
-End-to-end feature showcase.
-
-```bash
-cargo run --example comprehensive_demo
-```
-
-Shows: Everything in one place - key-value, atomics, spatial queries, POI management, trajectories.
-
-### `persistence_lifecycle`
-AOF (Append-Only File) persistence demo.
-
-```bash
-cargo run --example persistence_lifecycle
-```
-
-Shows: Auto-save to disk, recovery on restart, sync policies.
-
-Requires `--features aof`:
-```bash
-cargo run --example persistence_lifecycle --features aof
-```
-
 ### `3d_spatial_tracking`
 3D spatial operations (altitude-aware).
 
@@ -77,11 +45,11 @@ Shows: 3D point indexing, spherical queries, cylindrical queries, bounding boxes
 
 ## Common Use Cases
 
-- **Fleet tracking:**
-- **IoT sensors:**
-- **POI search:**
-- **Geofencing:**
-- **3D tracking:**
+- **Fleet tracking:** continuously upsert vehicle positions and query who is near a point.
+- **IoT sensors:** record sensor locations and run bounding-box / radius lookups.
+- **POI search:** find points of interest within a radius or polygon.
+- **Geofencing:** test whether tracked objects fall inside a polygon.
+- **3D tracking:** altitude-aware queries for drones or aircraft (sphere/cylinder/3D bbox).
 
 ## Next Steps
 

@@ -7,15 +7,35 @@
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use spatio_types::config::{SyncMode, SyncPolicy};
 use spatio_types::point::Point3d;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::PersistenceConfig;
 use crate::error::Result;
+
+/// Durability settings governing when buffered writes are flushed to the OS
+/// and synced to stable storage.
+#[derive(Debug, Clone, Copy)]
+pub struct SyncSettings {
+    pub policy: SyncPolicy,
+    pub mode: SyncMode,
+    pub batch_size: usize,
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            policy: SyncPolicy::default(),
+            mode: SyncMode::default(),
+            batch_size: 1,
+        }
+    }
+}
 
 /// Single location update in history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,14 +60,19 @@ pub struct ColdState {
 
 impl ColdState {
     /// Create a new cold state
-    pub fn new(log_path: &Path, buffer_capacity: usize, config: PersistenceConfig) -> Result<Self> {
+    pub fn new(
+        log_path: &Path,
+        buffer_capacity: usize,
+        config: PersistenceConfig,
+        sync: SyncSettings,
+    ) -> Result<Self> {
         // Ensure directory exists
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size)?),
+            trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size, sync)?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
         })
@@ -145,15 +170,23 @@ impl ColdState {
         // Try buffer first (fast path)
         let mut from_buffer = Vec::new();
         if let Some(buffer) = self.recent_buffer.get(&full_key) {
+            // The buffer only evicts once it exceeds capacity, so a buffer below
+            // capacity holds the *complete* history for this key — we can answer
+            // entirely from it. Otherwise older (or, with out-of-order client
+            // timestamps, even newer) records may live only on disk, so we must
+            // fall through to the disk merge below.
+            let buffer_is_complete = buffer.len() < self.buffer_capacity;
+
             from_buffer = buffer
                 .iter()
                 .filter(|u| u.timestamp >= start_time && u.timestamp <= end_time)
-                .rev() // Newest first
                 .cloned()
                 .collect();
 
-            // If buffer has enough results, return immediately
-            if from_buffer.len() >= limit {
+            if buffer_is_complete {
+                // Sort by timestamp (newest first) rather than trusting insertion
+                // order, which can differ from time order under custom timestamps.
+                from_buffer.sort_by_key(|u| std::cmp::Reverse(u.timestamp));
                 from_buffer.truncate(limit);
                 return Ok(from_buffer);
             }
@@ -384,24 +417,65 @@ impl ColdState {
 struct TrajectoryLog {
     writer: BufWriter<File>,
     path: std::path::PathBuf,
+    /// Records buffered in `writer` that have not yet been pushed to the OS.
     pending_writes: usize,
+    /// Records written since the last `fsync`.
+    writes_since_sync: usize,
+    /// Wall-clock instant of the last `fsync`, used by [`SyncPolicy::EverySecond`].
+    last_sync: Instant,
     buffer_limit: usize,
+    sync: SyncSettings,
 }
 
 impl TrajectoryLog {
-    fn open(path: &Path, buffer_limit: usize) -> Result<Self> {
+    fn open(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self {
             writer: BufWriter::new(file),
             path: path.to_path_buf(),
             pending_writes: 0,
+            writes_since_sync: 0,
+            last_sync: Instant::now(),
             buffer_limit,
+            sync,
         })
     }
 
     fn path(&self) -> &std::path::Path {
         &self.path
+    }
+
+    /// Flush the in-memory write buffer to the OS and, depending on the
+    /// configured [`SyncPolicy`], `fsync` it to stable storage.
+    ///
+    /// `force` is set on explicit flush/close/drop: it triggers an `fsync`
+    /// regardless of batch/interval thresholds (unless the policy is
+    /// [`SyncPolicy::Never`], which never syncs).
+    fn maybe_sync(&mut self, force: bool) -> Result<()> {
+        let fsync = match self.sync.policy {
+            SyncPolicy::Never => false,
+            SyncPolicy::Always => force || self.writes_since_sync >= self.sync.batch_size,
+            SyncPolicy::EverySecond => force || self.last_sync.elapsed() >= Duration::from_secs(1),
+        };
+
+        if fsync {
+            self.writer.flush()?;
+            match self.sync.mode {
+                SyncMode::All => self.writer.get_ref().sync_all()?,
+                SyncMode::Data => self.writer.get_ref().sync_data()?,
+            }
+            self.pending_writes = 0;
+            self.writes_since_sync = 0;
+            self.last_sync = Instant::now();
+        } else if force || self.pending_writes >= self.buffer_limit {
+            // Push buffered bytes to the OS even when not syncing, so a clean
+            // process exit doesn't lose writes still sitting in the BufWriter.
+            self.writer.flush()?;
+            self.pending_writes = 0;
+        }
+
+        Ok(())
     }
 
     fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
@@ -433,12 +507,8 @@ impl TrajectoryLog {
         )?;
 
         self.pending_writes += 1;
-        if self.pending_writes >= self.buffer_limit {
-            self.writer.flush()?;
-            self.pending_writes = 0;
-        }
-
-        Ok(())
+        self.writes_since_sync += 1;
+        self.maybe_sync(false)
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
@@ -448,17 +518,20 @@ impl TrajectoryLog {
             micros, namespace, object_id
         )?;
         self.pending_writes += 1;
-        if self.pending_writes >= self.buffer_limit {
-            self.writer.flush()?;
-            self.pending_writes = 0;
-        }
-        Ok(())
+        self.writes_since_sync += 1;
+        self.maybe_sync(false)
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.writer.flush()?;
-        self.pending_writes = 0;
-        Ok(())
+        self.maybe_sync(true)
+    }
+}
+
+impl Drop for TrajectoryLog {
+    fn drop(&mut self) {
+        if let Err(e) = self.maybe_sync(true) {
+            log::warn!("Failed to flush trajectory log on drop: {}", e);
+        }
     }
 }
 
@@ -469,11 +542,96 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    /// With `SyncPolicy::Always` and a large write buffer, a single append must
+    /// already be on disk (flushed past the BufWriter) without any explicit flush.
+    #[test]
+    fn test_sync_policy_always_persists_immediately() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            // Large in-memory buffer: without an fsync policy this would NOT
+            // reach disk after a single write.
+            PersistenceConfig {
+                buffer_size: 10_000,
+            },
+            SyncSettings {
+                policy: SyncPolicy::Always,
+                mode: SyncMode::Data,
+                batch_size: 1,
+            },
+        )
+        .unwrap();
+
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(1.0, 2.0, 3.0),
+            serde_json::json!({"k": "v"}),
+            UNIX_EPOCH + Duration::from_secs(1),
+        )
+        .unwrap();
+
+        // Read the raw file directly (a separate handle): the bytes must be there.
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        assert!(
+            contents.contains("|v|o|"),
+            "Always policy must fsync the record to disk immediately, got: {contents:?}"
+        );
+    }
+
+    /// `flush()`/close must push buffered writes to disk even under
+    /// `SyncPolicy::Never` (which otherwise never syncs).
+    #[test]
+    fn test_flush_persists_under_never_policy() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig {
+                buffer_size: 10_000,
+            },
+            SyncSettings {
+                policy: SyncPolicy::Never,
+                mode: SyncMode::All,
+                batch_size: 1,
+            },
+        )
+        .unwrap();
+
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(1.0, 2.0, 3.0),
+            serde_json::json!({}),
+            UNIX_EPOCH + Duration::from_secs(1),
+        )
+        .unwrap();
+
+        // Not yet flushed: still buffered in the BufWriter.
+        assert!(std::fs::read_to_string(&log_path).unwrap().is_empty());
+
+        cold.flush().unwrap();
+        assert!(
+            std::fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("|v|o|")
+        );
+    }
+
     #[test]
     fn test_append_and_query_buffer() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10, PersistenceConfig::default()).unwrap();
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
 
         let pos1 = Point3d::new(-74.0, 40.7, 0.0);
         let pos2 = Point3d::new(-74.1, 40.8, 0.0);
@@ -518,7 +676,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
 
-        let cold = ColdState::new(&log_path, 2, PersistenceConfig { buffer_size: 0 }).unwrap(); // Capacity 2
+        let cold = ColdState::new(
+            &log_path,
+            2,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap(); // Capacity 2
 
         let pos = Point3d::new(0.0, 0.0, 0.0);
 
@@ -556,7 +720,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
 
-        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap();
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);
@@ -618,7 +788,13 @@ mod tests {
         // after a tombstone is written, even though its timestamp is > current time.
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap();
 
         // Insert with a timestamp far in the future.
         let future_ts = UNIX_EPOCH + Duration::from_secs(99_999_999_999);
@@ -644,7 +820,13 @@ mod tests {
     fn test_tombstone_excludes_deleted_object_on_recovery() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap();
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);
@@ -690,7 +872,13 @@ mod tests {
     fn test_tombstone_then_reinsert_recovers_object() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
-        let cold = ColdState::new(&log_path, 10, PersistenceConfig { buffer_size: 0 }).unwrap();
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap();
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         cold.append_update(
@@ -722,12 +910,81 @@ mod tests {
         assert_eq!(recovered["ns::obj"].position.x(), 5.0);
     }
 
+    /// With a full buffer and out-of-order timestamps, the newest record may
+    /// have been evicted to disk. The query must still return it rather than
+    /// short-circuiting on the buffer's contents.
+    #[test]
+    fn test_trajectory_query_out_of_order_timestamps() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        // Capacity 2: only the two most recently *inserted* records stay buffered.
+        let cold = ColdState::new(
+            &log_path,
+            2,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap();
+
+        let mk = |secs| UNIX_EPOCH + Duration::from_secs(secs);
+        // Insert the newest-timestamped record FIRST so it gets evicted to disk.
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(5.0, 0.0, 0.0),
+            serde_json::json!({}),
+            mk(5000),
+        )
+        .unwrap();
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(1.0, 0.0, 0.0),
+            serde_json::json!({}),
+            mk(1000),
+        )
+        .unwrap();
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(2.0, 0.0, 0.0),
+            serde_json::json!({}),
+            mk(2000),
+        )
+        .unwrap();
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(3.0, 0.0, 0.0),
+            serde_json::json!({}),
+            mk(3000),
+        )
+        .unwrap();
+
+        // Buffer now holds only t=2000 and t=3000; t=5000 lives on disk.
+        let newest = cold
+            .query_trajectory("v", "o", UNIX_EPOCH, mk(6000), 1)
+            .unwrap();
+        assert_eq!(newest.len(), 1);
+        assert_eq!(
+            newest[0].timestamp,
+            mk(5000),
+            "must return the globally-newest record even when it was evicted from the buffer"
+        );
+    }
+
     #[test]
     fn test_disk_based_trajectory_query() {
         let dir = tempdir().unwrap();
         let log_path = dir.path().join("traj.log");
 
-        let cold = ColdState::new(&log_path, 2, PersistenceConfig { buffer_size: 0 }).unwrap(); // Small buffer to force disk scan
+        let cold = ColdState::new(
+            &log_path,
+            2,
+            PersistenceConfig { buffer_size: 0 },
+            SyncSettings::default(),
+        )
+        .unwrap(); // Small buffer to force disk scan
 
         let t1 = UNIX_EPOCH + Duration::from_secs(1000);
         let t2 = UNIX_EPOCH + Duration::from_secs(2000);

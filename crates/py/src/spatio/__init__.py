@@ -1,8 +1,7 @@
 """
-Spatio: A blazingly fast spatio-temporal database library
+Spatio: a high-performance, embedded spatio-temporal database.
 
-Spatio is a high-performance, embedded spatio-temporal database designed for
-applications that need to store and query location-based data efficiently.
+Store and query the locations of moving objects efficiently.
 
 Example usage:
     >>> import spatio
@@ -10,15 +9,12 @@ Example usage:
     >>> # Create an in-memory database
     >>> db = spatio.Spatio.memory()
     >>>
-    >>> # Store a simple key-value pair
-    >>> db.insert(b"user:123", b"John Doe")
-    >>>
-    >>> # Store a geographic point (longitude, latitude)
+    >>> # Upsert an object's location (longitude, latitude)
     >>> nyc = spatio.Point(-74.0060, 40.7128)
-    >>> db.insert_point("cities", nyc, b"New York City")
+    >>> db.upsert("cities", "nyc", nyc, {"population": 8_000_000})
     >>>
-    >>> # Find nearby points within 100km
-    >>> nearby = db.query_within_radius("cities", nyc, 100_000.0, 10)
+    >>> # Find objects within 100km, newest first
+    >>> nearby = db.query_radius("cities", nyc, 100_000.0, limit=10)
     >>> print(f"Found {len(nearby)} cities nearby")
 """
 
@@ -57,12 +53,4 @@ DistanceMetric = _DistanceMetric
 
 # Package metadata
 __author__ = "Petro Kvartsianyi"
-__email__ = "pkvartsianyi@example.com"
 __license__ = "MIT"
-
-# Version validation
-try:
-    # Ensure the version is accessible
-    _ = __version__
-except AttributeError:
-    __version__ = "unknown"

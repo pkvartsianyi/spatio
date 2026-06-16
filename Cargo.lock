@@ -2478,7 +2478,7 @@ dependencies = [
  "spatio-server",
  "spatio-types",
  "tarpc",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-serde 0.9.0",
  "tokio-stream",
@@ -2505,7 +2505,6 @@ dependencies = [
 name = "spatio-py"
 version = "0.2.7"
 dependencies = [
- "geo",
  "pyo3",
  "pythonize",
  "serde_json",

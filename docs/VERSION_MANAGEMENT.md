@@ -141,7 +141,7 @@ The GitHub workflow automatically detects version changes and publishes accordin
 | Version Change | Rust Publish | Python Publish | GitHub Release |
 |----------------|--------------|----------------|----------------|
 | `Cargo.toml`   | Yes          | No             | Yes (rust-v*)  |
-| `py-spatio/Cargo.toml` | No   | Yes            | Yes (python-v*) |
+| `crates/py/Cargo.toml` | No   | Yes            | Yes (python-v*) |
 | Both files     | Yes          | Yes            | Yes (both tags) |
 
 ## Manual Workflow Trigger
@@ -158,7 +158,7 @@ You can also trigger the workflow manually via GitHub Actions:
 The scripts automatically update versions in:
 
 - **Rust crate**: `Cargo.toml` (and `crates/core/Cargo.toml`)
-- **Python package**: `py-spatio/Cargo.toml`
+- **Python package**: `crates/py/Cargo.toml`
 - **Other crates**: `crates/types/Cargo.toml`, `crates/client/Cargo.toml`, `crates/server/Cargo.toml`
 - **Lock files**: Both `Cargo.lock` files are updated
 
@@ -220,7 +220,7 @@ just bump-rust 0.2.2  # instead of 0.2.1
 For maturin/Python build issues:
 ```bash
 # Test Python build locally
-cd py-spatio
+cd crates/py
 just build
 
 # Check for file conflicts
@@ -246,7 +246,7 @@ git push origin main
 # Auto-release triggered, rust-v0.2.1 created and published
 
 # 4. Later: update Python bindings
-# ... edit py-spatio/src/ files ...
+# ... edit crates/py/src/ files ...
 
 # 5. Release new Python version
 just bump-python 0.1.3

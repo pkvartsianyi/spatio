@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Error type for GeoJSON conversions.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum GeoJsonError {
     /// Serialization failed
     Serialization(String),
@@ -140,8 +141,9 @@ impl Point {
 
     /// Calculate geodesic distance to another point in meters.
     ///
-    /// Uses the Vincenty formula which is more accurate than haversine
-    /// but slightly slower.
+    /// Uses the `geo` crate's geodesic algorithm (Karney), which models the
+    /// Earth as an ellipsoid and is more accurate than haversine but slightly
+    /// slower.
     ///
     /// # Examples
     ///
