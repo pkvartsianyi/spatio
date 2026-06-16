@@ -99,16 +99,19 @@ bump-server VERSION:
 bump-client VERSION:
     ./scripts/bump-version.sh client {{VERSION}}
 
-# Bump patch versions for core, server, client (in dependency order)
+# Bump patch versions for types, core, server, client, python (dependency order).
+# Runs the core release benchmark and includes its results in the commit.
 patch-all:
     #!/usr/bin/env bash
     set -e
-    
+
     # Get current versions
+    TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
     CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
     SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
     CLIENT_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-client","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    
+    PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+
     # Function to bump patch version
     bump_patch() {
         local version=$1
@@ -117,38 +120,55 @@ patch-all:
         local patch=$(echo "$version" | cut -d. -f3 | cut -d- -f1)
         echo "$major.$minor.$((patch + 1))"
     }
-    
+
+    NEW_TYPES=$(bump_patch "$TYPES_VERSION")
     NEW_CORE=$(bump_patch "$CORE_VERSION")
     NEW_SERVER=$(bump_patch "$SERVER_VERSION")
     NEW_CLIENT=$(bump_patch "$CLIENT_VERSION")
-    
+    NEW_PYTHON=$(bump_patch "$PYTHON_VERSION")
+
     echo "=== Patch Version Bump ==="
+    echo "  types:  $TYPES_VERSION -> $NEW_TYPES"
     echo "  core:   $CORE_VERSION -> $NEW_CORE"
     echo "  server: $SERVER_VERSION -> $NEW_SERVER"
     echo "  client: $CLIENT_VERSION -> $NEW_CLIENT"
+    echo "  python: $PYTHON_VERSION -> $NEW_PYTHON"
     echo ""
-    
-    # Bump in dependency order: core > server > client
+
+    # Bump in dependency order: types > core > server > client > python.
+    # The core bump also runs the release benchmark (crates/benchmarks/results/).
+    echo "=== Bumping types ==="
+    ./scripts/bump-version.sh types "$NEW_TYPES" --no-commit
+
+    echo ""
     echo "=== Bumping core ==="
     ./scripts/bump-version.sh core "$NEW_CORE" --no-commit
-    
+
     echo ""
     echo "=== Bumping server ==="
     ./scripts/bump-version.sh server "$NEW_SERVER" --no-commit
-    
+
     echo ""
     echo "=== Bumping client ==="
     ./scripts/bump-version.sh client "$NEW_CLIENT" --no-commit
-    
+
+    echo ""
+    echo "=== Bumping python ==="
+    ./scripts/bump-version.sh python "$NEW_PYTHON" --no-commit
+
     echo ""
     echo "=== Committing changes ==="
-    git add crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml Cargo.toml Cargo.lock
-    git commit -m "bump: core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT"
-    
+    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml crates/py/Cargo.toml Cargo.toml Cargo.lock
+    # Include the benchmark results produced by the core bump.
+    if [ -f "crates/benchmarks/results/core-v$NEW_CORE.json" ]; then
+        git add "crates/benchmarks/results/core-v$NEW_CORE.json" "crates/benchmarks/results/core-v$NEW_CORE.md"
+    fi
+    git commit -m "bump: types $NEW_TYPES, core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT, python $NEW_PYTHON"
+
     echo ""
-    echo "=== Done! ===" 
+    echo "=== Done! ==="
     echo "Push to main to trigger releases."
-    echo "CI will build in order: core > server > client"
+    echo "CI will build in order: types > core > server > client; python publishes to PyPI"
 
 bump-core-dry VERSION:
     ./scripts/bump-version.sh core {{VERSION}} --dry-run
