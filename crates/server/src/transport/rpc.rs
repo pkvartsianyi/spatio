@@ -90,8 +90,19 @@ pub async fn run_server(
     // it to drain its queue so durability is preserved on shutdown.
     conns.shutdown().await;
     drop(handler);
-    if let Err(e) = tokio::task::spawn_blocking(move || writer_handle.join()).await {
-        error!("Failed to join background writer: {e}");
+    match tokio::task::spawn_blocking(move || writer_handle.join()).await {
+        Ok(Ok(())) => {}
+        // The writer thread panicked: buffered writes may have been lost, so
+        // surface it rather than letting shutdown look clean.
+        Ok(Err(panic)) => {
+            let msg = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic");
+            error!("Background writer thread panicked: {msg}");
+        }
+        Err(e) => error!("Failed to join background writer task: {e}"),
     }
 
     Ok(())
