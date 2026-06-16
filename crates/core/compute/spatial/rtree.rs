@@ -340,10 +340,15 @@ impl SpatialIndexManager {
             .collect()
     }
 
-    /// Query points within a 3D bounding box.
+    /// Query points within a 3D bounding box, returning at most `limit` keys.
     ///
     /// - Returns empty result if coordinates are non-finite.
-    pub fn query_within_bbox(&self, prefix: &str, query: BBoxQuery) -> Vec<(String,)> {
+    pub fn query_within_bbox(
+        &self,
+        prefix: &str,
+        query: BBoxQuery,
+        limit: usize,
+    ) -> Vec<(String,)> {
         let min_x = query.min_x;
         let min_y = query.min_y;
         let min_z = query.min_z;
@@ -351,9 +356,11 @@ impl SpatialIndexManager {
         let max_y = query.max_y;
         let max_z = query.max_z;
 
-        if ![min_x, min_y, min_z, max_x, max_y, max_z]
-            .iter()
-            .all(|v| v.is_finite())
+        // The Z sentinels (±inf) used by the 2D variant are intentionally
+        // non-finite, so only validate the finite query corners.
+        if ![min_x, min_y, max_x, max_y].iter().all(|v| v.is_finite())
+            || min_z.is_nan()
+            || max_z.is_nan()
         {
             log::warn!("Rejecting bounding box query with non-finite coordinates");
             return Vec::new();
@@ -368,6 +375,7 @@ impl SpatialIndexManager {
         let envelope = rstar::AABB::from_corners(min_corner, max_corner);
 
         tree.locate_in_envelope_intersecting(&envelope)
+            .take(limit)
             .map(|point| (point.key.clone(),))
             .collect()
     }
@@ -386,11 +394,12 @@ impl SpatialIndexManager {
             BBoxQuery {
                 min_x,
                 min_y,
-                min_z: f64::MIN,
+                min_z: f64::NEG_INFINITY,
                 max_x,
                 max_y,
-                max_z: f64::MAX,
+                max_z: f64::INFINITY,
             },
+            usize::MAX,
         )
     }
 
@@ -709,8 +718,8 @@ impl SpatialIndexManager {
         let min = bbox.min();
         let max = bbox.max();
 
-        let min_corner = IndexedPoint3D::new(min.x, min.y, f64::MIN, String::new());
-        let max_corner = IndexedPoint3D::new(max.x, max.y, f64::MAX, String::new());
+        let min_corner = IndexedPoint3D::new(min.x, min.y, f64::NEG_INFINITY, String::new());
+        let max_corner = IndexedPoint3D::new(max.x, max.y, f64::INFINITY, String::new());
         let envelope = rstar::AABB::from_corners(min_corner, max_corner);
 
         // 2. Iterate, filter by polygon containment, then take(limit)
@@ -786,8 +795,8 @@ fn compute_2d_envelope(center: &GeoPoint, radius: f64) -> rstar::AABB<IndexedPoi
     let min_y = center.y() - lat_degrees;
     let max_y = center.y() + lat_degrees;
 
-    let min_corner = IndexedPoint3D::new(min_x, min_y, f64::MIN, String::new());
-    let max_corner = IndexedPoint3D::new(max_x, max_y, f64::MAX, String::new());
+    let min_corner = IndexedPoint3D::new(min_x, min_y, f64::NEG_INFINITY, String::new());
+    let max_corner = IndexedPoint3D::new(max_x, max_y, f64::INFINITY, String::new());
     rstar::AABB::from_corners(min_corner, max_corner)
 }
 
@@ -900,6 +909,7 @@ mod tests {
                 max_y: 40.75,
                 max_z: 1500.0,
             },
+            usize::MAX,
         );
 
         assert_eq!(results.len(), 1);

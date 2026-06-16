@@ -2,8 +2,8 @@
 /target/
 crates/*/target/
 
-# Cargo.lock is excluded for library crates but included for binaries
-/Cargo.lock
+# The workspace Cargo.lock is committed (the workspace builds binaries).
+# Library-only crates keep their own lock out of version control.
 crates/types/Cargo.lock
 
 # Database files

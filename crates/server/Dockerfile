@@ -1,11 +1,11 @@
-# Builder stage
-FROM rustlang/rust:nightly AS builder
+# Builder stage — pinned stable toolchain matching the crate's rust-version.
+FROM rust:1.90-slim-bookworm AS builder
 
 WORKDIR /app
 COPY . .
 
-# Build the server binary
-RUN cargo build --release --bin spatio-server
+# Build the server binary against the committed lockfile for reproducibility.
+RUN cargo build --release --locked --bin spatio-server
 
 # TzData stage
 FROM cgr.dev/chainguard/wolfi-base AS tzdata
@@ -15,7 +15,7 @@ RUN apk add --no-cache tzdata
 FROM cgr.dev/chainguard/wolfi-base AS setup
 RUN mkdir /data \
     && chown 65532:65532 /data \
-    && chmod 777 /data
+    && chmod 700 /data
 
 # Final stage
 FROM cgr.dev/chainguard/glibc-dynamic:latest

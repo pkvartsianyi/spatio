@@ -54,7 +54,7 @@ The client mirrors the embedded database API:
 
 ## Performance
 
-The client uses `bincode` for serialization and length-delimited framing for minimal overhead. Typical latency for local connections is sub-millisecond.
+The client uses `tarpc` over a length-delimited, JSON-serialized transport. Typical latency for local connections is sub-millisecond.
 
 ## License
 

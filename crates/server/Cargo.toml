@@ -19,23 +19,19 @@ path = "src/main.rs"
 spatio = { workspace = true }
 spatio-types = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-bytes = "1.11"
+bytes = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
-tokio-stream = "0.1"
-tarpc = { version = "0.34", features = [
-    "serde-transport",
-    "serde-transport-json",
-    "tcp",
-] }
-tokio-serde = { version = "0.9.0", features = ["json"] }
+tokio-stream = { workspace = true }
+tarpc = { workspace = true }
+tokio-serde = { workspace = true }
 
 # Optional HTTP transport
 axum = { version = "0.7", optional = true }

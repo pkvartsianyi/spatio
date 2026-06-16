@@ -1,20 +1,37 @@
-# Release Guide for SpatioLite
+# Release Guide for Spatio
 
 This guide explains how to create new releases for both the Rust core library and the Python bindings.
 
 ## Overview
 
-SpatioLite uses an automated release workflow (`.github/workflows/auto-release.yml`) that:
+Spatio uses an automated release workflow (`.github/workflows/auto-release.yml`) that:
 - Automatically detects version changes
 - Creates GitHub releases
 - Publishes to crates.io (Rust) and PyPI (Python)
 - Only triggers when a new version tag doesn't exist remotely
 
+## Core release benchmarks
+
+Bumping the **core** crate runs the `bench_core` suite as part of the release
+commit. `just bump-core <version>` (via `scripts/bump-version.sh`) calls
+`scripts/bench-release.sh`, which:
+
+1. Runs `bench_core` and stores `crates/benchmarks/results/core-v<version>.json`.
+2. Compares against the previous version's stored results and writes a markdown
+   report `crates/benchmarks/results/core-v<version>.md`.
+3. Includes both files in the `bump core version to <version>` commit.
+
+CI then uses that markdown as the body of the `core-v<version>` GitHub Release.
+
+Because comparisons are only meaningful on consistent hardware, the benchmark
+runs **locally** at release time. Pass `--no-bench` to `bump-version.sh` to skip
+it, or run it standalone with `just bench-release <version>`.
+
 ## Prerequisites
 
 Before releasing, ensure:
 - [ ] All tests pass locally: `cargo test --all`
-- [ ] Python tests pass: `cd py-spatio && python -m pytest`
+- [ ] Python tests pass: `cd crates/py && python -m pytest`
 - [ ] Lints pass: `cargo clippy --all-targets -- -D warnings`
 - [ ] Code is formatted: `cargo fmt --all -- --check`
 - [ ] Documentation builds: `cargo doc --no-deps`
@@ -53,14 +70,14 @@ The CI workflow will:
 
 Check:
 - GitHub Actions workflow completed successfully
-- GitHub release is created: https://github.com/USERNAME/SpatioLite/releases
+- GitHub release is created: https://github.com/USERNAME/Spatio/releases
 - Package appears on crates.io: https://crates.io/crates/spatiolite
 
 ## Releasing the Python Package
 
 ### 1. Update Version
 
-Edit `py-spatio/Cargo.toml`:
+Edit `crates/py/Cargo.toml`:
 ```toml
 [package]
 version = "0.1.0-alpha.11"  # Bump from current version
@@ -68,7 +85,7 @@ version = "0.1.0-alpha.11"  # Bump from current version
 
 ### 2. Update Python Package Metadata (Optional)
 
-If you need to update Python-specific metadata, edit `py-spatio/pyproject.toml`:
+If you need to update Python-specific metadata, edit `crates/py/pyproject.toml`:
 ```toml
 [project]
 version = "0.1.0-alpha.11"  # Should match Cargo.toml
@@ -77,7 +94,7 @@ version = "0.1.0-alpha.11"  # Should match Cargo.toml
 ### 3. Commit and Push
 
 ```bash
-git add py-spatio/Cargo.toml py-spatio/pyproject.toml
+git add crates/py/Cargo.toml crates/py/pyproject.toml
 git commit -m "chore(python): bump version to 0.1.0-alpha.11"
 git push origin main
 ```
@@ -96,12 +113,12 @@ The CI workflow will:
 
 Check:
 - GitHub Actions workflow completed successfully
-- GitHub release is created: https://github.com/USERNAME/SpatioLite/releases
+- GitHub release is created: https://github.com/USERNAME/Spatio/releases
 - Package appears on PyPI: https://pypi.org/project/spatio/
 
 ## Versioning Strategy
 
-SpatioLite follows [Semantic Versioning](https://semver.org/):
+Spatio follows [Semantic Versioning](https://semver.org/):
 
 - **Major version (X.0.0)**: Breaking changes
 - **Minor version (0.X.0)**: New features, backward compatible
@@ -170,7 +187,7 @@ git tag python-vX
 git push origin python-vX
 
 # Build and publish
-cd py-spatio
+cd crates/py
 maturin build --release
 maturin publish
 ```

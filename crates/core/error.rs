@@ -4,27 +4,18 @@ use std::fmt;
 
 /// Simplified error types for Spatio
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SpatioError {
     /// Database is closed
     DatabaseClosed,
-    /// Lock acquisition failed
-    LockError,
     /// Serialization/deserialization error
     SerializationError,
     /// Serialization error with context
     SerializationErrorWithContext(String),
-    /// Rewrite operation is already in progress
-    RewriteInProgress,
     /// Invalid timestamp value
     InvalidTimestamp,
-    /// Unexpected end of file during deserialization
-    UnexpectedEof,
-    /// Invalid data format
-    InvalidFormat,
     /// Invalid input parameter
     InvalidInput(String),
-    /// Operation not supported
-    NotSupported(String),
     /// Object not found
     ObjectNotFound,
     /// I/O error from persistence layer
@@ -37,17 +28,12 @@ impl fmt::Display for SpatioError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             SpatioError::DatabaseClosed => write!(f, "Database is closed"),
-            SpatioError::LockError => write!(f, "Failed to acquire lock"),
             SpatioError::SerializationError => write!(f, "Serialization error"),
             SpatioError::SerializationErrorWithContext(context) => {
                 write!(f, "Serialization error: {}", context)
             }
-            SpatioError::RewriteInProgress => write!(f, "Rewrite operation is already in progress"),
             SpatioError::InvalidTimestamp => write!(f, "Invalid timestamp value"),
-            SpatioError::UnexpectedEof => write!(f, "Unexpected end of file"),
-            SpatioError::InvalidFormat => write!(f, "Invalid data format"),
             SpatioError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
-            SpatioError::NotSupported(msg) => write!(f, "Not supported: {}", msg),
             SpatioError::ObjectNotFound => write!(f, "Object not found"),
             SpatioError::Io(err) => write!(f, "I/O error: {}", err),
             SpatioError::Other(msg) => write!(f, "{}", msg),

@@ -5,9 +5,13 @@ use std::time::SystemTime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncPolicy {
+    /// Never `fsync`; rely on the OS to flush. Fastest, least durable.
     Never,
+    /// `fsync` at most once per second. The interval is checked on each write,
+    /// so an idle database does not sync until the next write (or close).
     #[default]
     EverySecond,
+    /// `fsync` every `sync_batch_size` writes. Most durable, slowest.
     Always,
 }
 

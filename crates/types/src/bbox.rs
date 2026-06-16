@@ -148,7 +148,27 @@ impl BoundingBox3D {
     ///
     /// let bbox = BoundingBox3D::new(-74.0, 40.7, 0.0, -73.9, 40.8, 100.0);
     /// ```
+    ///
+    /// Corners are normalized per axis so that `min <= max`, matching the
+    /// behaviour of [`BoundingBox2D::new`]; passing swapped bounds yields the
+    /// same (valid) box rather than negative extents.
+    #[must_use]
     pub fn new(min_x: f64, min_y: f64, min_z: f64, max_x: f64, max_y: f64, max_z: f64) -> Self {
+        let (min_x, max_x) = if min_x <= max_x {
+            (min_x, max_x)
+        } else {
+            (max_x, min_x)
+        };
+        let (min_y, max_y) = if min_y <= max_y {
+            (min_y, max_y)
+        } else {
+            (max_y, min_y)
+        };
+        let (min_z, max_z) = if min_z <= max_z {
+            (min_z, max_z)
+        } else {
+            (max_z, min_z)
+        };
         Self {
             min_x,
             min_y,
@@ -160,6 +180,8 @@ impl BoundingBox3D {
     }
 
     /// Get the center point of the bounding box.
+    #[inline]
+    #[must_use]
     pub fn center(&self) -> (f64, f64, f64) {
         (
             (self.min_x + self.max_x) / 2.0,
@@ -169,26 +191,36 @@ impl BoundingBox3D {
     }
 
     /// Get the width (x dimension) of the bounding box.
+    #[inline]
+    #[must_use]
     pub fn width(&self) -> f64 {
         self.max_x - self.min_x
     }
 
     /// Get the height (y dimension) of the bounding box.
+    #[inline]
+    #[must_use]
     pub fn height(&self) -> f64 {
         self.max_y - self.min_y
     }
 
     /// Get the depth (z dimension) of the bounding box.
+    #[inline]
+    #[must_use]
     pub fn depth(&self) -> f64 {
         self.max_z - self.min_z
     }
 
     /// Get the volume of the bounding box.
+    #[inline]
+    #[must_use]
     pub fn volume(&self) -> f64 {
         self.width() * self.height() * self.depth()
     }
 
     /// Check if a 3D point is contained within this bounding box.
+    #[inline]
+    #[must_use]
     pub fn contains_point(&self, x: f64, y: f64, z: f64) -> bool {
         x >= self.min_x
             && x <= self.max_x
@@ -199,6 +231,8 @@ impl BoundingBox3D {
     }
 
     /// Check if this bounding box intersects with another 3D bounding box.
+    #[inline]
+    #[must_use]
     pub fn intersects(&self, other: &BoundingBox3D) -> bool {
         !(self.max_x < other.min_x
             || self.min_x > other.max_x
@@ -209,6 +243,11 @@ impl BoundingBox3D {
     }
 
     /// Expand the bounding box by a given amount in all directions.
+    ///
+    /// A negative `amount` shrinks the box; if it exceeds half an axis' extent
+    /// the corners are re-normalized by [`BoundingBox3D::new`] so the result
+    /// stays valid (`min <= max`).
+    #[must_use]
     pub fn expand(&self, amount: f64) -> Self {
         Self::new(
             self.min_x - amount,
@@ -221,6 +260,8 @@ impl BoundingBox3D {
     }
 
     /// Project the 3D bounding box to a 2D bounding box (discarding z).
+    #[inline]
+    #[must_use]
     pub fn to_2d(&self) -> BoundingBox2D {
         BoundingBox2D::new(self.min_x, self.min_y, self.max_x, self.max_y)
     }
@@ -285,6 +326,17 @@ impl TemporalBoundingBox3D {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bbox3d_new_normalizes_swapped_corners() {
+        // Swapped min/max on every axis must be normalized so extents stay non-negative.
+        let bbox = BoundingBox3D::new(10.0, 20.0, 30.0, 0.0, 5.0, 15.0);
+        assert_eq!((bbox.min_x, bbox.max_x), (0.0, 10.0));
+        assert_eq!((bbox.min_y, bbox.max_y), (5.0, 20.0));
+        assert_eq!((bbox.min_z, bbox.max_z), (15.0, 30.0));
+        assert!(bbox.width() >= 0.0 && bbox.height() >= 0.0 && bbox.depth() >= 0.0);
+        assert!(bbox.contains_point(5.0, 10.0, 20.0));
+    }
 
     #[test]
     fn test_bbox2d_creation() {

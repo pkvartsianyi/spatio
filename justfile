@@ -175,11 +175,13 @@ security-audit:
     cargo audit
     cd crates/py && bandit -r src/ && safety check
 
-    cargo bench -p spatio -p spatio-server -p spatio-client
-    cd crates/py && just bench
-
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
+
+# Run the core release benchmark, store results, and compare to the previous
+# version. Runs automatically as part of `just bump-core`.
+bench-release VERSION:
+    ./scripts/bench-release.sh {{VERSION}}
 
 bench-all:
     @echo "=== CORE BENCHMARKS ==="

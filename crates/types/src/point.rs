@@ -45,6 +45,8 @@ impl Point3d {
     ///
     /// let point = Point3d::new(-74.0060, 40.7128, 100.0);
     /// ```
+    #[inline]
+    #[must_use]
     pub fn new(x: f64, y: f64, z: f64) -> Self {
         Self {
             point: Point::new(x, y),
@@ -53,43 +55,58 @@ impl Point3d {
     }
 
     /// Create a 3D point from a 2D point and altitude.
+    #[inline]
+    #[must_use]
     pub fn from_point_and_altitude(point: Point, z: f64) -> Self {
         Self { point, z }
     }
 
     /// Get the x coordinate (longitude).
+    #[inline]
     pub fn x(&self) -> f64 {
         self.point.x()
     }
 
     /// Get the y coordinate (latitude).
+    #[inline]
     pub fn y(&self) -> f64 {
         self.point.y()
     }
 
     /// Get the z coordinate (altitude/elevation).
+    #[inline]
     pub fn z(&self) -> f64 {
         self.z
     }
 
     /// Get the altitude (alias for z()).
+    #[inline]
     pub fn altitude(&self) -> f64 {
         self.z
     }
 
     /// Get a reference to the underlying 2D point.
+    #[inline]
     pub fn point_2d(&self) -> &Point {
         &self.point
     }
 
     /// Project this 3D point to 2D by discarding the z coordinate.
+    #[inline]
+    #[must_use]
     pub fn to_2d(&self) -> Point {
         self.point
     }
 
-    /// Calculate the 3D Euclidean distance to another 3D point.
+    /// Calculate the planar (Cartesian) Euclidean distance to another 3D point.
     ///
-    /// This calculates the straight-line distance in 3D space using the Pythagorean theorem.
+    /// This treats `x`, `y` and `z` as Cartesian coordinates in the same unit and
+    /// applies the Pythagorean theorem. It is only meaningful when all three axes
+    /// share a unit (e.g. a projected/local coordinate system in metres).
+    ///
+    /// For geographic longitude/latitude inputs the `x`/`y` axes are in degrees
+    /// while `z` is in metres, so the result is not a physical distance — use
+    /// [`Point3d::haversine_3d`] instead.
     ///
     /// # Examples
     ///
@@ -101,6 +118,8 @@ impl Point3d {
     /// let distance = p1.distance_3d(&p2);
     /// assert_eq!(distance, 13.0); // 3-4-5 triangle extended to 3D
     /// ```
+    #[inline]
+    #[must_use]
     pub fn distance_3d(&self, other: &Point3d) -> f64 {
         let dx = self.x() - other.x();
         let dy = self.y() - other.y();
@@ -110,8 +129,9 @@ impl Point3d {
 
     /// Calculate all distance components at once (horizontal, altitude, 3D).
     ///
-    /// This is more efficient than calling haversine_2d and haversine_3d separately
-    /// as it calculates the haversine formula only once.
+    /// Computes the horizontal haversine distance once and derives the altitude
+    /// difference and combined 3D distance from it, so callers needing all three
+    /// avoid recomputing the haversine term per component.
     ///
     /// # Returns
     ///
@@ -229,6 +249,11 @@ impl Point3d {
                     ));
                 }
                 let z = coords.get(2).copied().unwrap_or(0.0);
+                if !(coords[0].is_finite() && coords[1].is_finite() && z.is_finite()) {
+                    return Err(crate::geo::GeoJsonError::InvalidCoordinates(
+                        "Point coordinates must be finite".to_string(),
+                    ));
+                }
                 Ok(Point3d::new(coords[0], coords[1], z))
             }
             _ => Err(crate::geo::GeoJsonError::InvalidGeometry(
