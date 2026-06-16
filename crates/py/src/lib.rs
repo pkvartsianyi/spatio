@@ -16,7 +16,7 @@ use spatio::error::SpatioError;
 use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Polygon as RustPolygon, Spatio};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Map a [`SpatioError`] onto the most appropriate Python exception type rather
 /// than collapsing every failure into `RuntimeError`.
@@ -39,14 +39,9 @@ fn handle_error<T>(result: RustResult<T>) -> PyResult<T> {
 }
 
 /// Convert client-supplied `f64` seconds-since-epoch into a [`SystemTime`],
-/// raising `ValueError` instead of panicking on negative/NaN/overflowing input
-/// (`Duration::from_secs_f64` panics on those).
+/// raising `ValueError` rather than panicking on invalid input.
 fn systemtime_from_secs(secs: f64) -> PyResult<SystemTime> {
-    let dur = Duration::try_from_secs_f64(secs)
-        .map_err(|e| PyValueError::new_err(format!("invalid timestamp {secs}: {e}")))?;
-    UNIX_EPOCH
-        .checked_add(dur)
-        .ok_or_else(|| PyValueError::new_err(format!("timestamp out of range: {secs}")))
+    spatio_types::time::system_time_from_secs(secs).map_err(PyValueError::new_err)
 }
 
 /// Python wrapper for geographic Point (3D)

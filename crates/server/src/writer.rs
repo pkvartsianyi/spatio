@@ -1,23 +1,8 @@
 use spatio::Spatio;
 use spatio_types::point::Point3d;
+use spatio_types::time::system_time_from_secs;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
-
-/// Convert a client-supplied `f64` seconds-since-epoch into a [`SystemTime`].
-///
-/// Returns an error instead of panicking on non-finite, negative, or
-/// out-of-range values — `Duration::from_secs_f64` panics on those, and the
-/// input here comes straight off the wire.
-pub(crate) fn system_time_from_secs(secs: f64) -> Result<SystemTime, String> {
-    // try_from_secs_f64 rejects negative, NaN, infinite and overflowing values
-    // (Duration::from_secs_f64 would panic on all of those).
-    let dur =
-        Duration::try_from_secs_f64(secs).map_err(|e| format!("invalid timestamp {secs}: {e}"))?;
-    UNIX_EPOCH
-        .checked_add(dur)
-        .ok_or_else(|| format!("timestamp out of range: {secs}"))
-}
 
 /// Acknowledgement channel a write operation uses to report its result.
 type Ack = oneshot::Sender<Result<(), String>>;

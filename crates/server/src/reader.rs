@@ -1,8 +1,8 @@
 use crate::protocol::{CurrentLocation, LocationUpdate, Stats};
-use crate::writer::system_time_from_secs;
 use spatio::Spatio;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::time::system_time_from_secs;
 use std::sync::Arc;
 
 #[derive(Clone)]

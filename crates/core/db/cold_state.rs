@@ -170,11 +170,9 @@ impl ColdState {
         // Try buffer first (fast path)
         let mut from_buffer = Vec::new();
         if let Some(buffer) = self.recent_buffer.get(&full_key) {
-            // The buffer only evicts once it exceeds capacity, so a buffer below
-            // capacity holds the *complete* history for this key — we can answer
-            // entirely from it. Otherwise older (or, with out-of-order client
-            // timestamps, even newer) records may live only on disk, so we must
-            // fall through to the disk merge below.
+            // Below capacity the buffer holds this key's complete history; at or
+            // above it, some records (including newer ones, under out-of-order
+            // timestamps) live only on disk, so fall through to the disk merge.
             let buffer_is_complete = buffer.len() < self.buffer_capacity;
 
             from_buffer = buffer
@@ -551,8 +549,7 @@ mod tests {
         let cold = ColdState::new(
             &log_path,
             10,
-            // Large in-memory buffer: without an fsync policy this would NOT
-            // reach disk after a single write.
+            // Large buffer: without fsync, one write would not reach disk.
             PersistenceConfig {
                 buffer_size: 10_000,
             },
