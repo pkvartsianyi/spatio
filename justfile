@@ -178,6 +178,11 @@ security-audit:
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
 
+# Run the core release benchmark, store results, and compare to the previous
+# version. Runs automatically as part of `just bump-core`.
+bench-release VERSION:
+    ./scripts/bench-release.sh {{VERSION}}
+
 bench-all:
     @echo "=== CORE BENCHMARKS ==="
     just bench-core -q

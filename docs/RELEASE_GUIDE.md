@@ -10,6 +10,23 @@ Spatio uses an automated release workflow (`.github/workflows/auto-release.yml`)
 - Publishes to crates.io (Rust) and PyPI (Python)
 - Only triggers when a new version tag doesn't exist remotely
 
+## Core release benchmarks
+
+Bumping the **core** crate runs the `bench_core` suite as part of the release
+commit. `just bump-core <version>` (via `scripts/bump-version.sh`) calls
+`scripts/bench-release.sh`, which:
+
+1. Runs `bench_core` and stores `crates/benchmarks/results/core-v<version>.json`.
+2. Compares against the previous version's stored results and writes a markdown
+   report `crates/benchmarks/results/core-v<version>.md`.
+3. Includes both files in the `bump core version to <version>` commit.
+
+CI then uses that markdown as the body of the `core-v<version>` GitHub Release.
+
+Because comparisons are only meaningful on consistent hardware, the benchmark
+runs **locally** at release time. Pass `--no-bench` to `bump-version.sh` to skip
+it, or run it standalone with `just bench-release <version>`.
+
 ## Prerequisites
 
 Before releasing, ensure:

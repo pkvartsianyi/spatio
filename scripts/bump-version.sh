@@ -42,6 +42,7 @@ ARGUMENTS:
 OPTIONS:
     --dry-run       Show what would be changed without making actual changes
     --no-commit     Update versions but don't commit changes
+    --no-bench      Skip the core release benchmark (only affects 'core')
     --help, -h      Show this help message
 
 EXAMPLES:
@@ -71,6 +72,7 @@ PACKAGE=""
 NEW_VERSION=""
 DRY_RUN=false
 NO_COMMIT=false
+NO_BENCH=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -80,6 +82,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-commit)
             NO_COMMIT=true
+            shift
+            ;;
+        --no-bench)
+            NO_BENCH=true
             shift
             ;;
         --help|-h)
@@ -489,6 +495,20 @@ if [[ "$DRY_RUN" == false && "$PACKAGE" == "all" ]]; then
     update_changelog
 fi
 
+# --- RELEASE BENCHMARK (core only) -------------------------------------------
+# Run the core benchmark, store the results, and compare against the previous
+# version so the numbers land in this release commit.
+if [[ "$DRY_RUN" == false && "$NO_BENCH" == false && ( "$PACKAGE" == "core" || "$PACKAGE" == "all" ) ]]; then
+    print_info "Running release benchmark for core v$NEW_VERSION (use --no-bench to skip)..."
+    if "$SCRIPT_DIR/bench-release.sh" "$NEW_VERSION" >/dev/null; then
+        print_success "Benchmark results stored in crates/benchmarks/results/"
+    else
+        print_error "Benchmark step failed. Aborting without committing."
+        print_error "Re-run the bump with --no-bench to skip benchmarking."
+        exit 1
+    fi
+fi
+
 # ------------------------------------------------------------------------------
 if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     print_info "Committing version changes..."
@@ -498,6 +518,9 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
     case "$PACKAGE" in
         "core")
             FILES_TO_ADD=("crates/core/Cargo.toml" "Cargo.toml" "Cargo.lock")
+            if [[ "$NO_BENCH" == false ]]; then
+                FILES_TO_ADD+=("crates/benchmarks/results/core-v$NEW_VERSION.json" "crates/benchmarks/results/core-v$NEW_VERSION.md")
+            fi
             ;;
         "python")
             FILES_TO_ADD=("crates/py/Cargo.toml" "Cargo.lock")
@@ -513,6 +536,9 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             ;;
         "all")
             FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
+            if [[ "$NO_BENCH" == false ]]; then
+                FILES_TO_ADD+=("crates/benchmarks/results/core-v$NEW_VERSION.json" "crates/benchmarks/results/core-v$NEW_VERSION.md")
+            fi
             ;;
     esac
 

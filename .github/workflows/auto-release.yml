@@ -247,6 +247,8 @@ jobs:
           cargo publish --token "$CARGO_REGISTRY_TOKEN"
 
       - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.detect-changes.outputs.core-version }}"
           TAG="core-v$VERSION"
@@ -254,6 +256,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag "$TAG" -m "Release spatio $VERSION"
           git push origin "$TAG"
+
+          # Publish a GitHub Release, using the committed benchmark comparison
+          # as the body when present.
+          NOTES="crates/benchmarks/results/core-v$VERSION.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "$TAG" --title "spatio $VERSION" --notes-file "$NOTES" \
+              || gh release edit "$TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --title "spatio $VERSION" --generate-notes || true
+          fi
 
   release-server:
     name: Release spatio server
