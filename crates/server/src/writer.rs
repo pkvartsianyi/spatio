@@ -9,7 +9,7 @@ type Ack = oneshot::Sender<Result<(), String>>;
 
 /// Write operation to be executed by the background writer thread.
 ///
-/// Each variant carries an [`Ack`] so the handler can await the *actual* write
+/// Each variant carries an `Ack` so the handler can await the *actual* write
 /// result rather than reporting success the moment the op is enqueued.
 #[derive(Debug)]
 pub enum WriteOp {
@@ -35,8 +35,9 @@ pub enum WriteOp {
 
 /// Spawn the dedicated writer thread.
 ///
-/// Returns the sender used by the handler and the thread's [`JoinHandle`] so
-/// the caller can wait for buffered writes to drain on shutdown.
+/// Returns the sender used by the handler and the thread's
+/// [`JoinHandle`](std::thread::JoinHandle) so the caller can wait for buffered
+/// writes to drain on shutdown.
 pub fn spawn_background_writer(
     db: Arc<Spatio>,
     buffer_size: usize,
