@@ -147,6 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("════════════════════════════════════════════════════════════════");
         println!("  Spatio Core Benchmark");
         println!("════════════════════════════════════════════════════════════════");
+        println!("  NOTE: in-memory (no disk/fsync), single-threaded, one namespace,");
+        println!("        uniform grid — a best-case ceiling, not a durable/concurrent figure.");
         println!("  Dataset size: {}", config.dataset_size);
         println!("  Warmup runs: {}", config.warmup_runs);
         println!("  Measurement runs: {}", config.measurement_runs);

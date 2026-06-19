@@ -889,6 +889,95 @@ mod tests {
     }
 
     #[test]
+    fn test_recovery_after_torn_final_write() {
+        // Simulate a crash mid-append: truncate the log inside the last record.
+        // Recovery must skip the torn record (CRC) and return the valid prefix
+        // without error.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("torn.db");
+        let t0 = SystemTime::now();
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            for i in 0..3u64 {
+                db.upsert(
+                    "ns",
+                    "a",
+                    Point3d::new(i as f64, 0.0, 0.0),
+                    serde_json::json!({ "i": i }),
+                    Some(SetOptions { timestamp: Some(t0 + Duration::from_millis(i)) }),
+                )
+                .unwrap();
+            }
+            db.close().unwrap();
+        }
+
+        // Lop off the tail of the last record (leave earlier records intact).
+        let len = std::fs::metadata(&db_path).unwrap().len();
+        let f = std::fs::OpenOptions::new().write(true).open(&db_path).unwrap();
+        f.set_len(len - 4).unwrap();
+        drop(f);
+
+        let db = DB::open(&db_path).unwrap();
+        let loc = db
+            .get("ns", "a")
+            .unwrap()
+            .expect("a complete earlier record must still recover");
+        // The torn last record (i=2) is dropped; the last intact one is i=1.
+        assert_eq!(loc.position.x(), 1.0);
+    }
+
+    #[test]
+    fn test_concurrent_writes_same_object_converge() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Many threads hammer the same object with increasing timestamps while
+        // readers query concurrently. No panic; final value is the latest write.
+        let db = Arc::new(DB::memory().unwrap());
+        let base = SystemTime::now();
+        let writers = 8u64;
+        let per = 200u64;
+
+        let mut handles = Vec::new();
+        for w in 0..writers {
+            let db = Arc::clone(&db);
+            handles.push(thread::spawn(move || {
+                for i in 0..per {
+                    let ms = w * per + i; // globally unique, increasing timestamp
+                    // Position stays a valid coordinate; ordering is by timestamp.
+                    let _ = db.upsert(
+                        "ns",
+                        "hot",
+                        Point3d::new(1.0, 2.0, 0.0),
+                        serde_json::json!({ "ms": ms }),
+                        Some(SetOptions { timestamp: Some(base + Duration::from_millis(ms)) }),
+                    );
+                }
+            }));
+        }
+        // Concurrent readers — must never panic or deadlock.
+        for _ in 0..2 {
+            let db = Arc::clone(&db);
+            handles.push(thread::spawn(move || {
+                for _ in 0..per {
+                    let _ = db.get("ns", "hot");
+                    let _ = db.query_radius("ns", &Point3d::new(0.0, 0.0, 0.0), 1.0e6, 10);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Last-writer-wins by timestamp: the highest-timestamp write survives.
+        let max_ms = writers * per - 1;
+        let loc = db.get("ns", "hot").unwrap().unwrap();
+        assert_eq!(loc.timestamp, base + Duration::from_millis(max_ms));
+        assert_eq!(loc.metadata, serde_json::json!({ "ms": max_ms }));
+    }
+
+    #[test]
     fn test_invalid_coordinates_are_rejected() {
         let db = DB::memory().unwrap();
         let meta = serde_json::json!({});
