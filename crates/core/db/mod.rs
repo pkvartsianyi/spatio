@@ -26,6 +26,28 @@ pub use sync::SyncDB;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+/// Reject namespace/object_id values that would corrupt the append-only log or
+/// alias the `namespace::object_id` composite key.
+///
+/// The log is a pipe-delimited, newline-terminated text format and the in-memory
+/// keys are joined with `::`, so `|`, CR/LF, and `::` are structurally unsafe and
+/// must be rejected at the write boundary rather than silently mangled.
+fn validate_identifier(kind: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(SpatioError::InvalidInput(format!("{kind} must not be empty")));
+    }
+    if value.contains('|')
+        || value.contains('\n')
+        || value.contains('\r')
+        || value.contains("::")
+    {
+        return Err(SpatioError::InvalidInput(format!(
+            "{kind} must not contain '|', a newline, or '::' (got {value:?})"
+        )));
+    }
+    Ok(())
+}
+
 /// Embedded spatio-temporal database.
 ///
 /// Optimized for tracking moving objects with hot/cold data separation.
@@ -138,6 +160,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("object_id", object_id)?;
 
         let ts = opts
             .as_ref()
@@ -170,6 +194,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("object_id", object_id)?;
         self.cold.append_tombstone(namespace, object_id)?;
         self.hot.remove_object(namespace, object_id);
         Ok(())
@@ -751,5 +777,59 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn test_metadata_with_pipe_survives_reopen() {
+        // A '|' inside metadata must not corrupt the log record: the value has
+        // to survive a full close/reopen recovery cycle on a file-backed DB.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("pipe.db");
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({"note": "a|b|c", "n": 1}),
+                None,
+            )
+            .unwrap();
+            db.close().unwrap();
+        }
+        {
+            let db = DB::open(&db_path).unwrap();
+            let loc = db
+                .get("ns", "obj")
+                .unwrap()
+                .expect("record with '|' in metadata must survive reopen");
+            assert_eq!(loc.metadata, serde_json::json!({"note": "a|b|c", "n": 1}));
+        }
+    }
+
+    #[test]
+    fn test_unsafe_identifiers_are_rejected() {
+        let db = DB::memory().unwrap();
+        let pos = Point3d::new(0.0, 0.0, 0.0);
+        let meta = serde_json::json!({});
+
+        // Delimiter / ambiguity hazards must be rejected, not silently mangled.
+        for bad in ["a|b", "a\nb", "a\rb", "a::b", ""] {
+            assert!(
+                db.upsert(bad, "obj", pos.clone(), meta.clone(), None)
+                    .is_err(),
+                "namespace {bad:?} must be rejected"
+            );
+            assert!(
+                db.upsert("ns", bad, pos.clone(), meta.clone(), None)
+                    .is_err(),
+                "object_id {bad:?} must be rejected"
+            );
+            assert!(db.delete("ns", bad).is_err(), "delete {bad:?} must be rejected");
+        }
+
+        // A normal key still works.
+        assert!(db.upsert("ns", "ok", pos, meta, None).is_ok());
     }
 }

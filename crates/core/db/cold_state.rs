@@ -455,7 +455,10 @@ impl TrajectoryLog {
                     };
 
                     // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-                    let parts: Vec<&str> = line.split('|').collect();
+                    // splitn keeps the metadata (last field) intact even if it
+                    // contains '|' — namespace/object_id are delimiter-free by
+                    // validation, so the first 7 fields are unambiguous.
+                    let parts: Vec<&str> = line.splitn(8, '|').collect();
                     if parts.len() != 8 {
                         continue;
                     }
@@ -565,7 +568,9 @@ impl TrajectoryLog {
                         }
                     };
 
-                    let parts: Vec<&str> = line.split('|').collect();
+                    // splitn(8) keeps metadata intact if it contains '|'; tombstone
+                    // and malformed lines simply yield a different field count.
+                    let parts: Vec<&str> = line.splitn(8, '|').collect();
 
                     // Tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
                     if parts.first() == Some(&"TOMBSTONE") {
