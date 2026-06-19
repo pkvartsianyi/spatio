@@ -113,18 +113,11 @@ impl PyPoint {
         self.__repr__()
     }
 
-    /// Calculate distance to another point in meters using Haversine formula
+    /// Horizontal (2D) Haversine distance to another point, in meters.
     fn distance_to(&self, other: &PyPoint) -> f64 {
-        let r = 6371000.0; // Earth radius in meters
-        let d_lat = (other.lat() - self.lat()).to_radians();
-        let d_lon = (other.lon() - self.lon()).to_radians();
-        let lat1 = self.lat().to_radians();
-        let lat2 = other.lat().to_radians();
-
-        let a = (d_lat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (d_lon / 2.0).sin().powi(2);
-        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-        r * c
+        // Delegate to the core geo-backed implementation so Python results
+        // match the rest of the system (same Earth model).
+        self.inner.haversine_2d(&other.inner)
     }
 }
 
