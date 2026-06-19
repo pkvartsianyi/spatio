@@ -147,8 +147,10 @@ impl ColdState {
 
         buffer.push_back(update);
 
-        // Keep only last N updates
-        while buffer.len() > self.buffer_capacity {
+        // Keep only the last N updates. Each call appends exactly one record to
+        // a buffer that already held <= capacity, so at most one eviction is
+        // ever needed — no loop required.
+        if buffer.len() > self.buffer_capacity {
             buffer.pop_front();
         }
 
