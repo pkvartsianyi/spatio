@@ -284,6 +284,20 @@ fn record_body(line: &str, version: LogVersion) -> Option<&str> {
     }
 }
 
+/// Best-effort `fsync` of a file's parent directory so a newly created file's
+/// directory entry is durable across power loss. No-op where a directory handle
+/// can't be opened/synced (e.g. Windows).
+fn sync_parent_dir(path: &Path) {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    if let Ok(dir) = File::open(&parent) {
+        let _ = dir.sync_all();
+    }
+}
+
 /// Write one record body as a newline-terminated log line, prefixing a CRC32
 /// (hex) under V2.
 fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io::Result<()> {
@@ -356,6 +370,10 @@ impl TrajectoryLog {
         };
 
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        if existing_len == 0 {
+            // Make the newly created file's directory entry durable.
+            sync_parent_dir(path);
+        }
         let mut writer = BufWriter::new(file);
         if existing_len == 0 {
             // Stamp the version header so later opens parse this log as V2.
