@@ -26,19 +26,12 @@ pub use sync::SyncDB;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-struct TempDirGuard(std::path::PathBuf);
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 /// Embedded spatio-temporal database.
 ///
 /// Optimized for tracking moving objects with hot/cold data separation.
 /// - **Hot State**: Current locations in memory (DashMap)
-/// - **Cold State**: Historical trajectories on disk (Append-only log)
+/// - **Cold State**: Historical trajectories on disk (Append-only log).
+///   `:memory:` databases keep this log in memory and never touch the filesystem.
 ///
 /// Thread-safe by default (uses internal locking/lock-free structures).
 #[derive(Clone)]
@@ -49,7 +42,6 @@ pub struct DB {
     pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // retained for configuration introspection
     pub(crate) config: Config,
-    _temp_dir: Option<Arc<TempDirGuard>>,
 }
 
 impl DB {
@@ -73,25 +65,16 @@ impl DB {
             batch_size: config.sync_batch_size,
         };
 
-        let (cold, temp_dir_guard) = if path_ref.to_str() == Some(":memory:") {
-            let temp_dir =
-                std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
-            let cold = Arc::new(ColdState::new(
-                &temp_dir.join("traj.log"),
-                config.buffer_capacity,
-                config.persistence.clone(),
-                sync,
-            )?);
-            let guard = Arc::new(TempDirGuard(temp_dir));
-            (cold, Some(guard))
+        let cold = if path_ref.to_str() == Some(":memory:") {
+            // Pure in-memory: no temp dir, no file, no serialization on writes.
+            Arc::new(ColdState::new_memory(config.buffer_capacity))
         } else {
-            let cold = Arc::new(ColdState::new(
+            Arc::new(ColdState::new(
                 path_ref,
                 config.buffer_capacity,
                 config.persistence.clone(),
                 sync,
-            )?);
-            (cold, None)
+            )?)
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
@@ -130,7 +113,6 @@ impl DB {
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
             config,
-            _temp_dir: temp_dir_guard,
         })
     }
 
@@ -712,31 +694,35 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_db_cleans_up_temp_dir() {
-        let temp_path = {
-            let db = DB::memory().unwrap();
-            // Reach into the cold state's log path via a query (just to exercise the db)
+    fn test_memory_db_serves_trajectory_history_in_memory() {
+        // A :memory: DB must not touch the filesystem yet still answer
+        // trajectory queries (history kept in the in-memory log) beyond the
+        // recent buffer window.
+        let db = DB::memory().unwrap();
+
+        let t0 = SystemTime::now();
+        for i in 0..5u64 {
             db.upsert(
                 "ns",
                 "obj",
-                Point3d::new(0.0, 0.0, 0.0),
-                serde_json::json!({}),
-                None,
+                Point3d::new(i as f64, i as f64, 0.0),
+                serde_json::json!({ "i": i }),
+                Some(SetOptions {
+                    timestamp: Some(t0 + Duration::from_millis(i)),
+                }),
             )
             .unwrap();
-            // Extract the temp dir path before dropping
-            match db._temp_dir.as_ref().map(|g| g.0.clone()) {
-                Some(p) => {
-                    assert!(p.exists(), "temp dir must exist while DB is live");
-                    p
-                }
-                None => panic!("memory DB should have a temp dir guard"),
-            }
-        }; // DB dropped here
-        assert!(
-            !temp_path.exists(),
-            "temp dir must be removed after DB is dropped"
-        );
+        }
+
+        // Current position reflects the latest update.
+        let current = db.get("ns", "obj").unwrap().unwrap();
+        assert_eq!(current.position.x(), 4.0);
+
+        // Full trajectory is queryable from the in-memory log.
+        let traj = db
+            .query_trajectory("ns", "obj", t0, t0 + Duration::from_secs(1), 10)
+            .unwrap();
+        assert_eq!(traj.len(), 5, "all in-memory history must be queryable");
     }
 
     #[test]

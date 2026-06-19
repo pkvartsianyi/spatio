@@ -72,10 +72,24 @@ impl ColdState {
         }
 
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size, sync)?),
+            trajectory_log: Mutex::new(TrajectoryLog::open_file(log_path, config.buffer_size, sync)?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
         })
+    }
+
+    /// Create a purely in-memory cold state.
+    ///
+    /// Used by `:memory:` databases: no file is created and no temp directory
+    /// is touched. Trajectory history lives in an in-memory append log, so
+    /// `query_trajectory` returns the same results a file-backed DB would,
+    /// without paying for text serialization, `BufWriter` flushes, or `fsync`.
+    pub fn new_memory(buffer_capacity: usize) -> Self {
+        Self {
+            trajectory_log: Mutex::new(TrajectoryLog::open_memory()),
+            recent_buffer: DashMap::new(),
+            buffer_capacity,
+        }
     }
 
     /// Create a composite key from namespace and object ID
@@ -190,83 +204,17 @@ impl ColdState {
             }
         }
 
-        // Fallback to disk (slow path) - scan entire log file
-        let log = self.trajectory_log.lock();
-        let path = log.path();
-
-        if !path.exists() {
-            return Ok(from_buffer);
-        }
-
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-
-        // Use a set to track timestamps already retrieved from buffer
+        // Fallback to the append log (slow path): scan the durable file log
+        // or the in-memory log, depending on backend.
         let buffer_timestamps: std::collections::HashSet<SystemTime> =
             from_buffer.iter().map(|u| u.timestamp).collect();
 
-        let mut from_disk: Vec<LocationUpdate> = Vec::new();
+        let from_disk = {
+            let log = self.trajectory_log.lock();
+            log.scan_trajectory(namespace, object_id, start_time, end_time, &buffer_timestamps)?
+        };
 
-        for line_result in std::io::BufRead::lines(reader) {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|hex_metadata
-            let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() != 8 {
-                continue;
-            }
-
-            // Check namespace and object_id match
-            if parts[1] != namespace || parts[2] != object_id {
-                continue;
-            }
-
-            // Parse timestamp
-            let timestamp_micros: u128 = match parts[0].parse() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
-
-            // Skip if already in buffer
-            if buffer_timestamps.contains(&timestamp) {
-                continue;
-            }
-
-            // Check if in time range
-            if timestamp < start_time || timestamp > end_time {
-                continue;
-            }
-
-            // Parse position
-            let lat: f64 = match parts[3].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let lon: f64 = match parts[4].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let alt: f64 = match parts[5].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            // Parse JSON metadata
-            let metadata: serde_json::Value =
-                serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
-
-            from_disk.push(LocationUpdate {
-                timestamp,
-                position: Point3d::new(lon, lat, alt),
-                metadata,
-            });
-        }
-
-        // Merge buffer and disk results, sort by timestamp (newest first), limit
+        // Merge buffer and log results, sort by timestamp (newest first), limit
         from_buffer.extend(from_disk);
         from_buffer.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         from_buffer.truncate(limit);
@@ -281,167 +229,76 @@ impl ColdState {
     pub fn recover_current_locations(
         &self,
     ) -> Result<std::collections::HashMap<String, LocationUpdate>> {
-        use std::collections::HashMap;
-        use std::io::{BufRead, BufReader};
-
         let log = self.trajectory_log.lock();
-        let path = log.path();
-
-        // If file doesn't exist or is empty, return empty map
-        if !path.exists() {
-            return Ok(HashMap::new());
-        }
-
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-
-        struct RecoveryEntry {
-            best: Option<LocationUpdate>,
-        }
-
-        let mut entries: HashMap<String, RecoveryEntry> = HashMap::new();
-
-        for (line_num, line_result) in reader.lines().enumerate() {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(e) => {
-                    log::warn!(
-                        "Failed to read line {} in trajectory log: {}",
-                        line_num + 1,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            let parts: Vec<&str> = line.split('|').collect();
-
-            // Handle tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
-            if parts.first() == Some(&"TOMBSTONE") {
-                if parts.len() != 4 {
-                    log::warn!("Malformed tombstone on line {}", line_num + 1);
-                    continue;
-                }
-                let key = format!("{}::{}", parts[2], parts[3]);
-                entries
-                    .entry(key)
-                    .or_insert(RecoveryEntry { best: None })
-                    .best = None;
-                continue;
-            }
-
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-            if parts.len() != 8 {
-                log::warn!(
-                    "Malformed log line {} (expected 8 fields, got {})",
-                    line_num + 1,
-                    parts.len()
-                );
-                continue;
-            }
-
-            // Parse timestamp
-            let timestamp_micros: u128 = match parts[0].parse() {
-                Ok(t) => t,
-                Err(e) => {
-                    log::warn!("Invalid timestamp on line {}: {}", line_num + 1, e);
-                    continue;
-                }
-            };
-            let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(micros_u64);
-
-            let namespace = parts[1];
-            let object_id = parts[2];
-
-            // Parse position
-            let lat: f64 = match parts[3].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid latitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-            let lon: f64 = match parts[4].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid longitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-            let alt: f64 = match parts[5].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid altitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-
-            // Parse JSON metadata
-            let metadata: serde_json::Value = serde_json::from_str(parts[7]).unwrap_or_else(|e| {
-                log::warn!("Invalid metadata on line {}: {}", line_num + 1, e);
-                serde_json::Value::Null
-            });
-
-            let full_key = format!("{}::{}", namespace, object_id);
-            let update = LocationUpdate {
-                timestamp,
-                position: Point3d::new(lon, lat, alt),
-                metadata,
-            };
-
-            let entry = entries
-                .entry(full_key)
-                .or_insert(RecoveryEntry { best: None });
-            match &entry.best {
-                None => entry.best = Some(update),
-                Some(existing) if update.timestamp > existing.timestamp => {
-                    entry.best = Some(update);
-                }
-                _ => {}
-            }
-        }
-
-        let latest_positions = entries
-            .into_iter()
-            .filter_map(|(key, e)| e.best.map(|u| (key, u)))
-            .collect();
-
-        Ok(latest_positions)
+        log.recover_latest()
     }
 }
 
-/// Trajectory log format management
+/// A single record in the in-memory trajectory log (memory-mode DBs).
+#[derive(Clone)]
+enum MemRecord {
+    Update {
+        namespace: String,
+        object_id: String,
+        update: LocationUpdate,
+    },
+    Tombstone {
+        namespace: String,
+        object_id: String,
+    },
+}
+
+/// Storage backend for the trajectory log.
+///
+/// File-backed databases serialize records to a durable append-only text log;
+/// `:memory:` databases keep parsed records in memory and never touch the
+/// filesystem.
+enum LogBackend {
+    File {
+        writer: BufWriter<File>,
+        path: std::path::PathBuf,
+        /// Records buffered in `writer` that have not yet been pushed to the OS.
+        pending_writes: usize,
+        /// Records written since the last `fsync`.
+        writes_since_sync: usize,
+        /// Wall-clock instant of the last `fsync`, used by [`SyncPolicy::EverySecond`].
+        last_sync: Instant,
+        buffer_limit: usize,
+        sync: SyncSettings,
+    },
+    Memory {
+        records: Vec<MemRecord>,
+    },
+}
+
+/// Trajectory log: durable file-backed log or an in-memory log.
 struct TrajectoryLog {
-    writer: BufWriter<File>,
-    path: std::path::PathBuf,
-    /// Records buffered in `writer` that have not yet been pushed to the OS.
-    pending_writes: usize,
-    /// Records written since the last `fsync`.
-    writes_since_sync: usize,
-    /// Wall-clock instant of the last `fsync`, used by [`SyncPolicy::EverySecond`].
-    last_sync: Instant,
-    buffer_limit: usize,
-    sync: SyncSettings,
+    backend: LogBackend,
 }
 
 impl TrajectoryLog {
-    fn open(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
+    fn open_file(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
         Ok(Self {
-            writer: BufWriter::new(file),
-            path: path.to_path_buf(),
-            pending_writes: 0,
-            writes_since_sync: 0,
-            last_sync: Instant::now(),
-            buffer_limit,
-            sync,
+            backend: LogBackend::File {
+                writer: BufWriter::new(file),
+                path: path.to_path_buf(),
+                pending_writes: 0,
+                writes_since_sync: 0,
+                last_sync: Instant::now(),
+                buffer_limit,
+                sync,
+            },
         })
     }
 
-    fn path(&self) -> &std::path::Path {
-        &self.path
+    fn open_memory() -> Self {
+        Self {
+            backend: LogBackend::Memory {
+                records: Vec::new(),
+            },
+        }
     }
 
     /// Flush the in-memory write buffer to the OS and, depending on the
@@ -449,79 +306,364 @@ impl TrajectoryLog {
     ///
     /// `force` is set on explicit flush/close/drop: it triggers an `fsync`
     /// regardless of batch/interval thresholds (unless the policy is
-    /// [`SyncPolicy::Never`], which never syncs).
+    /// [`SyncPolicy::Never`], which never syncs). A no-op for memory logs.
     fn maybe_sync(&mut self, force: bool) -> Result<()> {
-        let fsync = match self.sync.policy {
+        let LogBackend::File {
+            writer,
+            pending_writes,
+            writes_since_sync,
+            last_sync,
+            buffer_limit,
+            sync,
+            ..
+        } = &mut self.backend
+        else {
+            return Ok(());
+        };
+
+        let fsync = match sync.policy {
             SyncPolicy::Never => false,
-            SyncPolicy::Always => force || self.writes_since_sync >= self.sync.batch_size,
-            SyncPolicy::EverySecond => force || self.last_sync.elapsed() >= Duration::from_secs(1),
+            SyncPolicy::Always => force || *writes_since_sync >= sync.batch_size,
+            SyncPolicy::EverySecond => force || last_sync.elapsed() >= Duration::from_secs(1),
         };
 
         if fsync {
-            self.writer.flush()?;
-            match self.sync.mode {
-                SyncMode::All => self.writer.get_ref().sync_all()?,
-                SyncMode::Data => self.writer.get_ref().sync_data()?,
+            writer.flush()?;
+            match sync.mode {
+                SyncMode::All => writer.get_ref().sync_all()?,
+                SyncMode::Data => writer.get_ref().sync_data()?,
             }
-            self.pending_writes = 0;
-            self.writes_since_sync = 0;
-            self.last_sync = Instant::now();
-        } else if force || self.pending_writes >= self.buffer_limit {
+            *pending_writes = 0;
+            *writes_since_sync = 0;
+            *last_sync = Instant::now();
+        } else if force || *pending_writes >= *buffer_limit {
             // Push buffered bytes to the OS even when not syncing, so a clean
             // process exit doesn't lose writes still sitting in the BufWriter.
-            self.writer.flush()?;
-            self.pending_writes = 0;
+            writer.flush()?;
+            *pending_writes = 0;
         }
 
         Ok(())
     }
 
     fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
-        // Log format (pipe-separated, 8 fields per line):
-        //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-        //
-        // Coordinates are written to 6 decimal places (~0.1 m precision).
-        // Namespace and object_id must not contain the `|` character.
-        let micros = update
-            .timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        match &mut self.backend {
+            // Log format (pipe-separated, 8 fields per line):
+            //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
+            //
+            // Coordinates are written to 6 decimal places (~0.1 m precision).
+            // Namespace and object_id must not contain the `|` character.
+            LogBackend::File {
+                writer,
+                pending_writes,
+                writes_since_sync,
+                ..
+            } => {
+                let micros = update
+                    .timestamp
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_micros();
 
-        let json_str =
-            serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
+                let json_str =
+                    serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
 
-        writeln!(
-            self.writer,
-            "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
-            micros,
-            namespace,
-            object_id,
-            update.position.y(), // lat
-            update.position.x(), // lon
-            update.position.z(), // alt
-            json_str.len(),
-            json_str,
-        )?;
+                writeln!(
+                    writer,
+                    "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
+                    micros,
+                    namespace,
+                    object_id,
+                    update.position.y(), // lat
+                    update.position.x(), // lon
+                    update.position.z(), // alt
+                    json_str.len(),
+                    json_str,
+                )?;
 
-        self.pending_writes += 1;
-        self.writes_since_sync += 1;
+                *pending_writes += 1;
+                *writes_since_sync += 1;
+            }
+            LogBackend::Memory { records } => {
+                records.push(MemRecord::Update {
+                    namespace: namespace.to_string(),
+                    object_id: object_id.to_string(),
+                    update: update.clone(),
+                });
+                return Ok(());
+            }
+        }
         self.maybe_sync(false)
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
-        writeln!(
-            self.writer,
-            "TOMBSTONE|{}|{}|{}",
-            micros, namespace, object_id
-        )?;
-        self.pending_writes += 1;
-        self.writes_since_sync += 1;
+        match &mut self.backend {
+            LogBackend::File {
+                writer,
+                pending_writes,
+                writes_since_sync,
+                ..
+            } => {
+                writeln!(writer, "TOMBSTONE|{}|{}|{}", micros, namespace, object_id)?;
+                *pending_writes += 1;
+                *writes_since_sync += 1;
+            }
+            LogBackend::Memory { records } => {
+                // The tombstone's own timestamp is irrelevant to recovery, which
+                // resolves the latest state by append order, so we don't store it.
+                let _ = micros;
+                records.push(MemRecord::Tombstone {
+                    namespace: namespace.to_string(),
+                    object_id: object_id.to_string(),
+                });
+                return Ok(());
+            }
+        }
         self.maybe_sync(false)
     }
 
     fn flush(&mut self) -> Result<()> {
         self.maybe_sync(true)
+    }
+
+    /// Scan the log for an object's updates within `[start, end]`, skipping any
+    /// timestamps already present in `exclude` (i.e. served from the buffer).
+    fn scan_trajectory(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        start_time: SystemTime,
+        end_time: SystemTime,
+        exclude: &std::collections::HashSet<SystemTime>,
+    ) -> Result<Vec<LocationUpdate>> {
+        let mut out: Vec<LocationUpdate> = Vec::new();
+
+        match &self.backend {
+            LogBackend::File { path, .. } => {
+                if !path.exists() {
+                    return Ok(out);
+                }
+                let file = std::fs::File::open(path)?;
+                let reader = std::io::BufReader::new(file);
+
+                for line_result in std::io::BufRead::lines(reader) {
+                    let line = match line_result {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
+
+                    // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() != 8 {
+                        continue;
+                    }
+                    if parts[1] != namespace || parts[2] != object_id {
+                        continue;
+                    }
+
+                    let timestamp_micros: u128 = match parts[0].parse() {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    let timestamp = UNIX_EPOCH + Duration::from_micros(timestamp_micros as u64);
+
+                    if exclude.contains(&timestamp) {
+                        continue;
+                    }
+                    if timestamp < start_time || timestamp > end_time {
+                        continue;
+                    }
+
+                    let lat: f64 = match parts[3].parse() {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let lon: f64 = match parts[4].parse() {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let alt: f64 = match parts[5].parse() {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    let metadata: serde_json::Value =
+                        serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+
+                    out.push(LocationUpdate {
+                        timestamp,
+                        position: Point3d::new(lon, lat, alt),
+                        metadata,
+                    });
+                }
+            }
+            LogBackend::Memory { records } => {
+                for rec in records {
+                    let MemRecord::Update {
+                        namespace: ns,
+                        object_id: id,
+                        update,
+                    } = rec
+                    else {
+                        continue;
+                    };
+                    if ns != namespace || id != object_id {
+                        continue;
+                    }
+                    if exclude.contains(&update.timestamp) {
+                        continue;
+                    }
+                    if update.timestamp < start_time || update.timestamp > end_time {
+                        continue;
+                    }
+                    out.push(update.clone());
+                }
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Replay the whole log and return the latest surviving update per object
+    /// (tombstones clear an object; a later update revives it). Used on startup.
+    fn recover_latest(&self) -> Result<std::collections::HashMap<String, LocationUpdate>> {
+        use std::collections::HashMap;
+
+        // `None` slot means the key was tombstoned (or not yet seen with a value).
+        let mut entries: HashMap<String, Option<LocationUpdate>> = HashMap::new();
+
+        // Keep an update if the slot is empty/tombstoned, or strictly newer.
+        fn merge(slot: &mut Option<LocationUpdate>, update: LocationUpdate) {
+            match slot {
+                None => *slot = Some(update),
+                Some(existing) if update.timestamp > existing.timestamp => *slot = Some(update),
+                _ => {}
+            }
+        }
+
+        match &self.backend {
+            LogBackend::File { path, .. } => {
+                use std::io::{BufRead, BufReader};
+                if !path.exists() {
+                    return Ok(HashMap::new());
+                }
+                let file = std::fs::File::open(path)?;
+                let reader = BufReader::new(file);
+
+                for (line_num, line_result) in reader.lines().enumerate() {
+                    let line = match line_result {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to read line {} in trajectory log: {}",
+                                line_num + 1,
+                                e
+                            );
+                            continue;
+                        }
+                    };
+
+                    let parts: Vec<&str> = line.split('|').collect();
+
+                    // Tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
+                    if parts.first() == Some(&"TOMBSTONE") {
+                        if parts.len() != 4 {
+                            log::warn!("Malformed tombstone on line {}", line_num + 1);
+                            continue;
+                        }
+                        entries.insert(format!("{}::{}", parts[2], parts[3]), None);
+                        continue;
+                    }
+
+                    if parts.len() != 8 {
+                        log::warn!(
+                            "Malformed log line {} (expected 8 fields, got {})",
+                            line_num + 1,
+                            parts.len()
+                        );
+                        continue;
+                    }
+
+                    let timestamp_micros: u128 = match parts[0].parse() {
+                        Ok(t) => t,
+                        Err(e) => {
+                            log::warn!("Invalid timestamp on line {}: {}", line_num + 1, e);
+                            continue;
+                        }
+                    };
+                    let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
+                    let timestamp = UNIX_EPOCH + Duration::from_micros(micros_u64);
+
+                    let namespace = parts[1];
+                    let object_id = parts[2];
+
+                    let lat: f64 = match parts[3].parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            log::warn!("Invalid latitude on line {}", line_num + 1);
+                            continue;
+                        }
+                    };
+                    let lon: f64 = match parts[4].parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            log::warn!("Invalid longitude on line {}", line_num + 1);
+                            continue;
+                        }
+                    };
+                    let alt: f64 = match parts[5].parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            log::warn!("Invalid altitude on line {}", line_num + 1);
+                            continue;
+                        }
+                    };
+
+                    let metadata: serde_json::Value =
+                        serde_json::from_str(parts[7]).unwrap_or_else(|e| {
+                            log::warn!("Invalid metadata on line {}: {}", line_num + 1, e);
+                            serde_json::Value::Null
+                        });
+
+                    let slot = entries.entry(format!("{}::{}", namespace, object_id)).or_insert(None);
+                    merge(
+                        slot,
+                        LocationUpdate {
+                            timestamp,
+                            position: Point3d::new(lon, lat, alt),
+                            metadata,
+                        },
+                    );
+                }
+            }
+            LogBackend::Memory { records } => {
+                for rec in records {
+                    match rec {
+                        MemRecord::Update {
+                            namespace,
+                            object_id,
+                            update,
+                        } => {
+                            let slot = entries
+                                .entry(format!("{}::{}", namespace, object_id))
+                                .or_insert(None);
+                            merge(slot, update.clone());
+                        }
+                        MemRecord::Tombstone {
+                            namespace,
+                            object_id,
+                        } => {
+                            entries.insert(format!("{}::{}", namespace, object_id), None);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(entries
+            .into_iter()
+            .filter_map(|(key, slot)| slot.map(|u| (key, u)))
+            .collect())
     }
 }
 
