@@ -103,6 +103,14 @@ impl DB {
         if path_ref.to_str() != Some(":memory:") {
             match cold.recover_current_locations() {
                 Ok(recovered) => {
+                    // Persist a fresh checkpoint covering everything recovered so
+                    // the next startup replays only newly appended records. The
+                    // full history log is left intact. Best-effort: a failure here
+                    // only means the next recovery is slower, not incorrect.
+                    if let Err(e) = cold.write_checkpoint(&recovered) {
+                        log::warn!("Failed to write recovery checkpoint: {}", e);
+                    }
+
                     for (key, update) in recovered {
                         // Parse namespace and object_id from key "namespace::object_id"
                         if let Some(separator_idx) = key.find("::") {
@@ -806,6 +814,67 @@ mod tests {
                 .expect("record with '|' in metadata must survive reopen");
             assert_eq!(loc.metadata, serde_json::json!({"note": "a|b|c", "n": 1}));
         }
+    }
+
+    #[test]
+    fn test_checkpoint_preserves_history_and_writes_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("traj.db");
+        let snap_path = dir.path().join("traj.db.snap");
+
+        let t1 = SystemTime::now();
+        let t2 = t1 + Duration::from_millis(5);
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert("ns", "a", Point3d::new(1.0, 1.0, 0.0), serde_json::json!({"s": 1}),
+                Some(SetOptions { timestamp: Some(t1) })).unwrap();
+            db.upsert("ns", "a", Point3d::new(2.0, 2.0, 0.0), serde_json::json!({"s": 2}),
+                Some(SetOptions { timestamp: Some(t2) })).unwrap();
+            db.upsert("ns", "b", Point3d::new(9.0, 9.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.close().unwrap();
+        }
+        {
+            let db = DB::open(&db_path).unwrap();
+            // Current state recovered correctly.
+            assert_eq!(db.get("ns", "a").unwrap().unwrap().position.x(), 2.0);
+            assert!(db.get("ns", "b").unwrap().is_some());
+            // Trajectory history is NOT discarded by the checkpoint.
+            let traj = db
+                .query_trajectory("ns", "a", t1, t2 + Duration::from_secs(1), 10)
+                .unwrap();
+            assert_eq!(traj.len(), 2, "checkpoint must preserve full trajectory history");
+        }
+        // A checkpoint snapshot was written beside the log.
+        assert!(snap_path.exists(), "checkpoint snapshot should exist");
+    }
+
+    #[test]
+    fn test_corrupt_snapshot_falls_back_to_full_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("traj.db");
+        let snap_path = dir.path().join("traj.db.snap");
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert("ns", "a", Point3d::new(1.0, 1.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert("ns", "a", Point3d::new(2.0, 2.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.close().unwrap();
+        }
+        // Open once more so the snapshot covers the records, then corrupt it.
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.close().unwrap();
+        }
+        // Valid header, but a record with a bad CRC -> snapshot must be rejected.
+        std::fs::write(&snap_path, "#spatio-snap v1 0\n00000000|garbage-record\n").unwrap();
+
+        let db = DB::open(&db_path).unwrap();
+        let loc = db
+            .get("ns", "a")
+            .unwrap()
+            .expect("state must still recover via full log replay");
+        assert_eq!(loc.position.x(), 2.0);
     }
 
     #[test]

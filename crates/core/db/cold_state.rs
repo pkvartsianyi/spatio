@@ -56,6 +56,9 @@ pub struct ColdState {
 
     /// Buffer size per object (e.g., last 100 updates)
     buffer_capacity: usize,
+
+    /// Path of the file-backed log, if any (used for checkpoint/recovery).
+    log_path: Option<std::path::PathBuf>,
 }
 
 impl ColdState {
@@ -75,6 +78,7 @@ impl ColdState {
             trajectory_log: Mutex::new(TrajectoryLog::open_file(log_path, config.buffer_size, sync)?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
+            log_path: Some(log_path.to_path_buf()),
         })
     }
 
@@ -89,6 +93,7 @@ impl ColdState {
             trajectory_log: Mutex::new(TrajectoryLog::open_memory()),
             recent_buffer: DashMap::new(),
             buffer_capacity,
+            log_path: None,
         }
     }
 
@@ -243,15 +248,62 @@ impl ColdState {
         Ok(from_buffer)
     }
 
-    /// Recover current locations by scanning the trajectory log
+    /// Recover current locations on startup.
     ///
-    /// Returns a map of "namespace::object_id" → LocationUpdate with the latest
-    /// timestamp for each object. Used during DB startup to rebuild HotState.
+    /// Returns a map of "namespace::object_id" → latest surviving LocationUpdate.
+    /// For file-backed logs this loads the checkpoint snapshot (if present and
+    /// valid) and then replays only the log tail written after it, so recovery
+    /// cost is O(live objects + tail) instead of O(entire history). A missing or
+    /// corrupt snapshot safely falls back to a full replay.
     pub fn recover_current_locations(
         &self,
     ) -> Result<std::collections::HashMap<String, LocationUpdate>> {
-        let log = self.trajectory_log.lock();
-        log.recover_latest()
+        use std::collections::HashMap;
+        let mut entries: HashMap<String, Option<LocationUpdate>> = HashMap::new();
+        let mut from_offset = 0u64;
+
+        if let Some(log_path) = &self.log_path {
+            let log_len = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
+            // Only trust the snapshot if it covers a prefix the log still has;
+            // a shorter log means the snapshot is stale, so full-replay instead.
+            if let Some((snapshot, covered_len)) = read_snapshot(&snapshot_path_for(log_path))
+                && covered_len <= log_len
+            {
+                for (key, update) in snapshot {
+                    entries.insert(key, Some(update));
+                }
+                from_offset = covered_len;
+            }
+        }
+
+        {
+            let log = self.trajectory_log.lock();
+            log.replay(from_offset, &mut entries)?;
+        }
+
+        Ok(entries
+            .into_iter()
+            .filter_map(|(key, slot)| slot.map(|u| (key, u)))
+            .collect())
+    }
+
+    /// Persist a checkpoint snapshot of `state` (the recovered current
+    /// locations) covering the current on-disk log length, so the next startup
+    /// replays only records appended afterwards. The full history log is left
+    /// intact (trajectory queries still see everything). No-op for memory logs.
+    pub fn write_checkpoint(
+        &self,
+        state: &std::collections::HashMap<String, LocationUpdate>,
+    ) -> Result<()> {
+        let Some(log_path) = &self.log_path else {
+            return Ok(());
+        };
+        // The snapshot covers exactly the bytes recovery read. write_checkpoint
+        // runs at open with no concurrent writers, so the current on-disk length
+        // is that boundary — no flush needed (which keeps buffered writes
+        // buffered). Any not-yet-flushed bytes are simply replayed next time.
+        let covered_len = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
+        write_snapshot(&snapshot_path_for(log_path), state, covered_len)
     }
 }
 
@@ -324,6 +376,108 @@ fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io
         LogVersion::V2 => writeln!(w, "{:08x}|{}", crc32(body.as_bytes()), body),
         LogVersion::V1 => writeln!(w, "{}", body),
     }
+}
+
+const SNAPSHOT_HEADER_PREFIX: &str = "#spatio-snap v1 ";
+
+/// Path of the checkpoint snapshot beside a log file (`<log>.snap`).
+fn snapshot_path_for(log_path: &Path) -> std::path::PathBuf {
+    let mut s = log_path.as_os_str().to_os_string();
+    s.push(".snap");
+    std::path::PathBuf::from(s)
+}
+
+/// Read a checkpoint snapshot: the current-locations map plus the log byte
+/// length it covers. Returns `None` (→ safe full replay) if the snapshot is
+/// absent, has a malformed header, or contains *any* corrupt record — never a
+/// partial or wrong state.
+fn read_snapshot(path: &Path) -> Option<(std::collections::HashMap<String, LocationUpdate>, u64)> {
+    use std::collections::HashMap;
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+    let covered_len: u64 = lines
+        .next()?
+        .strip_prefix(SNAPSHOT_HEADER_PREFIX)?
+        .trim()
+        .parse()
+        .ok()?;
+
+    let mut map: HashMap<String, LocationUpdate> = HashMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        // A corrupt record invalidates the whole snapshot (caller full-replays).
+        let body = record_body(line, LogVersion::V2)?;
+        let parts: Vec<&str> = body.splitn(8, '|').collect();
+        if parts.len() != 8 {
+            return None;
+        }
+        let micros: u128 = parts[0].parse().ok()?;
+        let timestamp =
+            UNIX_EPOCH + Duration::from_micros(u64::try_from(micros).unwrap_or(u64::MAX));
+        let lat: f64 = parts[3].parse().ok()?;
+        let lon: f64 = parts[4].parse().ok()?;
+        let alt: f64 = parts[5].parse().ok()?;
+        let metadata: serde_json::Value =
+            serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+        map.insert(
+            format!("{}::{}", parts[1], parts[2]),
+            LocationUpdate {
+                timestamp,
+                position: Point3d::new(lon, lat, alt),
+                metadata,
+            },
+        );
+    }
+    Some((map, covered_len))
+}
+
+/// Atomically write a checkpoint snapshot: temp file → fsync → rename → fsync
+/// parent dir, so a crash never leaves a half-written or stale-but-trusted snapshot.
+fn write_snapshot(
+    path: &Path,
+    state: &std::collections::HashMap<String, LocationUpdate>,
+    covered_len: u64,
+) -> Result<()> {
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+
+    {
+        let file = File::create(&tmp)?;
+        let mut w = BufWriter::new(file);
+        writeln!(w, "{}{}", SNAPSHOT_HEADER_PREFIX, covered_len)?;
+        for (key, update) in state {
+            // Keys are validated delimiter-free, so the first "::" splits ns/id.
+            let (ns, id) = key.split_once("::").unwrap_or((key.as_str(), ""));
+            let micros = update
+                .timestamp
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros();
+            let json =
+                serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
+            let body = format!(
+                "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
+                micros,
+                ns,
+                id,
+                update.position.y(),
+                update.position.x(),
+                update.position.z(),
+                json.len(),
+                json,
+            );
+            write_record(&mut w, LogVersion::V2, &body)?;
+        }
+        w.flush()?;
+        w.get_ref().sync_all()?;
+    }
+
+    std::fs::rename(&tmp, path)?;
+    sync_parent_dir(path);
+    Ok(())
 }
 
 /// Scan a file-backed log for an object's updates within `[start, end]`,
@@ -689,14 +843,14 @@ impl TrajectoryLog {
         out
     }
 
-    /// Replay the whole log and return the latest surviving update per object
-    /// (tombstones clear an object; a later update revives it). Used on startup.
-    fn recover_latest(&self) -> Result<std::collections::HashMap<String, LocationUpdate>> {
-        use std::collections::HashMap;
-
-        // `None` slot means the key was tombstoned (or not yet seen with a value).
-        let mut entries: HashMap<String, Option<LocationUpdate>> = HashMap::new();
-
+    /// Apply log records — starting at byte `from_offset` for file logs, or all
+    /// records for memory logs — into `entries`, resolving the latest surviving
+    /// update per key (tombstones clear an object; a later update revives it).
+    fn replay(
+        &self,
+        from_offset: u64,
+        entries: &mut std::collections::HashMap<String, Option<LocationUpdate>>,
+    ) -> Result<()> {
         // Keep an update if the slot is empty/tombstoned, or strictly newer.
         fn merge(slot: &mut Option<LocationUpdate>, update: LocationUpdate) {
             match slot {
@@ -708,12 +862,15 @@ impl TrajectoryLog {
 
         match &self.backend {
             LogBackend::File { path, version, .. } => {
-                use std::io::{BufRead, BufReader};
+                use std::io::{BufRead, BufReader, Seek, SeekFrom};
                 let version = *version;
                 if !path.exists() {
-                    return Ok(HashMap::new());
+                    return Ok(());
                 }
-                let file = std::fs::File::open(path)?;
+                let mut file = std::fs::File::open(path)?;
+                if from_offset > 0 {
+                    file.seek(SeekFrom::Start(from_offset))?;
+                }
                 let reader = BufReader::new(file);
 
                 for (line_num, line_result) in reader.lines().enumerate() {
@@ -833,10 +990,7 @@ impl TrajectoryLog {
             }
         }
 
-        Ok(entries
-            .into_iter()
-            .filter_map(|(key, slot)| slot.map(|u| (key, u)))
-            .collect())
+        Ok(())
     }
 }
 
