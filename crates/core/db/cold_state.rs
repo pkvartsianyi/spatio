@@ -212,8 +212,27 @@ impl ColdState {
             from_buffer.iter().map(|u| u.timestamp).collect();
 
         let from_disk = {
-            let log = self.trajectory_log.lock();
-            log.scan_trajectory(namespace, object_id, start_time, end_time, &buffer_timestamps)?
+            let mut log = self.trajectory_log.lock();
+            match log.flush_and_file_target()? {
+                // File backend: flush done; scan the file with the lock released
+                // so a long scan doesn't stall the writer.
+                Some((path, version)) => {
+                    drop(log);
+                    scan_file(
+                        &path,
+                        version,
+                        namespace,
+                        object_id,
+                        start_time,
+                        end_time,
+                        &buffer_timestamps,
+                    )?
+                }
+                // Memory backend: scan in place (fast, no I/O).
+                None => {
+                    log.scan_memory(namespace, object_id, start_time, end_time, &buffer_timestamps)
+                }
+            }
         };
 
         // Merge buffer and log results, sort by timestamp (newest first), limit
@@ -305,6 +324,86 @@ fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io
         LogVersion::V2 => writeln!(w, "{:08x}|{}", crc32(body.as_bytes()), body),
         LogVersion::V1 => writeln!(w, "{}", body),
     }
+}
+
+/// Scan a file-backed log for an object's updates within `[start, end]`,
+/// skipping `exclude`d timestamps. A free function so it can run *without* the
+/// log lock held (the path + version are captured under the lock first).
+fn scan_file(
+    path: &Path,
+    version: LogVersion,
+    namespace: &str,
+    object_id: &str,
+    start_time: SystemTime,
+    end_time: SystemTime,
+    exclude: &std::collections::HashSet<SystemTime>,
+) -> Result<Vec<LocationUpdate>> {
+    let mut out: Vec<LocationUpdate> = Vec::new();
+    if !path.exists() {
+        return Ok(out);
+    }
+    let file = File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+
+    for line_result in std::io::BufRead::lines(reader) {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+
+        // Strip the version header and verify the per-record CRC (V2); corrupt
+        // / torn lines are skipped.
+        let Some(body) = record_body(&line, version) else {
+            continue;
+        };
+
+        // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
+        // splitn keeps the metadata (last field) intact even if it contains '|'.
+        let parts: Vec<&str> = body.splitn(8, '|').collect();
+        if parts.len() != 8 {
+            continue;
+        }
+        if parts[1] != namespace || parts[2] != object_id {
+            continue;
+        }
+
+        let timestamp_micros: u128 = match parts[0].parse() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let timestamp = UNIX_EPOCH + Duration::from_micros(timestamp_micros as u64);
+
+        if exclude.contains(&timestamp) {
+            continue;
+        }
+        if timestamp < start_time || timestamp > end_time {
+            continue;
+        }
+
+        let lat: f64 = match parts[3].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let lon: f64 = match parts[4].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let alt: f64 = match parts[5].parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let metadata: serde_json::Value =
+            serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+
+        out.push(LocationUpdate {
+            timestamp,
+            position: Point3d::new(lon, lat, alt),
+            metadata,
+        });
+    }
+
+    Ok(out)
 }
 
 /// A single record in the in-memory trajectory log (memory-mode DBs).
@@ -530,112 +629,64 @@ impl TrajectoryLog {
         self.maybe_sync(true)
     }
 
-    /// Scan the log for an object's updates within `[start, end]`, skipping any
-    /// timestamps already present in `exclude` (i.e. served from the buffer).
-    fn scan_trajectory(
+    /// Prepare a file-backed trajectory scan: flush buffered writes to the OS so
+    /// a fresh read sees every appended record (including ones already evicted
+    /// from the recent buffer), and return the path + version so the caller can
+    /// scan the file *without* holding the log lock. Returns `None` for memory
+    /// logs, which must be scanned in place via [`Self::scan_memory`].
+    fn flush_and_file_target(&mut self) -> Result<Option<(std::path::PathBuf, LogVersion)>> {
+        match &mut self.backend {
+            LogBackend::File {
+                writer,
+                path,
+                pending_writes,
+                version,
+                ..
+            } => {
+                // Push to the OS page cache (not a full fsync) so a subsequent
+                // File::open read observes all appended bytes.
+                writer.flush()?;
+                *pending_writes = 0;
+                Ok(Some((path.clone(), *version)))
+            }
+            LogBackend::Memory { .. } => Ok(None),
+        }
+    }
+
+    /// Scan the in-memory log (memory backend) for an object's updates in range.
+    fn scan_memory(
         &self,
         namespace: &str,
         object_id: &str,
         start_time: SystemTime,
         end_time: SystemTime,
         exclude: &std::collections::HashSet<SystemTime>,
-    ) -> Result<Vec<LocationUpdate>> {
-        let mut out: Vec<LocationUpdate> = Vec::new();
-
-        match &self.backend {
-            LogBackend::File { path, version, .. } => {
-                let version = *version;
-                if !path.exists() {
-                    return Ok(out);
-                }
-                let file = std::fs::File::open(path)?;
-                let reader = std::io::BufReader::new(file);
-
-                for line_result in std::io::BufRead::lines(reader) {
-                    let line = match line_result {
-                        Ok(l) => l,
-                        Err(_) => continue,
-                    };
-
-                    // Strip the version header and verify the per-record CRC (V2);
-                    // corrupt/torn lines are skipped.
-                    let Some(body) = record_body(&line, version) else {
-                        continue;
-                    };
-
-                    // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-                    // splitn keeps the metadata (last field) intact even if it
-                    // contains '|' — namespace/object_id are delimiter-free by
-                    // validation, so the first 7 fields are unambiguous.
-                    let parts: Vec<&str> = body.splitn(8, '|').collect();
-                    if parts.len() != 8 {
-                        continue;
-                    }
-                    if parts[1] != namespace || parts[2] != object_id {
-                        continue;
-                    }
-
-                    let timestamp_micros: u128 = match parts[0].parse() {
-                        Ok(t) => t,
-                        Err(_) => continue,
-                    };
-                    let timestamp = UNIX_EPOCH + Duration::from_micros(timestamp_micros as u64);
-
-                    if exclude.contains(&timestamp) {
-                        continue;
-                    }
-                    if timestamp < start_time || timestamp > end_time {
-                        continue;
-                    }
-
-                    let lat: f64 = match parts[3].parse() {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let lon: f64 = match parts[4].parse() {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let alt: f64 = match parts[5].parse() {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-
-                    let metadata: serde_json::Value =
-                        serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
-
-                    out.push(LocationUpdate {
-                        timestamp,
-                        position: Point3d::new(lon, lat, alt),
-                        metadata,
-                    });
-                }
+    ) -> Vec<LocationUpdate> {
+        let LogBackend::Memory { records } = &self.backend else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for rec in records {
+            let MemRecord::Update {
+                namespace: ns,
+                object_id: id,
+                update,
+            } = rec
+            else {
+                continue;
+            };
+            if ns != namespace || id != object_id {
+                continue;
             }
-            LogBackend::Memory { records } => {
-                for rec in records {
-                    let MemRecord::Update {
-                        namespace: ns,
-                        object_id: id,
-                        update,
-                    } = rec
-                    else {
-                        continue;
-                    };
-                    if ns != namespace || id != object_id {
-                        continue;
-                    }
-                    if exclude.contains(&update.timestamp) {
-                        continue;
-                    }
-                    if update.timestamp < start_time || update.timestamp > end_time {
-                        continue;
-                    }
-                    out.push(update.clone());
-                }
+            if exclude.contains(&update.timestamp) {
+                continue;
             }
+            if update.timestamp < start_time || update.timestamp > end_time {
+                continue;
+            }
+            out.push(update.clone());
         }
-
-        Ok(out)
+        out
     }
 
     /// Replay the whole log and return the latest surviving update per object
@@ -1286,6 +1337,47 @@ mod tests {
             .unwrap();
         assert_eq!(limited.len(), 3);
         assert_eq!(limited[0].timestamp, t5);
+    }
+
+    #[test]
+    fn test_trajectory_sees_buffered_but_evicted_records() {
+        // Records evicted from the recent buffer but not yet OS-flushed must
+        // still be visible to a trajectory query: the disk scan flushes first.
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(
+            &log_path,
+            2,                                          // tiny recent-buffer capacity
+            PersistenceConfig { buffer_size: 10_000 }, // large: no incidental OS flush
+            SyncSettings {
+                policy: SyncPolicy::Never, // never fsyncs on its own
+                mode: SyncMode::All,
+                batch_size: 1,
+            },
+        )
+        .unwrap();
+
+        let base = UNIX_EPOCH + Duration::from_secs(1000);
+        for i in 0..5u64 {
+            cold.append_update(
+                "ns",
+                "o",
+                Point3d::new(i as f64, 0.0, 0.0),
+                serde_json::json!({ "i": i }),
+                base + Duration::from_secs(i),
+            )
+            .unwrap();
+        }
+
+        let traj = cold
+            .query_trajectory("ns", "o", base, base + Duration::from_secs(10), 100)
+            .unwrap();
+        assert_eq!(
+            traj.len(),
+            5,
+            "all records must be visible even though 3 were evicted from the \
+             buffer and none were explicitly flushed"
+        );
     }
 
     #[test]
