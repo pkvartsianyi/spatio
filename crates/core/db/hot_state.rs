@@ -97,21 +97,26 @@ impl HotState {
 
         match action {
             UpdateAction::Updated(old_location) => {
-                // Update spatial index
-                // Remove old position
-                let mut spatial_idx = self.spatial_index.write();
-                spatial_idx.remove_entry(
-                    namespace,
-                    &full_key,
-                    Some((
-                        old_location.position.x(),
-                        old_location.position.y(),
-                        old_location.position.z(),
-                    )),
-                );
+                let old_x = old_location.position.x();
+                let old_y = old_location.position.y();
+                let old_z = old_location.position.z();
 
-                // Insert new position
-                spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+                // Skip the spatial index churn when the object hasn't moved:
+                // the R*-tree entry is already at this exact position, so a
+                // remove+reinsert would only rebuild the tree to an identical
+                // state. Metadata/timestamp updates already landed in the
+                // DashMap above. (Common for stationary objects re-reporting.)
+                if old_x != pos_x || old_y != pos_y || old_z != pos_z {
+                    let mut spatial_idx = self.spatial_index.write();
+                    // Remove old position
+                    spatial_idx.remove_entry(
+                        namespace,
+                        &full_key,
+                        Some((old_x, old_y, old_z)),
+                    );
+                    // Insert new position
+                    spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+                }
 
                 Ok(Some(old_location))
             }
@@ -419,6 +424,46 @@ mod tests {
         assert_eq!(current.position.x(), -74.1);
         assert_eq!(current.position.y(), 40.8);
         assert_eq!(current.metadata, serde_json::json!({"meta": "meta2"}));
+    }
+
+    #[test]
+    fn test_in_place_update_keeps_object_queryable() {
+        // An update that does not move the point takes the spatial-index
+        // skip path; the object must still be found by a spatial query and
+        // its metadata/timestamp must reflect the latest update.
+        let hot = HotState::new();
+        let pos = Point3d::new(-74.0, 40.7, 100.0);
+
+        hot.update_location(
+            "drones",
+            "d1",
+            pos.clone(),
+            serde_json::json!({"battery": 100}),
+            SystemTime::now(),
+        )
+        .unwrap();
+
+        // Same position, new metadata.
+        let old = hot
+            .update_location(
+                "drones",
+                "d1",
+                pos.clone(),
+                serde_json::json!({"battery": 95}),
+                SystemTime::now(),
+            )
+            .unwrap();
+        assert!(old.is_some(), "in-place update must report the prior value");
+
+        // Metadata updated in the current record.
+        let current = hot.get_current_location("drones", "d1").unwrap();
+        assert_eq!(current.metadata, serde_json::json!({"battery": 95}));
+
+        // Still present in the spatial index exactly once.
+        let center = Point3d::new(-74.0, 40.7, 100.0);
+        let results = hot.query_within_radius("drones", &center, 10.0, 10);
+        assert_eq!(results.len(), 1, "object must remain queryable, not duplicated");
+        assert_eq!(results[0].0.object_id, "d1");
     }
 
     #[test]
