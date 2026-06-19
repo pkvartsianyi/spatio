@@ -3,6 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
+use crate::compute::validation;
 use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use std::path::Path;
@@ -170,6 +171,8 @@ impl DB {
         }
         validate_identifier("namespace", namespace)?;
         validate_identifier("object_id", object_id)?;
+        // Reject NaN/Inf/out-of-range coordinates before they poison the index.
+        validation::validate_geographic_point_3d(&position)?;
 
         let ts = opts
             .as_ref()
@@ -242,6 +245,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point_3d(center)?;
+        validation::validate_radius(radius)?;
         Ok(self
             .hot
             .query_within_radius(namespace, center, radius, limit))
@@ -260,6 +265,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_bbox(min_x, min_y, max_x, max_y)?;
         Ok(self
             .hot
             .query_within_bbox(namespace, min_x, min_y, max_x, max_y, limit))
@@ -278,6 +284,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point(&center)?;
+        validation::validate_radius(radius)?;
         Ok(self
             .hot
             .query_within_cylinder(namespace, center, min_z, max_z, radius, limit))
@@ -293,6 +301,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point_3d(center)?;
         Ok(self.hot.knn_3d(namespace, center, k))
     }
 
@@ -312,6 +321,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_bbox_3d(min_x, min_y, min_z, max_x, max_y, max_z)?;
         Ok(self
             .hot
             .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit))
@@ -497,6 +507,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_polygon(polygon)?;
         Ok(self.hot.query_polygon(namespace, polygon, limit))
     }
 
@@ -875,6 +886,41 @@ mod tests {
             .unwrap()
             .expect("state must still recover via full log replay");
         assert_eq!(loc.position.x(), 2.0);
+    }
+
+    #[test]
+    fn test_invalid_coordinates_are_rejected() {
+        let db = DB::memory().unwrap();
+        let meta = serde_json::json!({});
+
+        // NaN / Inf / out-of-range coordinates must never reach the index.
+        for bad in [
+            Point3d::new(f64::NAN, 0.0, 0.0),
+            Point3d::new(0.0, f64::INFINITY, 0.0),
+            Point3d::new(200.0, 0.0, 0.0),   // lon > 180
+            Point3d::new(0.0, 95.0, 0.0),    // lat > 90
+            Point3d::new(0.0, 0.0, 1.0e9),   // absurd altitude
+        ] {
+            assert!(
+                db.upsert("ns", "o", bad, meta.clone(), None).is_err(),
+                "invalid coordinate must be rejected on upsert"
+            );
+        }
+        // A valid point still works, and the bad ones left no trace.
+        assert!(db.upsert("ns", "o", Point3d::new(1.0, 2.0, 0.0), meta, None).is_ok());
+        assert_eq!(db.stats().hot_state_objects, 1);
+    }
+
+    #[test]
+    fn test_invalid_query_inputs_are_rejected() {
+        let db = DB::memory().unwrap();
+        let c = Point3d::new(0.0, 0.0, 0.0);
+
+        assert!(db.query_radius("ns", &c, 0.0, 10).is_err(), "radius 0 rejected");
+        assert!(db.query_radius("ns", &c, -5.0, 10).is_err(), "negative radius rejected");
+        assert!(db.query_radius("ns", &Point3d::new(f64::NAN, 0.0, 0.0), 1.0, 10).is_err());
+        assert!(db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(), "min>=max rejected");
+        assert!(db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(), "bad center rejected");
     }
 
     #[test]
