@@ -126,12 +126,9 @@ impl ColdState {
         metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
-        // Truncate timestamp to microseconds to match disk storage precision
-        // This prevents duplicates when merging buffer and disk results
-        let micros = timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        // Truncate timestamp to microseconds to match disk storage precision,
+        // preventing duplicates when merging buffer and disk results.
+        let micros = micros_since_epoch(timestamp);
         let timestamp_truncated = UNIX_EPOCH + std::time::Duration::from_micros(micros as u64);
 
         let update = LocationUpdate {
@@ -166,10 +163,7 @@ impl ColdState {
     /// resolved by append order (a tombstone hides any earlier record; a later
     /// update revives the object) — unlike updates, which resolve by timestamp.
     pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
-        let micros = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        let micros = micros_since_epoch(SystemTime::now());
         let mut log = self.trajectory_log.lock();
         log.append_tombstone(micros, namespace, object_id)
     }
@@ -381,6 +375,53 @@ fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io
     }
 }
 
+/// Microseconds since the Unix epoch (saturating at 0 for pre-epoch times).
+fn micros_since_epoch(t: SystemTime) -> u128 {
+    t.duration_since(UNIX_EPOCH).unwrap_or_default().as_micros()
+}
+
+/// The canonical update-record body: `micros|ns|id|lat|lon|alt|json_len|json`,
+/// coordinates at ~0.1 m precision. The single source of truth for the on-disk
+/// layout, shared by the log and the snapshot writers.
+fn format_update_body(
+    micros: u128,
+    namespace: &str,
+    object_id: &str,
+    position: &Point3d,
+    metadata: &serde_json::Value,
+) -> String {
+    let json = serde_json::to_string(metadata).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
+        micros,
+        namespace,
+        object_id,
+        position.y(), // lat
+        position.x(), // lon
+        position.z(), // alt
+        json.len(),
+        json,
+    )
+}
+
+/// Parse an update-record body into `(timestamp, namespace, object_id, position,
+/// metadata)`. Returns `None` for tombstones and malformed bodies (wrong field
+/// count or unparseable numbers) — the single parser shared by every read path.
+fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, serde_json::Value)> {
+    // splitn keeps the metadata (last field) intact even if it contains '|'.
+    let parts: Vec<&str> = body.splitn(8, '|').collect();
+    if parts.len() != 8 {
+        return None;
+    }
+    let micros: u128 = parts[0].parse().ok()?;
+    let timestamp = UNIX_EPOCH + Duration::from_micros(u64::try_from(micros).unwrap_or(u64::MAX));
+    let lat: f64 = parts[3].parse().ok()?;
+    let lon: f64 = parts[4].parse().ok()?;
+    let alt: f64 = parts[5].parse().ok()?;
+    let metadata = serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+    Some((timestamp, parts[1], parts[2], Point3d::new(lon, lat, alt), metadata))
+}
+
 const SNAPSHOT_HEADER_PREFIX: &str = "#spatio-snap v1 ";
 
 /// Path of the checkpoint snapshot beside a log file (`<log>.snap`).
@@ -412,23 +453,12 @@ fn read_snapshot(path: &Path) -> Option<(std::collections::HashMap<String, Locat
         }
         // A corrupt record invalidates the whole snapshot (caller full-replays).
         let body = record_body(line, LogVersion::V2)?;
-        let parts: Vec<&str> = body.splitn(8, '|').collect();
-        if parts.len() != 8 {
-            return None;
-        }
-        let micros: u128 = parts[0].parse().ok()?;
-        let timestamp =
-            UNIX_EPOCH + Duration::from_micros(u64::try_from(micros).unwrap_or(u64::MAX));
-        let lat: f64 = parts[3].parse().ok()?;
-        let lon: f64 = parts[4].parse().ok()?;
-        let alt: f64 = parts[5].parse().ok()?;
-        let metadata: serde_json::Value =
-            serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+        let (timestamp, ns, id, position, metadata) = parse_update_body(body)?;
         map.insert(
-            format!("{}::{}", parts[1], parts[2]),
+            format!("{}::{}", ns, id),
             LocationUpdate {
                 timestamp,
-                position: Point3d::new(lon, lat, alt),
+                position,
                 metadata,
             },
         );
@@ -454,24 +484,8 @@ fn write_snapshot(
         for (key, update) in state {
             // Keys are validated delimiter-free, so the first "::" splits ns/id.
             let (ns, id) = key.split_once("::").unwrap_or((key.as_str(), ""));
-            let micros = update
-                .timestamp
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros();
-            let json =
-                serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
-            let body = format!(
-                "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
-                micros,
-                ns,
-                id,
-                update.position.y(),
-                update.position.x(),
-                update.position.z(),
-                json.len(),
-                json,
-            );
+            let micros = micros_since_epoch(update.timestamp);
+            let body = format_update_body(micros, ns, id, &update.position, &update.metadata);
             write_record(&mut w, LogVersion::V2, &body)?;
         }
         w.flush()?;
@@ -509,27 +523,16 @@ fn scan_file(
         };
 
         // Strip the version header and verify the per-record CRC (V2); corrupt
-        // / torn lines are skipped.
+        // / torn / tombstone lines are skipped by the parser.
         let Some(body) = record_body(&line, version) else {
             continue;
         };
-
-        // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-        // splitn keeps the metadata (last field) intact even if it contains '|'.
-        let parts: Vec<&str> = body.splitn(8, '|').collect();
-        if parts.len() != 8 {
+        let Some((timestamp, ns, id, position, metadata)) = parse_update_body(body) else {
             continue;
-        }
-        if parts[1] != namespace || parts[2] != object_id {
-            continue;
-        }
-
-        let timestamp_micros: u128 = match parts[0].parse() {
-            Ok(t) => t,
-            Err(_) => continue,
         };
-        let timestamp = UNIX_EPOCH + Duration::from_micros(timestamp_micros as u64);
-
+        if ns != namespace || id != object_id {
+            continue;
+        }
         if exclude.contains(&timestamp) {
             continue;
         }
@@ -537,25 +540,9 @@ fn scan_file(
             continue;
         }
 
-        let lat: f64 = match parts[3].parse() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let lon: f64 = match parts[4].parse() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let alt: f64 = match parts[5].parse() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let metadata: serde_json::Value =
-            serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
-
         out.push(LocationUpdate {
             timestamp,
-            position: Point3d::new(lon, lat, alt),
+            position,
             metadata,
         });
     }
@@ -717,25 +704,12 @@ impl TrajectoryLog {
                 version,
                 ..
             } => {
-                let micros = update
-                    .timestamp
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_micros();
-
-                let json_str =
-                    serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
-
-                let body = format!(
-                    "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
-                    micros,
+                let body = format_update_body(
+                    micros_since_epoch(update.timestamp),
                     namespace,
                     object_id,
-                    update.position.y(), // lat
-                    update.position.x(), // lon
-                    update.position.z(), // alt
-                    json_str.len(),
-                    json_str,
+                    &update.position,
+                    &update.metadata,
                 );
                 write_record(writer, *version, &body)?;
 
@@ -894,12 +868,9 @@ impl TrajectoryLog {
                         continue;
                     };
 
-                    // splitn(8) keeps metadata intact if it contains '|'; tombstone
-                    // and malformed lines simply yield a different field count.
-                    let parts: Vec<&str> = body.splitn(8, '|').collect();
-
                     // Tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
-                    if parts.first() == Some(&"TOMBSTONE") {
+                    if body.starts_with("TOMBSTONE|") {
+                        let parts: Vec<&str> = body.splitn(4, '|').collect();
                         if parts.len() != 4 {
                             log::warn!("Malformed tombstone on line {}", line_num + 1);
                             continue;
@@ -908,62 +879,21 @@ impl TrajectoryLog {
                         continue;
                     }
 
-                    if parts.len() != 8 {
-                        log::warn!(
-                            "Malformed log line {} (expected 8 fields, got {})",
-                            line_num + 1,
-                            parts.len()
-                        );
+                    let Some((timestamp, namespace, object_id, position, metadata)) =
+                        parse_update_body(body)
+                    else {
+                        log::warn!("Malformed log line {}", line_num + 1);
                         continue;
-                    }
-
-                    let timestamp_micros: u128 = match parts[0].parse() {
-                        Ok(t) => t,
-                        Err(e) => {
-                            log::warn!("Invalid timestamp on line {}: {}", line_num + 1, e);
-                            continue;
-                        }
-                    };
-                    let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
-                    let timestamp = UNIX_EPOCH + Duration::from_micros(micros_u64);
-
-                    let namespace = parts[1];
-                    let object_id = parts[2];
-
-                    let lat: f64 = match parts[3].parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            log::warn!("Invalid latitude on line {}", line_num + 1);
-                            continue;
-                        }
-                    };
-                    let lon: f64 = match parts[4].parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            log::warn!("Invalid longitude on line {}", line_num + 1);
-                            continue;
-                        }
-                    };
-                    let alt: f64 = match parts[5].parse() {
-                        Ok(v) => v,
-                        Err(_) => {
-                            log::warn!("Invalid altitude on line {}", line_num + 1);
-                            continue;
-                        }
                     };
 
-                    let metadata: serde_json::Value =
-                        serde_json::from_str(parts[7]).unwrap_or_else(|e| {
-                            log::warn!("Invalid metadata on line {}: {}", line_num + 1, e);
-                            serde_json::Value::Null
-                        });
-
-                    let slot = entries.entry(format!("{}::{}", namespace, object_id)).or_insert(None);
+                    let slot = entries
+                        .entry(format!("{}::{}", namespace, object_id))
+                        .or_insert(None);
                     merge(
                         slot,
                         LocationUpdate {
                             timestamp,
-                            position: Point3d::new(lon, lat, alt),
+                            position,
                             metadata,
                         },
                     );
