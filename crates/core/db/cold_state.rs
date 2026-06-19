@@ -236,6 +236,63 @@ impl ColdState {
     }
 }
 
+/// On-disk log format version.
+///
+/// Legacy `V1` logs have no header and no per-record checksum. `V2` logs begin
+/// with [`LOG_HEADER_V2`] and prefix each record with a CRC32 of the record
+/// body, so torn/merged/corrupt lines are detected and skipped on recovery.
+/// Existing V1 logs are still read; new logs are written as V2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogVersion {
+    V1,
+    V2,
+}
+
+const LOG_HEADER_V2: &str = "#spatio-log v2";
+
+/// CRC32 (IEEE 802.3 / ISO-HDLC, reflected). Implemented inline to avoid adding
+/// a dependency. Check value: `crc32(b"123456789") == 0xCBF43926`.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in bytes {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Extract the parseable record body from a raw log line for `version`,
+/// returning `None` for the header, comments, and CRC-failed records.
+fn record_body(line: &str, version: LogVersion) -> Option<&str> {
+    match version {
+        LogVersion::V1 => Some(line),
+        LogVersion::V2 => {
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (crc_hex, body) = line.split_once('|')?;
+            let expected = u32::from_str_radix(crc_hex, 16).ok()?;
+            if crc32(body.as_bytes()) != expected {
+                log::warn!("Skipping log record with CRC mismatch (corrupt or torn write)");
+                return None;
+            }
+            Some(body)
+        }
+    }
+}
+
+/// Write one record body as a newline-terminated log line, prefixing a CRC32
+/// (hex) under V2.
+fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io::Result<()> {
+    match version {
+        LogVersion::V2 => writeln!(w, "{:08x}|{}", crc32(body.as_bytes()), body),
+        LogVersion::V1 => writeln!(w, "{}", body),
+    }
+}
+
 /// A single record in the in-memory trajectory log (memory-mode DBs).
 #[derive(Clone)]
 enum MemRecord {
@@ -267,6 +324,8 @@ enum LogBackend {
         last_sync: Instant,
         buffer_limit: usize,
         sync: SyncSettings,
+        /// On-disk format of this log (V2 for new files, V1 for legacy logs).
+        version: LogVersion,
     },
     Memory {
         records: Vec<MemRecord>,
@@ -280,17 +339,39 @@ struct TrajectoryLog {
 
 impl TrajectoryLog {
     fn open_file(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
+        let existing_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+        // Detect the format of an existing log; brand-new logs are V2.
+        let version = if existing_len == 0 {
+            LogVersion::V2
+        } else {
+            let mut first_line = String::new();
+            let probe = File::open(path)?;
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(probe), &mut first_line)?;
+            if first_line.trim_end_matches(['\n', '\r']) == LOG_HEADER_V2 {
+                LogVersion::V2
+            } else {
+                LogVersion::V1
+            }
+        };
+
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut writer = BufWriter::new(file);
+        if existing_len == 0 {
+            // Stamp the version header so later opens parse this log as V2.
+            writeln!(writer, "{}", LOG_HEADER_V2)?;
+        }
 
         Ok(Self {
             backend: LogBackend::File {
-                writer: BufWriter::new(file),
+                writer,
                 path: path.to_path_buf(),
                 pending_writes: 0,
                 writes_since_sync: 0,
                 last_sync: Instant::now(),
                 buffer_limit,
                 sync,
+                version,
             },
         })
     }
@@ -359,6 +440,7 @@ impl TrajectoryLog {
                 writer,
                 pending_writes,
                 writes_since_sync,
+                version,
                 ..
             } => {
                 let micros = update
@@ -370,8 +452,7 @@ impl TrajectoryLog {
                 let json_str =
                     serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
 
-                writeln!(
-                    writer,
+                let body = format!(
                     "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
                     micros,
                     namespace,
@@ -381,7 +462,8 @@ impl TrajectoryLog {
                     update.position.z(), // alt
                     json_str.len(),
                     json_str,
-                )?;
+                );
+                write_record(writer, *version, &body)?;
 
                 *pending_writes += 1;
                 *writes_since_sync += 1;
@@ -404,9 +486,11 @@ impl TrajectoryLog {
                 writer,
                 pending_writes,
                 writes_since_sync,
+                version,
                 ..
             } => {
-                writeln!(writer, "TOMBSTONE|{}|{}|{}", micros, namespace, object_id)?;
+                let body = format!("TOMBSTONE|{}|{}|{}", micros, namespace, object_id);
+                write_record(writer, *version, &body)?;
                 *pending_writes += 1;
                 *writes_since_sync += 1;
             }
@@ -441,7 +525,8 @@ impl TrajectoryLog {
         let mut out: Vec<LocationUpdate> = Vec::new();
 
         match &self.backend {
-            LogBackend::File { path, .. } => {
+            LogBackend::File { path, version, .. } => {
+                let version = *version;
                 if !path.exists() {
                     return Ok(out);
                 }
@@ -454,11 +539,17 @@ impl TrajectoryLog {
                         Err(_) => continue,
                     };
 
+                    // Strip the version header and verify the per-record CRC (V2);
+                    // corrupt/torn lines are skipped.
+                    let Some(body) = record_body(&line, version) else {
+                        continue;
+                    };
+
                     // Parse: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
                     // splitn keeps the metadata (last field) intact even if it
                     // contains '|' — namespace/object_id are delimiter-free by
                     // validation, so the first 7 fields are unambiguous.
-                    let parts: Vec<&str> = line.splitn(8, '|').collect();
+                    let parts: Vec<&str> = body.splitn(8, '|').collect();
                     if parts.len() != 8 {
                         continue;
                     }
@@ -547,8 +638,9 @@ impl TrajectoryLog {
         }
 
         match &self.backend {
-            LogBackend::File { path, .. } => {
+            LogBackend::File { path, version, .. } => {
                 use std::io::{BufRead, BufReader};
+                let version = *version;
                 if !path.exists() {
                     return Ok(HashMap::new());
                 }
@@ -568,9 +660,14 @@ impl TrajectoryLog {
                         }
                     };
 
+                    // Strip header + verify CRC (V2); skip corrupt/torn lines.
+                    let Some(body) = record_body(&line, version) else {
+                        continue;
+                    };
+
                     // splitn(8) keeps metadata intact if it contains '|'; tombstone
                     // and malformed lines simply yield a different field count.
-                    let parts: Vec<&str> = line.splitn(8, '|').collect();
+                    let parts: Vec<&str> = body.splitn(8, '|').collect();
 
                     // Tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
                     if parts.first() == Some(&"TOMBSTONE") {
@@ -1171,5 +1268,89 @@ mod tests {
             .unwrap();
         assert_eq!(limited.len(), 3);
         assert_eq!(limited[0].timestamp, t5);
+    }
+
+    #[test]
+    fn test_crc32_check_value() {
+        // Standard CRC-32/ISO-HDLC check value.
+        assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(super::crc32(b""), 0);
+    }
+
+    /// A corrupted record body (simulating bit-rot or a torn write) must fail
+    /// its CRC and be skipped on recovery, without taking out healthy records.
+    #[test]
+    fn test_corrupt_record_is_skipped_on_recovery() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+
+        {
+            let cold = ColdState::new(
+                &log_path,
+                10,
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+            .unwrap();
+            cold.append_update("ns", "good", Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({"v": 1}), UNIX_EPOCH + Duration::from_secs(1)).unwrap();
+            cold.append_update("ns", "bad", Point3d::new(3.0, 4.0, 0.0),
+                serde_json::json!({"v": 2}), UNIX_EPOCH + Duration::from_secs(2)).unwrap();
+            cold.flush().unwrap();
+        }
+
+        // Corrupt the body of the "bad" record while leaving its CRC prefix.
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        let corrupted: String = contents
+            .lines()
+            .map(|line| {
+                if line.contains("|ns|bad|") {
+                    line.replacen("|ns|bad|", "|ns|bad|9", 1)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&log_path, format!("{corrupted}\n")).unwrap();
+
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(recovered.contains_key("ns::good"), "healthy record must survive");
+        assert!(
+            !recovered.contains_key("ns::bad"),
+            "CRC-failed record must be skipped, not silently trusted"
+        );
+    }
+
+    /// Legacy V1 logs (no header, no CRC) must still be recoverable.
+    #[test]
+    fn test_legacy_v1_log_is_readable() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("legacy.log");
+        // Hand-write a V1-format line: ts|ns|id|lat|lon|alt|len|json
+        std::fs::write(
+            &log_path,
+            "1000000|ns|obj|2.000000|1.000000|0.000000|2|{}\n",
+        )
+        .unwrap();
+
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        let loc = recovered.get("ns::obj").expect("legacy V1 record must recover");
+        assert_eq!(loc.position.x(), 1.0);
+        assert_eq!(loc.position.y(), 2.0);
     }
 }
