@@ -162,6 +162,9 @@ impl ColdState {
         Ok(())
     }
 
+    /// Append a deletion marker for an object. On recovery, tombstones are
+    /// resolved by append order (a tombstone hides any earlier record; a later
+    /// update revives the object) — unlike updates, which resolve by timestamp.
     pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
         let micros = SystemTime::now()
             .duration_since(UNIX_EPOCH)

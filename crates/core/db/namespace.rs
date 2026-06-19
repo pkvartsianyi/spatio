@@ -203,18 +203,8 @@ impl Namespace {
         key.as_ref().starts_with(&prefix)
     }
 
-    /// Strip the namespace prefix from a key
-    ///
-    /// # Arguments
-    ///
-    /// * `namespaced_key` - A key that belongs to this namespace
-    ///   The original key without the namespace prefix, or None if the key
-    ///   doesn't belong to this namespace
-    ///
-    /// # Returns
-    ///
-    /// The original key without the namespace prefix, or None if the key
-    /// doesn't belong to this namespace
+    /// Return the key with this namespace's prefix removed, or `None` if the
+    /// key doesn't belong to this namespace.
     pub fn strip_prefix<K: AsRef<[u8]>>(&self, namespaced_key: K) -> Option<Bytes> {
         let key_bytes = namespaced_key.as_ref();
         let prefix = self.prefix();

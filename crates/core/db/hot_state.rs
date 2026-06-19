@@ -23,12 +23,12 @@ pub struct CurrentLocation {
     pub timestamp: SystemTime,
 }
 
-/// Hot state: current locations only
+/// Hot state: current locations only.
 ///
-/// Optimized for:
-/// - Frequent updates (replaces old position)
-/// - Spatial queries on current state
-/// - Lock-free concurrent access
+/// Optimized for frequent position updates and spatial queries on the current
+/// state. Current-location lookups are lock-free (`DashMap`); the spatial index
+/// is guarded by a single `RwLock`, so index writers are mutually exclusive
+/// with each other and with readers.
 pub struct HotState {
     current_locations: DashMap<String, Arc<CurrentLocation>>,
     spatial_index: RwLock<SpatialIndexManager>,
@@ -48,7 +48,13 @@ impl HotState {
         format!("{}::{}", namespace, object_id)
     }
 
-    /// Update an object's current location (replaces old position).
+    /// Update an object's current location, replacing the previous position.
+    ///
+    /// Last-writer-wins by timestamp: an update is ignored if its `timestamp`
+    /// is strictly older than the stored one (equal timestamps overwrite).
+    /// The location map and the spatial index are updated under separate locks,
+    /// so a concurrent reader may briefly observe the new map entry against the
+    /// old index position (or vice versa); both converge once the call returns.
     pub fn update_location(
         &self,
         namespace: &str,

@@ -4,28 +4,25 @@ A lightweight TCP server for remote access to the Spatio spatio-temporal databas
 
 ## Overview
 
-The Spatio Server provides a high-performance, framed TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It supports the full Spatio API via a custom RPC protocol.
+The Spatio Server provides a TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It exposes the full Spatio API as JSON-RPC (via `tarpc`) over TCP.
 
 ## Running the Server
 
 ### Using Cargo
 ```bash
-cargo run --package spatio-server -- --host 127.0.0.1 --port 3000
+cargo run --package spatio-server -- --host 127.0.0.1 --port 3000 --data-dir ./data
 ```
 
 ### Options
 - `--host`: Bind address (default: `127.0.0.1`)
 - `--port`: Port to listen on (default: `3000`)
-- `--path`: Path to the persistent database file (default: `:memory:`)
-- `--buffer-capacity`: Size of the in-memory trajectory buffer (default: `1000`)
+- `--data-dir`: Directory for the persistent database. If omitted, the server runs in-memory.
 
 ## Client Access
 
-### Python
-Use the `SpatioClient` from the `spatio` package:
-```python
-import spatio
-client = spatio.Spatio.server(host="127.0.0.1", port=3000)
+Use the Rust [`spatio-client`](../client) crate:
+```rust
+let client = spatio_client::SpatioClient::connect("127.0.0.1:3000".parse()?).await?;
 ```
 
 ## Security Note

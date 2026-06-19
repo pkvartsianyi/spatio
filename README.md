@@ -83,8 +83,8 @@ Spatio follows a specialized architecture for tracking millions of moving object
 - **Spatial Queries:** Radius search, 2D/3D Bounding box, K-Nearest Neighbors (KNN), Cylindrical queries.
 - **Object-Centric API:** Query around moving objects directly without manual coordinate lookups.
 - **Trajectories:** Optimized storage and querying of historical movement paths over time.
-- **Durable Persistence:** Sequential Trajectory Log ensures zero data loss for historical data.
-- **Lightweight:** No external dependencies, no SQL overhead, and zero-setup embedded engine.
+- **Durable Persistence:** CRC-checked append-only trajectory log with configurable sync policy and checkpoint recovery.
+- **Lightweight:** No external services, no SQL overhead, and a zero-setup embedded engine.
 - **Cross-language:** Native high-performance Python bindings via PyO3.
 - **Server Mode:** Includes an optional lightweight TCP server for remote access.
 
@@ -96,10 +96,10 @@ Spatio exposes a `Config` builder for tuning performance and persistence.
 use spatio::config::{Config, PersistenceConfig};
 
 let config = Config::default()
+    // Per-object in-memory history kept for fast recent-trajectory reads
     .with_buffer_capacity(100)
-    // Configure write buffer for high throughput
     .with_persistence(PersistenceConfig {
-        // Buffer 512 updates in memory before flushing to disk
+        // Records buffered before the log is flushed to the OS
         buffer_size: 512,
     });
 
