@@ -71,8 +71,11 @@ typecheck:
     uv run mypy src/
 
 # Run security checks
+# Use `uvx` so bandit is fetched as an ephemeral tool: it lives in the `dev`
+# optional extra, which `uv run` does not sync by default, so `uv run bandit`
+# fails to spawn in a clean environment.
 security:
-    uv run bandit -r src/
+    uvx bandit -r src/
 
 # Format Rust code
 fmt-rust:
