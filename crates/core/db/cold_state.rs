@@ -1541,7 +1541,10 @@ mod tests {
             let traj = cold
                 .query_trajectory("ns", "o", base, window_end, 100_000)
                 .unwrap();
-            assert!(traj.len() >= last, "visible record count must not go backwards");
+            assert!(
+                traj.len() >= last,
+                "visible record count must not go backwards"
+            );
             last = traj.len();
         }
         writer.join().unwrap();
