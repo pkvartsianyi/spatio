@@ -761,9 +761,17 @@ mod tests {
         let current = db.get("ns", "obj").unwrap().unwrap();
         assert_eq!(current.position.x(), 4.0);
 
-        // Full trajectory is queryable from the in-memory log.
+        // Full trajectory is queryable from the in-memory log. Use a window that
+        // safely brackets all records: stored timestamps are truncated to micros,
+        // so a raw-now() lower bound could exclude the boundary record.
         let traj = db
-            .query_trajectory("ns", "obj", t0, t0 + Duration::from_secs(1), 10)
+            .query_trajectory(
+                "ns",
+                "obj",
+                t0 - Duration::from_secs(1),
+                t0 + Duration::from_secs(1),
+                10,
+            )
             .unwrap();
         assert_eq!(traj.len(), 5, "all in-memory history must be queryable");
     }
@@ -871,9 +879,17 @@ mod tests {
             // Current state recovered correctly.
             assert_eq!(db.get("ns", "a").unwrap().unwrap().position.x(), 2.0);
             assert!(db.get("ns", "b").unwrap().is_some());
-            // Trajectory history is NOT discarded by the checkpoint.
+            // Trajectory history is NOT discarded by the checkpoint. Bracket the
+            // window generously: stored timestamps are micro-truncated, so a raw
+            // lower bound could exclude the first record.
             let traj = db
-                .query_trajectory("ns", "a", t1, t2 + Duration::from_secs(1), 10)
+                .query_trajectory(
+                    "ns",
+                    "a",
+                    t1 - Duration::from_secs(1),
+                    t2 + Duration::from_secs(1),
+                    10,
+                )
                 .unwrap();
             assert_eq!(
                 traj.len(),
