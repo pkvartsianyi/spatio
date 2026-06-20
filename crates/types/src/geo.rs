@@ -22,10 +22,15 @@ pub enum GeoJsonError {
 /// Distance metric for spatial calculations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DistanceMetric {
+    /// Great-circle distance on a sphere, in **meters**. Fast; good default.
     #[default]
     Haversine,
+    /// Geodesic distance on the WGS-84 ellipsoid, in **meters**. Most accurate.
     Geodesic,
+    /// Rhumb-line (constant-bearing) distance, in **meters**.
     Rhumb,
+    /// Planar Euclidean distance in **coordinate degrees**, not meters — only
+    /// meaningful for projected/local coordinates, not lon/lat.
     Euclidean,
 }
 

@@ -4,9 +4,8 @@
 //!
 //! This crate provides fundamental types for working with spatio-temporal data:
 //!
-//! - **Point types**: `TemporalPoint`, `TemporalPoint3D`, `Point3d`
-//! - **Polygon types**: `Polygon3D`, `PolygonDynamic`, `PolygonDynamic3D`
-//! - **Trajectory types**: `Trajectory`, `Trajectory3D`
+//! - **Point types**: `Point`, `Point3d`, `TemporalPoint`, `TemporalPoint3D`
+//! - **Polygon types**: `Polygon`, `Polygon3D`, `PolygonDynamic`, `PolygonDynamic3D`
 //! - **Bounding box types**: `BoundingBox2D`, `BoundingBox3D`, `TemporalBoundingBox2D`, `TemporalBoundingBox3D`
 //!
 //! All types are serializable with Serde and built on top of the `geo` crate's

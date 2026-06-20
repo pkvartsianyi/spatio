@@ -12,7 +12,8 @@ use std::collections::BinaryHeap;
 /// Distance metric for spatial calculations.
 pub use spatio_types::geo::DistanceMetric;
 
-/// Distance between two points in meters.
+/// Distance between two points. Haversine/Geodesic/Rhumb return meters;
+/// `Euclidean` returns planar coordinate degrees (see [`DistanceMetric`]).
 pub fn distance_between(point1: &Point, point2: &Point, metric: DistanceMetric) -> f64 {
     match metric {
         DistanceMetric::Haversine => point1.haversine_distance(point2),
@@ -263,46 +264,20 @@ pub fn bboxes_intersect(bbox1: &Rect, bbox2: &Rect) -> bool {
     bbox1.intersects(bbox2)
 }
 
-/// Expand a bounding box by a distance in all directions.
+/// Expand a bounding box by `distance_meters` on all sides.
 ///
-/// Creates a new bounding box that is `distance_meters` larger on all sides.
-/// Uses geodesic approximations for expansion calculations.
+/// Uses a geodesic approximation: linear in latitude (1° ≈ 111 km),
+/// cosine-corrected in longitude using the box's max absolute latitude
+/// (clamped to 89.9° near the poles).
 ///
-/// # Algorithm
-///
-/// - Latitude: Simple linear expansion (1° ≈ 111 km everywhere)
-/// - Longitude: Cosine-corrected expansion based on latitude
-///   - Uses the maximum absolute latitude for conservative (larger) expansion
-///   - Clamped at 89.9° to avoid extreme values near poles
-///
-/// # Limitations
-///
-/// - **Not recommended for polar regions** (latitude > ±80°)
-/// - Longitude expansion near poles can produce very large values
-/// - Does NOT handle date line (180°/-180°) wrapping
-/// - May produce coordinates outside ±180° longitude range
-///
-/// # Safety
-///
-/// - Latitude is automatically clamped to [-90, 90]
-/// - Longitude calculation uses max_abs_lat.min(89.9) to prevent division issues
-/// - Result longitude MAY exceed ±180° for large expansions or polar regions
-///
-/// # Examples
+/// Not suitable above ±80° latitude, does not wrap the date line, and the
+/// result longitude may exceed ±180° for large expansions.
 ///
 /// ```
 /// use spatio::compute::spatial::{bounding_box, expand_bbox};
-///
-/// // Create a bbox around NYC
 /// let bbox = bounding_box(-74.1, 40.6, -73.9, 40.8).unwrap();
-///
-/// // Expand by 10 km in all directions
-/// let expanded = expand_bbox(&bbox, 10_000.0);
+/// let expanded = expand_bbox(&bbox, 10_000.0); // +10 km each side
 /// ```
-///
-/// # Panics
-///
-/// Does not panic. Invalid coordinates are clamped or may wrap.
 pub fn expand_bbox(bbox: &Rect, distance_meters: f64) -> Rect {
     // 1 degree of latitude is approximately 111km everywhere
     let lat_offset = distance_meters / 111_000.0;

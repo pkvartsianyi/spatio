@@ -16,6 +16,20 @@ fn encode_metadata(metadata: &serde_json::Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(metadata).map_err(|e| format!("Failed to serialize metadata: {e}"))
 }
 
+/// Convert a core current-location into its wire representation.
+fn to_wire(loc: &spatio::db::CurrentLocation) -> Result<CurrentLocation, String> {
+    Ok(CurrentLocation {
+        object_id: loc.object_id.clone(),
+        position: loc.position.clone(),
+        metadata: encode_metadata(&loc.metadata)?,
+    })
+}
+
+/// Map a DB error into the wire error string.
+fn internal_err(e: impl std::fmt::Display) -> String {
+    format!("Internal error: {e}")
+}
+
 impl Reader {
     pub fn new(db: Arc<Spatio>) -> Self {
         Self { db }
@@ -23,11 +37,7 @@ impl Reader {
 
     pub fn get(&self, namespace: &str, id: &str) -> Result<Option<CurrentLocation>, String> {
         match self.db.get(namespace, id).map_err(|e| e.to_string())? {
-            Some(loc) => Ok(Some(CurrentLocation {
-                object_id: loc.object_id.clone(),
-                position: loc.position.clone(),
-                metadata: encode_metadata(&loc.metadata)?,
-            })),
+            Some(loc) => Ok(Some(to_wire(&loc)?)),
             None => Ok(None),
         }
     }
@@ -42,19 +52,10 @@ impl Reader {
         let results = self
             .db
             .query_radius(namespace, center, radius, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
+            .map_err(internal_err)?;
         results
             .into_iter()
-            .map(|(loc, dist)| {
-                Ok((
-                    CurrentLocation {
-                        object_id: loc.object_id.clone(),
-                        position: loc.position.clone(),
-                        metadata: encode_metadata(&loc.metadata)?,
-                    },
-                    dist,
-                ))
-            })
+            .map(|(loc, dist)| Ok((to_wire(&loc)?, dist)))
             .collect()
     }
 
@@ -64,22 +65,10 @@ impl Reader {
         center: &Point3d,
         k: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let results = self
-            .db
-            .knn(namespace, center, k)
-            .map_err(|e| format!("Internal error: {e}"))?;
+        let results = self.db.knn(namespace, center, k).map_err(internal_err)?;
         results
             .into_iter()
-            .map(|(loc, dist)| {
-                Ok((
-                    CurrentLocation {
-                        object_id: loc.object_id.clone(),
-                        position: loc.position.clone(),
-                        metadata: encode_metadata(&loc.metadata)?,
-                    },
-                    dist,
-                ))
-            })
+            .map(|(loc, dist)| Ok((to_wire(&loc)?, dist)))
             .collect()
     }
 
@@ -103,17 +92,8 @@ impl Reader {
         let results = self
             .db
             .query_bbox(namespace, min_x, min_y, max_x, max_y, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
-        results
-            .into_iter()
-            .map(|loc| {
-                Ok(CurrentLocation {
-                    object_id: loc.object_id.clone(),
-                    position: loc.position.clone(),
-                    metadata: encode_metadata(&loc.metadata)?,
-                })
-            })
-            .collect()
+            .map_err(internal_err)?;
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn query_cylinder(
@@ -128,19 +108,10 @@ impl Reader {
         let results = self
             .db
             .query_within_cylinder(namespace, center, min_z, max_z, radius, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
+            .map_err(internal_err)?;
         results
             .into_iter()
-            .map(|(loc, dist)| {
-                Ok((
-                    CurrentLocation {
-                        object_id: loc.object_id.clone(),
-                        position: loc.position.clone(),
-                        metadata: encode_metadata(&loc.metadata)?,
-                    },
-                    dist,
-                ))
-            })
+            .map(|(loc, dist)| Ok((to_wire(&loc)?, dist)))
             .collect()
     }
 
@@ -197,17 +168,8 @@ impl Reader {
         let results = self
             .db
             .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
-        results
-            .into_iter()
-            .map(|loc| {
-                Ok(CurrentLocation {
-                    object_id: loc.object_id.clone(),
-                    position: loc.position.clone(),
-                    metadata: encode_metadata(&loc.metadata)?,
-                })
-            })
-            .collect()
+            .map_err(internal_err)?;
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn query_near(
@@ -220,19 +182,10 @@ impl Reader {
         let results = self
             .db
             .query_near(namespace, id, radius, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
+            .map_err(internal_err)?;
         results
             .into_iter()
-            .map(|(loc, dist)| {
-                Ok((
-                    CurrentLocation {
-                        object_id: loc.object_id.clone(),
-                        position: loc.position.clone(),
-                        metadata: encode_metadata(&loc.metadata)?,
-                    },
-                    dist,
-                ))
-            })
+            .map(|(loc, dist)| Ok((to_wire(&loc)?, dist)))
             .collect()
     }
 
@@ -245,17 +198,8 @@ impl Reader {
         let results = self
             .db
             .query_polygon(namespace, polygon, limit)
-            .map_err(|e| format!("Internal error: {e}"))?;
-        results
-            .into_iter()
-            .map(|loc| {
-                Ok(CurrentLocation {
-                    object_id: loc.object_id.clone(),
-                    position: loc.position.clone(),
-                    metadata: encode_metadata(&loc.metadata)?,
-                })
-            })
-            .collect()
+            .map_err(internal_err)?;
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn distance(

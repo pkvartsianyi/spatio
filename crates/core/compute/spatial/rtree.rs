@@ -168,10 +168,16 @@ impl SpatialIndexManager {
     pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String) {
         let point = IndexedPoint3D::new(x, y, z, key);
 
-        self.indexes
-            .entry(prefix.to_string())
-            .or_default()
-            .insert(point);
+        // Avoid allocating an owned prefix on the hot path: only the first
+        // insert into a namespace needs to create the map entry.
+        if let Some(tree) = self.indexes.get_mut(prefix) {
+            tree.insert(point);
+        } else {
+            self.indexes
+                .entry(prefix.to_string())
+                .or_default()
+                .insert(point);
+        }
     }
 
     pub fn insert_bbox(&mut self, prefix: &str, bbox: &BoundingBox2D, key: String, data: Bytes) {
@@ -184,10 +190,15 @@ impl SpatialIndexManager {
             data,
         };
 
-        self.bbox_indexes
-            .entry(prefix.to_string())
-            .or_default()
-            .insert(indexed_bbox);
+        // Avoid allocating an owned prefix when the namespace already exists.
+        if let Some(tree) = self.bbox_indexes.get_mut(prefix) {
+            tree.insert(indexed_bbox);
+        } else {
+            self.bbox_indexes
+                .entry(prefix.to_string())
+                .or_default()
+                .insert(indexed_bbox);
+        }
     }
 
     /// Query points within a 3D spherical volume using hybrid distance metric.

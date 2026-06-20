@@ -19,7 +19,7 @@ import spatio
 db = spatio.Spatio.memory()
 
 # Track a moving object
-pos = spatio.Point(-74.006, 40.712, altitude=10.0)
+pos = spatio.Point(-74.006, 40.712, z=10.0)
 db.upsert("drones", "drone_1", pos, {"status": "active"})
 
 # Find objects within 500 meters
@@ -70,7 +70,7 @@ db.query_trajectory(namespace, object_id, start_ts, end_ts, limit=100)
 ## Data Types
 
 ### Point
-`spatio.Point(lon, lat, altitude=0.0)`
+`spatio.Point(lon, lat, z=None)`
 - `point.lon`, `point.lat`, `point.alt`
 - `point.distance_to(other_point)` -> distance in meters (Haversine)
 

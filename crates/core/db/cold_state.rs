@@ -56,6 +56,9 @@ pub struct ColdState {
 
     /// Buffer size per object (e.g., last 100 updates)
     buffer_capacity: usize,
+
+    /// Path of the file-backed log, if any (used for checkpoint/recovery).
+    log_path: Option<std::path::PathBuf>,
 }
 
 impl ColdState {
@@ -72,10 +75,30 @@ impl ColdState {
         }
 
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open(log_path, config.buffer_size, sync)?),
+            trajectory_log: Mutex::new(TrajectoryLog::open_file(
+                log_path,
+                config.buffer_size,
+                sync,
+            )?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
+            log_path: Some(log_path.to_path_buf()),
         })
+    }
+
+    /// Create a purely in-memory cold state.
+    ///
+    /// Used by `:memory:` databases: no file is created and no temp directory
+    /// is touched. Trajectory history lives in an in-memory append log, so
+    /// `query_trajectory` returns the same results a file-backed DB would,
+    /// without paying for text serialization, `BufWriter` flushes, or `fsync`.
+    pub fn new_memory(buffer_capacity: usize) -> Self {
+        Self {
+            trajectory_log: Mutex::new(TrajectoryLog::open_memory()),
+            recent_buffer: DashMap::new(),
+            buffer_capacity,
+            log_path: None,
+        }
     }
 
     /// Create a composite key from namespace and object ID
@@ -107,12 +130,9 @@ impl ColdState {
         metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
-        // Truncate timestamp to microseconds to match disk storage precision
-        // This prevents duplicates when merging buffer and disk results
-        let micros = timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        // Truncate timestamp to microseconds to match disk storage precision,
+        // preventing duplicates when merging buffer and disk results.
+        let micros = micros_since_epoch(timestamp);
         let timestamp_truncated = UNIX_EPOCH + std::time::Duration::from_micros(micros as u64);
 
         let update = LocationUpdate {
@@ -133,19 +153,21 @@ impl ColdState {
 
         buffer.push_back(update);
 
-        // Keep only last N updates
-        while buffer.len() > self.buffer_capacity {
+        // Keep only the last N updates. Each call appends exactly one record to
+        // a buffer that already held <= capacity, so at most one eviction is
+        // ever needed — no loop required.
+        if buffer.len() > self.buffer_capacity {
             buffer.pop_front();
         }
 
         Ok(())
     }
 
+    /// Append a deletion marker for an object. On recovery, tombstones are
+    /// resolved by append order (a tombstone hides any earlier record; a later
+    /// update revives the object) — unlike updates, which resolve by timestamp.
     pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
-        let micros = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        let micros = micros_since_epoch(SystemTime::now());
         let mut log = self.trajectory_log.lock();
         log.append_tombstone(micros, namespace, object_id)
     }
@@ -190,83 +212,39 @@ impl ColdState {
             }
         }
 
-        // Fallback to disk (slow path) - scan entire log file
-        let log = self.trajectory_log.lock();
-        let path = log.path();
-
-        if !path.exists() {
-            return Ok(from_buffer);
-        }
-
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-
-        // Use a set to track timestamps already retrieved from buffer
+        // Fallback to the append log (slow path): scan the durable file log
+        // or the in-memory log, depending on backend.
         let buffer_timestamps: std::collections::HashSet<SystemTime> =
             from_buffer.iter().map(|u| u.timestamp).collect();
 
-        let mut from_disk: Vec<LocationUpdate> = Vec::new();
-
-        for line_result in std::io::BufRead::lines(reader) {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|metadata_len|hex_metadata
-            let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() != 8 {
-                continue;
+        let from_disk = {
+            let mut log = self.trajectory_log.lock();
+            match log.flush_and_file_target()? {
+                // File backend: flush done; scan the stable on-disk prefix with
+                // the lock released so a long scan doesn't stall the writer.
+                Some(target) => {
+                    drop(log);
+                    scan_file(
+                        &target,
+                        namespace,
+                        object_id,
+                        start_time,
+                        end_time,
+                        &buffer_timestamps,
+                    )?
+                }
+                // Memory backend: scan in place (fast, no I/O).
+                None => log.scan_memory(
+                    namespace,
+                    object_id,
+                    start_time,
+                    end_time,
+                    &buffer_timestamps,
+                ),
             }
+        };
 
-            // Check namespace and object_id match
-            if parts[1] != namespace || parts[2] != object_id {
-                continue;
-            }
-
-            // Parse timestamp
-            let timestamp_micros: u128 = match parts[0].parse() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(timestamp_micros as u64);
-
-            // Skip if already in buffer
-            if buffer_timestamps.contains(&timestamp) {
-                continue;
-            }
-
-            // Check if in time range
-            if timestamp < start_time || timestamp > end_time {
-                continue;
-            }
-
-            // Parse position
-            let lat: f64 = match parts[3].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let lon: f64 = match parts[4].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let alt: f64 = match parts[5].parse() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            // Parse JSON metadata
-            let metadata: serde_json::Value =
-                serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
-
-            from_disk.push(LocationUpdate {
-                timestamp,
-                position: Point3d::new(lon, lat, alt),
-                metadata,
-            });
-        }
-
-        // Merge buffer and disk results, sort by timestamp (newest first), limit
+        // Merge buffer and log results, sort by timestamp (newest first), limit
         from_buffer.extend(from_disk);
         from_buffer.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
         from_buffer.truncate(limit);
@@ -274,174 +252,425 @@ impl ColdState {
         Ok(from_buffer)
     }
 
-    /// Recover current locations by scanning the trajectory log
+    /// Recover current locations on startup.
     ///
-    /// Returns a map of "namespace::object_id" → LocationUpdate with the latest
-    /// timestamp for each object. Used during DB startup to rebuild HotState.
+    /// Returns a map of "namespace::object_id" → latest surviving LocationUpdate.
+    /// For file-backed logs this loads the checkpoint snapshot (if present and
+    /// valid) and then replays only the log tail written after it, so recovery
+    /// cost is O(live objects + tail) instead of O(entire history). A missing or
+    /// corrupt snapshot safely falls back to a full replay.
     pub fn recover_current_locations(
         &self,
     ) -> Result<std::collections::HashMap<String, LocationUpdate>> {
         use std::collections::HashMap;
-        use std::io::{BufRead, BufReader};
+        let mut entries: HashMap<String, Option<LocationUpdate>> = HashMap::new();
+        let mut from_offset = 0u64;
 
-        let log = self.trajectory_log.lock();
-        let path = log.path();
-
-        // If file doesn't exist or is empty, return empty map
-        if !path.exists() {
-            return Ok(HashMap::new());
-        }
-
-        let file = std::fs::File::open(path)?;
-        let reader = BufReader::new(file);
-
-        struct RecoveryEntry {
-            best: Option<LocationUpdate>,
-        }
-
-        let mut entries: HashMap<String, RecoveryEntry> = HashMap::new();
-
-        for (line_num, line_result) in reader.lines().enumerate() {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(e) => {
-                    log::warn!(
-                        "Failed to read line {} in trajectory log: {}",
-                        line_num + 1,
-                        e
-                    );
-                    continue;
+        if let Some(log_path) = &self.log_path {
+            let log_len = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
+            // Only trust the snapshot if it covers a prefix the log still has;
+            // a shorter log means the snapshot is stale, so full-replay instead.
+            if let Some((snapshot, covered_len)) = read_snapshot(&snapshot_path_for(log_path))
+                && covered_len <= log_len
+            {
+                for (key, update) in snapshot {
+                    entries.insert(key, Some(update));
                 }
-            };
-
-            let parts: Vec<&str> = line.split('|').collect();
-
-            // Handle tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
-            if parts.first() == Some(&"TOMBSTONE") {
-                if parts.len() != 4 {
-                    log::warn!("Malformed tombstone on line {}", line_num + 1);
-                    continue;
-                }
-                let key = format!("{}::{}", parts[2], parts[3]);
-                entries
-                    .entry(key)
-                    .or_insert(RecoveryEntry { best: None })
-                    .best = None;
-                continue;
-            }
-
-            // Parse format: timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-            if parts.len() != 8 {
-                log::warn!(
-                    "Malformed log line {} (expected 8 fields, got {})",
-                    line_num + 1,
-                    parts.len()
-                );
-                continue;
-            }
-
-            // Parse timestamp
-            let timestamp_micros: u128 = match parts[0].parse() {
-                Ok(t) => t,
-                Err(e) => {
-                    log::warn!("Invalid timestamp on line {}: {}", line_num + 1, e);
-                    continue;
-                }
-            };
-            let micros_u64 = u64::try_from(timestamp_micros).unwrap_or(u64::MAX);
-            let timestamp = UNIX_EPOCH + std::time::Duration::from_micros(micros_u64);
-
-            let namespace = parts[1];
-            let object_id = parts[2];
-
-            // Parse position
-            let lat: f64 = match parts[3].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid latitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-            let lon: f64 = match parts[4].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid longitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-            let alt: f64 = match parts[5].parse() {
-                Ok(v) => v,
-                Err(_) => {
-                    log::warn!("Invalid altitude on line {}", line_num + 1);
-                    continue;
-                }
-            };
-
-            // Parse JSON metadata
-            let metadata: serde_json::Value = serde_json::from_str(parts[7]).unwrap_or_else(|e| {
-                log::warn!("Invalid metadata on line {}: {}", line_num + 1, e);
-                serde_json::Value::Null
-            });
-
-            let full_key = format!("{}::{}", namespace, object_id);
-            let update = LocationUpdate {
-                timestamp,
-                position: Point3d::new(lon, lat, alt),
-                metadata,
-            };
-
-            let entry = entries
-                .entry(full_key)
-                .or_insert(RecoveryEntry { best: None });
-            match &entry.best {
-                None => entry.best = Some(update),
-                Some(existing) if update.timestamp > existing.timestamp => {
-                    entry.best = Some(update);
-                }
-                _ => {}
+                from_offset = covered_len;
             }
         }
 
-        let latest_positions = entries
+        {
+            let log = self.trajectory_log.lock();
+            log.replay(from_offset, &mut entries)?;
+        }
+
+        Ok(entries
             .into_iter()
-            .filter_map(|(key, e)| e.best.map(|u| (key, u)))
-            .collect();
+            .filter_map(|(key, slot)| slot.map(|u| (key, u)))
+            .collect())
+    }
 
-        Ok(latest_positions)
+    /// Persist a checkpoint snapshot of `state` (the recovered current
+    /// locations) covering the current on-disk log length, so the next startup
+    /// replays only records appended afterwards. The full history log is left
+    /// intact (trajectory queries still see everything). No-op for memory logs.
+    pub fn write_checkpoint(
+        &self,
+        state: &std::collections::HashMap<String, LocationUpdate>,
+    ) -> Result<()> {
+        let Some(log_path) = &self.log_path else {
+            return Ok(());
+        };
+        // The snapshot covers exactly the bytes recovery read. write_checkpoint
+        // runs at open with no concurrent writers, so the current on-disk length
+        // is that boundary — no flush needed (which keeps buffered writes
+        // buffered). Any not-yet-flushed bytes are simply replayed next time.
+        let covered_len = std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0);
+        write_snapshot(&snapshot_path_for(log_path), state, covered_len)
     }
 }
 
-/// Trajectory log format management
-struct TrajectoryLog {
-    writer: BufWriter<File>,
+/// On-disk log format version.
+///
+/// Legacy `V1` logs have no header and no per-record checksum. `V2` logs begin
+/// with [`LOG_HEADER_V2`] and prefix each record with a CRC32 of the record
+/// body, so torn/merged/corrupt lines are detected and skipped on recovery.
+/// Existing V1 logs are still read; new logs are written as V2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogVersion {
+    V1,
+    V2,
+}
+
+const LOG_HEADER_V2: &str = "#spatio-log v2";
+
+/// CRC32 (IEEE 802.3 / ISO-HDLC, reflected). Implemented inline to avoid adding
+/// a dependency. Check value: `crc32(b"123456789") == 0xCBF43926`.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in bytes {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+/// Extract the parseable record body from a raw log line for `version`,
+/// returning `None` for the header, comments, and CRC-failed records.
+fn record_body(line: &str, version: LogVersion) -> Option<&str> {
+    match version {
+        LogVersion::V1 => Some(line),
+        LogVersion::V2 => {
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (crc_hex, body) = line.split_once('|')?;
+            let expected = u32::from_str_radix(crc_hex, 16).ok()?;
+            if crc32(body.as_bytes()) != expected {
+                log::warn!("Skipping log record with CRC mismatch (corrupt or torn write)");
+                return None;
+            }
+            Some(body)
+        }
+    }
+}
+
+/// Best-effort `fsync` of a file's parent directory so a newly created file's
+/// directory entry is durable across power loss. No-op where a directory handle
+/// can't be opened/synced (e.g. Windows).
+fn sync_parent_dir(path: &Path) {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    if let Ok(dir) = File::open(&parent) {
+        let _ = dir.sync_all();
+    }
+}
+
+/// Write one record body as a newline-terminated log line, prefixing a CRC32
+/// (hex) under V2.
+fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io::Result<()> {
+    match version {
+        LogVersion::V2 => writeln!(w, "{:08x}|{}", crc32(body.as_bytes()), body),
+        LogVersion::V1 => writeln!(w, "{}", body),
+    }
+}
+
+/// Microseconds since the Unix epoch (saturating at 0 for pre-epoch times).
+fn micros_since_epoch(t: SystemTime) -> u128 {
+    t.duration_since(UNIX_EPOCH).unwrap_or_default().as_micros()
+}
+
+/// The canonical update-record body: `micros|ns|id|lat|lon|alt|json_len|json`,
+/// coordinates at ~0.1 m precision. The single source of truth for the on-disk
+/// layout, shared by the log and the snapshot writers.
+fn format_update_body(
+    micros: u128,
+    namespace: &str,
+    object_id: &str,
+    position: &Point3d,
+    metadata: &serde_json::Value,
+) -> String {
+    let json = serde_json::to_string(metadata).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
+        micros,
+        namespace,
+        object_id,
+        position.y(), // lat
+        position.x(), // lon
+        position.z(), // alt
+        json.len(),
+        json,
+    )
+}
+
+/// Parse an update-record body into `(timestamp, namespace, object_id, position,
+/// metadata)`. Returns `None` for tombstones and malformed bodies (wrong field
+/// count or unparseable numbers) — the single parser shared by every read path.
+fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, serde_json::Value)> {
+    // splitn keeps the metadata (last field) intact even if it contains '|'.
+    let parts: Vec<&str> = body.splitn(8, '|').collect();
+    if parts.len() != 8 {
+        return None;
+    }
+    let micros: u128 = parts[0].parse().ok()?;
+    let timestamp = UNIX_EPOCH + Duration::from_micros(u64::try_from(micros).unwrap_or(u64::MAX));
+    let lat: f64 = parts[3].parse().ok()?;
+    let lon: f64 = parts[4].parse().ok()?;
+    let alt: f64 = parts[5].parse().ok()?;
+    let metadata = serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
+    Some((
+        timestamp,
+        parts[1],
+        parts[2],
+        Point3d::new(lon, lat, alt),
+        metadata,
+    ))
+}
+
+const SNAPSHOT_HEADER_PREFIX: &str = "#spatio-snap v1 ";
+
+/// Path of the checkpoint snapshot beside a log file (`<log>.snap`).
+fn snapshot_path_for(log_path: &Path) -> std::path::PathBuf {
+    let mut s = log_path.as_os_str().to_os_string();
+    s.push(".snap");
+    std::path::PathBuf::from(s)
+}
+
+/// Read a checkpoint snapshot: the current-locations map plus the log byte
+/// length it covers. Returns `None` (→ safe full replay) if the snapshot is
+/// absent, has a malformed header, or contains *any* corrupt record — never a
+/// partial or wrong state.
+fn read_snapshot(path: &Path) -> Option<(std::collections::HashMap<String, LocationUpdate>, u64)> {
+    use std::collections::HashMap;
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+    let covered_len: u64 = lines
+        .next()?
+        .strip_prefix(SNAPSHOT_HEADER_PREFIX)?
+        .trim()
+        .parse()
+        .ok()?;
+
+    let mut map: HashMap<String, LocationUpdate> = HashMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        // A corrupt record invalidates the whole snapshot (caller full-replays).
+        let body = record_body(line, LogVersion::V2)?;
+        let (timestamp, ns, id, position, metadata) = parse_update_body(body)?;
+        map.insert(
+            format!("{}::{}", ns, id),
+            LocationUpdate {
+                timestamp,
+                position,
+                metadata,
+            },
+        );
+    }
+    Some((map, covered_len))
+}
+
+/// Atomically write a checkpoint snapshot: temp file → fsync → rename → fsync
+/// parent dir, so a crash never leaves a half-written or stale-but-trusted snapshot.
+fn write_snapshot(
+    path: &Path,
+    state: &std::collections::HashMap<String, LocationUpdate>,
+    covered_len: u64,
+) -> Result<()> {
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+
+    {
+        let file = File::create(&tmp)?;
+        let mut w = BufWriter::new(file);
+        writeln!(w, "{}{}", SNAPSHOT_HEADER_PREFIX, covered_len)?;
+        for (key, update) in state {
+            // Keys are validated delimiter-free, so the first "::" splits ns/id.
+            let (ns, id) = key.split_once("::").unwrap_or((key.as_str(), ""));
+            let micros = micros_since_epoch(update.timestamp);
+            let body = format_update_body(micros, ns, id, &update.position, &update.metadata);
+            write_record(&mut w, LogVersion::V2, &body)?;
+        }
+        w.flush()?;
+        w.get_ref().sync_all()?;
+    }
+
+    std::fs::rename(&tmp, path)?;
+    sync_parent_dir(path);
+    Ok(())
+}
+
+/// A point-in-time view of the file-backed log, captured under the log lock:
+/// the path, on-disk format, and the byte length to scan. Bounding reads to
+/// `len` keeps a concurrent writer's appended tail (possibly a half-written
+/// final line) out of the scan.
+struct FileScanTarget {
     path: std::path::PathBuf,
-    /// Records buffered in `writer` that have not yet been pushed to the OS.
-    pending_writes: usize,
-    /// Records written since the last `fsync`.
-    writes_since_sync: usize,
-    /// Wall-clock instant of the last `fsync`, used by [`SyncPolicy::EverySecond`].
-    last_sync: Instant,
-    buffer_limit: usize,
-    sync: SyncSettings,
+    version: LogVersion,
+    len: u64,
+}
+
+/// Scan a file-backed log for an object's updates within `[start, end]`,
+/// skipping `exclude`d timestamps. A free function so it can run *without* the
+/// log lock held (the [`FileScanTarget`] is captured under the lock first).
+/// Reading stops at `target.len` — the stable prefix that existed at capture
+/// time — so concurrent appends past it never present a torn line.
+fn scan_file(
+    target: &FileScanTarget,
+    namespace: &str,
+    object_id: &str,
+    start_time: SystemTime,
+    end_time: SystemTime,
+    exclude: &std::collections::HashSet<SystemTime>,
+) -> Result<Vec<LocationUpdate>> {
+    let FileScanTarget { path, version, len } = target;
+    let (version, len) = (*version, *len);
+    let mut out: Vec<LocationUpdate> = Vec::new();
+    if !path.exists() || len == 0 {
+        return Ok(out);
+    }
+    let file = File::open(path)?;
+    // Bound the read to the prefix captured under the lock; anything appended
+    // afterwards (a possibly half-written final line) is intentionally ignored.
+    let reader = std::io::BufReader::new(std::io::Read::take(file, len));
+
+    for line_result in std::io::BufRead::lines(reader) {
+        let line = match line_result {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+
+        // Strip the version header and verify the per-record CRC (V2); corrupt
+        // / torn / tombstone lines are skipped by the parser.
+        let Some(body) = record_body(&line, version) else {
+            continue;
+        };
+        let Some((timestamp, ns, id, position, metadata)) = parse_update_body(body) else {
+            continue;
+        };
+        if ns != namespace || id != object_id {
+            continue;
+        }
+        if exclude.contains(&timestamp) {
+            continue;
+        }
+        if timestamp < start_time || timestamp > end_time {
+            continue;
+        }
+
+        out.push(LocationUpdate {
+            timestamp,
+            position,
+            metadata,
+        });
+    }
+
+    Ok(out)
+}
+
+/// A single record in the in-memory trajectory log (memory-mode DBs).
+#[derive(Clone)]
+enum MemRecord {
+    Update {
+        namespace: String,
+        object_id: String,
+        update: LocationUpdate,
+    },
+    Tombstone {
+        namespace: String,
+        object_id: String,
+    },
+}
+
+/// Storage backend for the trajectory log.
+///
+/// File-backed databases serialize records to a durable append-only text log;
+/// `:memory:` databases keep parsed records in memory and never touch the
+/// filesystem.
+enum LogBackend {
+    File {
+        writer: BufWriter<File>,
+        path: std::path::PathBuf,
+        /// Records buffered in `writer` that have not yet been pushed to the OS.
+        pending_writes: usize,
+        /// Records written since the last `fsync`.
+        writes_since_sync: usize,
+        /// Wall-clock instant of the last `fsync`, used by [`SyncPolicy::EverySecond`].
+        last_sync: Instant,
+        buffer_limit: usize,
+        sync: SyncSettings,
+        /// On-disk format of this log (V2 for new files, V1 for legacy logs).
+        version: LogVersion,
+    },
+    Memory {
+        records: Vec<MemRecord>,
+    },
+}
+
+/// Trajectory log: durable file-backed log or an in-memory log.
+struct TrajectoryLog {
+    backend: LogBackend,
 }
 
 impl TrajectoryLog {
-    fn open(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
+    fn open_file(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
+        let existing_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
+        // Detect the format of an existing log; brand-new logs are V2.
+        let version = if existing_len == 0 {
+            LogVersion::V2
+        } else {
+            let mut first_line = String::new();
+            let probe = File::open(path)?;
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(probe), &mut first_line)?;
+            if first_line.trim_end_matches(['\n', '\r']) == LOG_HEADER_V2 {
+                LogVersion::V2
+            } else {
+                LogVersion::V1
+            }
+        };
+
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        if existing_len == 0 {
+            // Make the newly created file's directory entry durable.
+            sync_parent_dir(path);
+        }
+        let mut writer = BufWriter::new(file);
+        if existing_len == 0 {
+            // Stamp the version header so later opens parse this log as V2.
+            writeln!(writer, "{}", LOG_HEADER_V2)?;
+        }
 
         Ok(Self {
-            writer: BufWriter::new(file),
-            path: path.to_path_buf(),
-            pending_writes: 0,
-            writes_since_sync: 0,
-            last_sync: Instant::now(),
-            buffer_limit,
-            sync,
+            backend: LogBackend::File {
+                writer,
+                path: path.to_path_buf(),
+                pending_writes: 0,
+                writes_since_sync: 0,
+                last_sync: Instant::now(),
+                buffer_limit,
+                sync,
+                version,
+            },
         })
     }
 
-    fn path(&self) -> &std::path::Path {
-        &self.path
+    fn open_memory() -> Self {
+        Self {
+            backend: LogBackend::Memory {
+                records: Vec::new(),
+            },
+        }
     }
 
     /// Flush the in-memory write buffer to the OS and, depending on the
@@ -449,79 +678,288 @@ impl TrajectoryLog {
     ///
     /// `force` is set on explicit flush/close/drop: it triggers an `fsync`
     /// regardless of batch/interval thresholds (unless the policy is
-    /// [`SyncPolicy::Never`], which never syncs).
+    /// [`SyncPolicy::Never`], which never syncs). A no-op for memory logs.
     fn maybe_sync(&mut self, force: bool) -> Result<()> {
-        let fsync = match self.sync.policy {
+        let LogBackend::File {
+            writer,
+            pending_writes,
+            writes_since_sync,
+            last_sync,
+            buffer_limit,
+            sync,
+            ..
+        } = &mut self.backend
+        else {
+            return Ok(());
+        };
+
+        let fsync = match sync.policy {
             SyncPolicy::Never => false,
-            SyncPolicy::Always => force || self.writes_since_sync >= self.sync.batch_size,
-            SyncPolicy::EverySecond => force || self.last_sync.elapsed() >= Duration::from_secs(1),
+            SyncPolicy::Always => force || *writes_since_sync >= sync.batch_size,
+            SyncPolicy::EverySecond => force || last_sync.elapsed() >= Duration::from_secs(1),
         };
 
         if fsync {
-            self.writer.flush()?;
-            match self.sync.mode {
-                SyncMode::All => self.writer.get_ref().sync_all()?,
-                SyncMode::Data => self.writer.get_ref().sync_data()?,
+            writer.flush()?;
+            match sync.mode {
+                SyncMode::All => writer.get_ref().sync_all()?,
+                SyncMode::Data => writer.get_ref().sync_data()?,
             }
-            self.pending_writes = 0;
-            self.writes_since_sync = 0;
-            self.last_sync = Instant::now();
-        } else if force || self.pending_writes >= self.buffer_limit {
+            *pending_writes = 0;
+            *writes_since_sync = 0;
+            *last_sync = Instant::now();
+        } else if force || *pending_writes >= *buffer_limit {
             // Push buffered bytes to the OS even when not syncing, so a clean
             // process exit doesn't lose writes still sitting in the BufWriter.
-            self.writer.flush()?;
-            self.pending_writes = 0;
+            writer.flush()?;
+            *pending_writes = 0;
         }
 
         Ok(())
     }
 
     fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
-        // Log format (pipe-separated, 8 fields per line):
-        //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
-        //
-        // Coordinates are written to 6 decimal places (~0.1 m precision).
-        // Namespace and object_id must not contain the `|` character.
-        let micros = update
-            .timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros();
+        match &mut self.backend {
+            // Log format (pipe-separated, 8 fields per line):
+            //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
+            //
+            // Coordinates are written to 6 decimal places (~0.1 m precision).
+            // Namespace and object_id must not contain the `|` character.
+            LogBackend::File {
+                writer,
+                pending_writes,
+                writes_since_sync,
+                version,
+                ..
+            } => {
+                let body = format_update_body(
+                    micros_since_epoch(update.timestamp),
+                    namespace,
+                    object_id,
+                    &update.position,
+                    &update.metadata,
+                );
+                write_record(writer, *version, &body)?;
 
-        let json_str =
-            serde_json::to_string(&update.metadata).unwrap_or_else(|_| "null".to_string());
-
-        writeln!(
-            self.writer,
-            "{}|{}|{}|{:.6}|{:.6}|{:.6}|{}|{}",
-            micros,
-            namespace,
-            object_id,
-            update.position.y(), // lat
-            update.position.x(), // lon
-            update.position.z(), // alt
-            json_str.len(),
-            json_str,
-        )?;
-
-        self.pending_writes += 1;
-        self.writes_since_sync += 1;
+                *pending_writes += 1;
+                *writes_since_sync += 1;
+            }
+            LogBackend::Memory { records } => {
+                records.push(MemRecord::Update {
+                    namespace: namespace.to_string(),
+                    object_id: object_id.to_string(),
+                    update: update.clone(),
+                });
+                return Ok(());
+            }
+        }
         self.maybe_sync(false)
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
-        writeln!(
-            self.writer,
-            "TOMBSTONE|{}|{}|{}",
-            micros, namespace, object_id
-        )?;
-        self.pending_writes += 1;
-        self.writes_since_sync += 1;
+        match &mut self.backend {
+            LogBackend::File {
+                writer,
+                pending_writes,
+                writes_since_sync,
+                version,
+                ..
+            } => {
+                let body = format!("TOMBSTONE|{}|{}|{}", micros, namespace, object_id);
+                write_record(writer, *version, &body)?;
+                *pending_writes += 1;
+                *writes_since_sync += 1;
+            }
+            LogBackend::Memory { records } => {
+                // The tombstone's own timestamp is irrelevant to recovery, which
+                // resolves the latest state by append order, so we don't store it.
+                let _ = micros;
+                records.push(MemRecord::Tombstone {
+                    namespace: namespace.to_string(),
+                    object_id: object_id.to_string(),
+                });
+                return Ok(());
+            }
+        }
         self.maybe_sync(false)
     }
 
     fn flush(&mut self) -> Result<()> {
         self.maybe_sync(true)
+    }
+
+    /// Prepare a file-backed trajectory scan: flush buffered writes to the OS so
+    /// a fresh read sees every appended record (including ones already evicted
+    /// from the recent buffer), and return the path, version, and the on-disk
+    /// length captured *under the lock*. The caller scans only this stable prefix
+    /// (without holding the lock), so concurrent appends past the boundary can't
+    /// present a torn final line — which would otherwise trip a spurious CRC
+    /// warning and drop a record. Returns `None` for memory logs, which must be
+    /// scanned in place via [`Self::scan_memory`].
+    fn flush_and_file_target(&mut self) -> Result<Option<FileScanTarget>> {
+        match &mut self.backend {
+            LogBackend::File {
+                writer,
+                path,
+                pending_writes,
+                version,
+                ..
+            } => {
+                // Push to the OS page cache (not a full fsync) so a subsequent
+                // File::open read observes all appended bytes.
+                writer.flush()?;
+                *pending_writes = 0;
+                let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
+                Ok(Some(FileScanTarget {
+                    path: path.clone(),
+                    version: *version,
+                    len,
+                }))
+            }
+            LogBackend::Memory { .. } => Ok(None),
+        }
+    }
+
+    /// Scan the in-memory log (memory backend) for an object's updates in range.
+    fn scan_memory(
+        &self,
+        namespace: &str,
+        object_id: &str,
+        start_time: SystemTime,
+        end_time: SystemTime,
+        exclude: &std::collections::HashSet<SystemTime>,
+    ) -> Vec<LocationUpdate> {
+        let LogBackend::Memory { records } = &self.backend else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for rec in records {
+            let MemRecord::Update {
+                namespace: ns,
+                object_id: id,
+                update,
+            } = rec
+            else {
+                continue;
+            };
+            if ns != namespace || id != object_id {
+                continue;
+            }
+            if exclude.contains(&update.timestamp) {
+                continue;
+            }
+            if update.timestamp < start_time || update.timestamp > end_time {
+                continue;
+            }
+            out.push(update.clone());
+        }
+        out
+    }
+
+    /// Apply log records — starting at byte `from_offset` for file logs, or all
+    /// records for memory logs — into `entries`, resolving the latest surviving
+    /// update per key (tombstones clear an object; a later update revives it).
+    fn replay(
+        &self,
+        from_offset: u64,
+        entries: &mut std::collections::HashMap<String, Option<LocationUpdate>>,
+    ) -> Result<()> {
+        // Keep an update if the slot is empty/tombstoned, or strictly newer.
+        fn merge(slot: &mut Option<LocationUpdate>, update: LocationUpdate) {
+            match slot {
+                None => *slot = Some(update),
+                Some(existing) if update.timestamp > existing.timestamp => *slot = Some(update),
+                _ => {}
+            }
+        }
+
+        match &self.backend {
+            LogBackend::File { path, version, .. } => {
+                use std::io::{BufRead, BufReader, Seek, SeekFrom};
+                let version = *version;
+                if !path.exists() {
+                    return Ok(());
+                }
+                let mut file = std::fs::File::open(path)?;
+                if from_offset > 0 {
+                    file.seek(SeekFrom::Start(from_offset))?;
+                }
+                let reader = BufReader::new(file);
+
+                for (line_num, line_result) in reader.lines().enumerate() {
+                    let line = match line_result {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to read line {} in trajectory log: {}",
+                                line_num + 1,
+                                e
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Strip header + verify CRC (V2); skip corrupt/torn lines.
+                    let Some(body) = record_body(&line, version) else {
+                        continue;
+                    };
+
+                    // Tombstone: TOMBSTONE|timestamp_micros|namespace|object_id
+                    if body.starts_with("TOMBSTONE|") {
+                        let parts: Vec<&str> = body.splitn(4, '|').collect();
+                        if parts.len() != 4 {
+                            log::warn!("Malformed tombstone on line {}", line_num + 1);
+                            continue;
+                        }
+                        entries.insert(format!("{}::{}", parts[2], parts[3]), None);
+                        continue;
+                    }
+
+                    let Some((timestamp, namespace, object_id, position, metadata)) =
+                        parse_update_body(body)
+                    else {
+                        log::warn!("Malformed log line {}", line_num + 1);
+                        continue;
+                    };
+
+                    let slot = entries
+                        .entry(format!("{}::{}", namespace, object_id))
+                        .or_insert(None);
+                    merge(
+                        slot,
+                        LocationUpdate {
+                            timestamp,
+                            position,
+                            metadata,
+                        },
+                    );
+                }
+            }
+            LogBackend::Memory { records } => {
+                for rec in records {
+                    match rec {
+                        MemRecord::Update {
+                            namespace,
+                            object_id,
+                            update,
+                        } => {
+                            let slot = entries
+                                .entry(format!("{}::{}", namespace, object_id))
+                                .or_insert(None);
+                            merge(slot, update.clone());
+                        }
+                        MemRecord::Tombstone {
+                            namespace,
+                            object_id,
+                        } => {
+                            entries.insert(format!("{}::{}", namespace, object_id), None);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1022,5 +1460,215 @@ mod tests {
             .unwrap();
         assert_eq!(limited.len(), 3);
         assert_eq!(limited[0].timestamp, t5);
+    }
+
+    #[test]
+    fn test_trajectory_sees_buffered_but_evicted_records() {
+        // Records evicted from the recent buffer but not yet OS-flushed must
+        // still be visible to a trajectory query: the disk scan flushes first.
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(
+            &log_path,
+            2, // tiny recent-buffer capacity
+            PersistenceConfig {
+                buffer_size: 10_000,
+            }, // large: no incidental OS flush
+            SyncSettings {
+                policy: SyncPolicy::Never, // never fsyncs on its own
+                mode: SyncMode::All,
+                batch_size: 1,
+            },
+        )
+        .unwrap();
+
+        let base = UNIX_EPOCH + Duration::from_secs(1000);
+        for i in 0..5u64 {
+            cold.append_update(
+                "ns",
+                "o",
+                Point3d::new(i as f64, 0.0, 0.0),
+                serde_json::json!({ "i": i }),
+                base + Duration::from_secs(i),
+            )
+            .unwrap();
+        }
+
+        let traj = cold
+            .query_trajectory("ns", "o", base, base + Duration::from_secs(10), 100)
+            .unwrap();
+        assert_eq!(
+            traj.len(),
+            5,
+            "all records must be visible even though 3 were evicted from the \
+             buffer and none were explicitly flushed"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_trajectory_scan_is_stable() {
+        // A reader scanning the log while a writer appends must see a coherent
+        // point-in-time prefix: never an error, never a count that goes
+        // backwards, and the full history once the writer finishes. (Before the
+        // stable-prefix bound, a concurrent append could present a torn final
+        // line and drop a record mid-scan.)
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let cold = Arc::new(
+            ColdState::new(
+                &dir.path().join("traj.log"),
+                2, // tiny buffer => trajectory queries hit the disk-scan path
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+            .unwrap(),
+        );
+
+        let base = UNIX_EPOCH + Duration::from_secs(1_000);
+        let n = 500u64;
+
+        let writer = {
+            let cold = Arc::clone(&cold);
+            thread::spawn(move || {
+                for i in 0..n {
+                    cold.append_update(
+                        "ns",
+                        "o",
+                        Point3d::new(1.0, 2.0, 0.0),
+                        serde_json::json!({ "i": i }),
+                        base + Duration::from_millis(i),
+                    )
+                    .unwrap();
+                }
+            })
+        };
+
+        // Concurrent reads while the writer appends: append-only, so the visible
+        // count must be monotonically non-decreasing and never error.
+        let window_end = base + Duration::from_secs(10);
+        let mut last = 0usize;
+        for _ in 0..200 {
+            let traj = cold
+                .query_trajectory("ns", "o", base, window_end, 100_000)
+                .unwrap();
+            assert!(
+                traj.len() >= last,
+                "visible record count must not go backwards"
+            );
+            last = traj.len();
+        }
+        writer.join().unwrap();
+
+        let final_traj = cold
+            .query_trajectory("ns", "o", base, window_end, 100_000)
+            .unwrap();
+        assert_eq!(
+            final_traj.len() as u64,
+            n,
+            "all appended records visible once the writer finishes"
+        );
+    }
+
+    #[test]
+    fn test_crc32_check_value() {
+        // Standard CRC-32/ISO-HDLC check value.
+        assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
+        assert_eq!(super::crc32(b""), 0);
+    }
+
+    /// A corrupted record body (simulating bit-rot or a torn write) must fail
+    /// its CRC and be skipped on recovery, without taking out healthy records.
+    #[test]
+    fn test_corrupt_record_is_skipped_on_recovery() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+
+        {
+            let cold = ColdState::new(
+                &log_path,
+                10,
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+            .unwrap();
+            cold.append_update(
+                "ns",
+                "good",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({"v": 1}),
+                UNIX_EPOCH + Duration::from_secs(1),
+            )
+            .unwrap();
+            cold.append_update(
+                "ns",
+                "bad",
+                Point3d::new(3.0, 4.0, 0.0),
+                serde_json::json!({"v": 2}),
+                UNIX_EPOCH + Duration::from_secs(2),
+            )
+            .unwrap();
+            cold.flush().unwrap();
+        }
+
+        // Corrupt the body of the "bad" record while leaving its CRC prefix.
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        let corrupted: String = contents
+            .lines()
+            .map(|line| {
+                if line.contains("|ns|bad|") {
+                    line.replacen("|ns|bad|", "|ns|bad|9", 1)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&log_path, format!("{corrupted}\n")).unwrap();
+
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(
+            recovered.contains_key("ns::good"),
+            "healthy record must survive"
+        );
+        assert!(
+            !recovered.contains_key("ns::bad"),
+            "CRC-failed record must be skipped, not silently trusted"
+        );
+    }
+
+    /// Legacy V1 logs (no header, no CRC) must still be recoverable.
+    #[test]
+    fn test_legacy_v1_log_is_readable() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("legacy.log");
+        // Hand-write a V1-format line: ts|ns|id|lat|lon|alt|len|json
+        std::fs::write(
+            &log_path,
+            "1000000|ns|obj|2.000000|1.000000|0.000000|2|{}\n",
+        )
+        .unwrap();
+
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        let loc = recovered
+            .get("ns::obj")
+            .expect("legacy V1 record must recover");
+        assert_eq!(loc.position.x(), 1.0);
+        assert_eq!(loc.position.y(), 2.0);
     }
 }

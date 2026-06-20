@@ -3,6 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
+use crate::compute::validation;
 use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use std::path::Path;
@@ -26,19 +27,32 @@ pub use sync::SyncDB;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-struct TempDirGuard(std::path::PathBuf);
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+/// Reject namespace/object_id values that would corrupt the append-only log or
+/// alias the `namespace::object_id` composite key.
+///
+/// The log is a pipe-delimited, newline-terminated text format and the in-memory
+/// keys are joined with `::`, so `|`, CR/LF, and `::` are structurally unsafe and
+/// must be rejected at the write boundary rather than silently mangled.
+fn validate_identifier(kind: &str, value: &str) -> Result<()> {
+    if value.is_empty() {
+        return Err(SpatioError::InvalidInput(format!(
+            "{kind} must not be empty"
+        )));
     }
+    if value.contains('|') || value.contains('\n') || value.contains('\r') || value.contains("::") {
+        return Err(SpatioError::InvalidInput(format!(
+            "{kind} must not contain '|', a newline, or '::' (got {value:?})"
+        )));
+    }
+    Ok(())
 }
 
 /// Embedded spatio-temporal database.
 ///
 /// Optimized for tracking moving objects with hot/cold data separation.
 /// - **Hot State**: Current locations in memory (DashMap)
-/// - **Cold State**: Historical trajectories on disk (Append-only log)
+/// - **Cold State**: Historical trajectories on disk (Append-only log).
+///   `:memory:` databases keep this log in memory and never touch the filesystem.
 ///
 /// Thread-safe by default (uses internal locking/lock-free structures).
 #[derive(Clone)]
@@ -49,7 +63,6 @@ pub struct DB {
     pub(crate) ops_count: Arc<AtomicU64>,
     #[allow(dead_code)] // retained for configuration introspection
     pub(crate) config: Config,
-    _temp_dir: Option<Arc<TempDirGuard>>,
 }
 
 impl DB {
@@ -73,31 +86,30 @@ impl DB {
             batch_size: config.sync_batch_size,
         };
 
-        let (cold, temp_dir_guard) = if path_ref.to_str() == Some(":memory:") {
-            let temp_dir =
-                std::env::temp_dir().join(format!("spatio_mem_{}", uuid::Uuid::new_v4()));
-            let cold = Arc::new(ColdState::new(
-                &temp_dir.join("traj.log"),
-                config.buffer_capacity,
-                config.persistence.clone(),
-                sync,
-            )?);
-            let guard = Arc::new(TempDirGuard(temp_dir));
-            (cold, Some(guard))
+        let cold = if path_ref.to_str() == Some(":memory:") {
+            // Pure in-memory: no temp dir, no file, no serialization on writes.
+            Arc::new(ColdState::new_memory(config.buffer_capacity))
         } else {
-            let cold = Arc::new(ColdState::new(
+            Arc::new(ColdState::new(
                 path_ref,
                 config.buffer_capacity,
                 config.persistence.clone(),
                 sync,
-            )?);
-            (cold, None)
+            )?)
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
         if path_ref.to_str() != Some(":memory:") {
             match cold.recover_current_locations() {
                 Ok(recovered) => {
+                    // Persist a fresh checkpoint covering everything recovered so
+                    // the next startup replays only newly appended records. The
+                    // full history log is left intact. Best-effort: a failure here
+                    // only means the next recovery is slower, not incorrect.
+                    if let Err(e) = cold.write_checkpoint(&recovered) {
+                        log::warn!("Failed to write recovery checkpoint: {}", e);
+                    }
+
                     for (key, update) in recovered {
                         // Parse namespace and object_id from key "namespace::object_id"
                         if let Some(separator_idx) = key.find("::") {
@@ -130,7 +142,6 @@ impl DB {
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
             config,
-            _temp_dir: temp_dir_guard,
         })
     }
 
@@ -156,6 +167,10 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("object_id", object_id)?;
+        // Reject NaN/Inf/out-of-range coordinates before they poison the index.
+        validation::validate_geographic_point_3d(&position)?;
 
         let ts = opts
             .as_ref()
@@ -188,6 +203,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("object_id", object_id)?;
         self.cold.append_tombstone(namespace, object_id)?;
         self.hot.remove_object(namespace, object_id);
         Ok(())
@@ -226,6 +243,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point_3d(center)?;
+        validation::validate_radius(radius)?;
         Ok(self
             .hot
             .query_within_radius(namespace, center, radius, limit))
@@ -244,6 +263,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_bbox(min_x, min_y, max_x, max_y)?;
         Ok(self
             .hot
             .query_within_bbox(namespace, min_x, min_y, max_x, max_y, limit))
@@ -262,6 +282,8 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point(&center)?;
+        validation::validate_radius(radius)?;
         Ok(self
             .hot
             .query_within_cylinder(namespace, center, min_z, max_z, radius, limit))
@@ -277,6 +299,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_geographic_point_3d(center)?;
         Ok(self.hot.knn_3d(namespace, center, k))
     }
 
@@ -296,6 +319,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_bbox_3d(min_x, min_y, min_z, max_x, max_y, max_z)?;
         Ok(self
             .hot
             .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit))
@@ -481,6 +505,7 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
+        validation::validate_polygon(polygon)?;
         Ok(self.hot.query_polygon(namespace, polygon, limit))
     }
 
@@ -712,31 +737,43 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_db_cleans_up_temp_dir() {
-        let temp_path = {
-            let db = DB::memory().unwrap();
-            // Reach into the cold state's log path via a query (just to exercise the db)
+    fn test_memory_db_serves_trajectory_history_in_memory() {
+        // A :memory: DB must not touch the filesystem yet still answer
+        // trajectory queries (history kept in the in-memory log) beyond the
+        // recent buffer window.
+        let db = DB::memory().unwrap();
+
+        let t0 = SystemTime::now();
+        for i in 0..5u64 {
             db.upsert(
                 "ns",
                 "obj",
-                Point3d::new(0.0, 0.0, 0.0),
-                serde_json::json!({}),
-                None,
+                Point3d::new(i as f64, i as f64, 0.0),
+                serde_json::json!({ "i": i }),
+                Some(SetOptions {
+                    timestamp: Some(t0 + Duration::from_millis(i)),
+                }),
             )
             .unwrap();
-            // Extract the temp dir path before dropping
-            match db._temp_dir.as_ref().map(|g| g.0.clone()) {
-                Some(p) => {
-                    assert!(p.exists(), "temp dir must exist while DB is live");
-                    p
-                }
-                None => panic!("memory DB should have a temp dir guard"),
-            }
-        }; // DB dropped here
-        assert!(
-            !temp_path.exists(),
-            "temp dir must be removed after DB is dropped"
-        );
+        }
+
+        // Current position reflects the latest update.
+        let current = db.get("ns", "obj").unwrap().unwrap();
+        assert_eq!(current.position.x(), 4.0);
+
+        // Full trajectory is queryable from the in-memory log. Use a window that
+        // safely brackets all records: stored timestamps are truncated to micros,
+        // so a raw-now() lower bound could exclude the boundary record.
+        let traj = db
+            .query_trajectory(
+                "ns",
+                "obj",
+                t0 - Duration::from_secs(1),
+                t0 + Duration::from_secs(1),
+                10,
+            )
+            .unwrap();
+        assert_eq!(traj.len(), 5, "all in-memory history must be queryable");
     }
 
     #[test]
@@ -765,5 +802,321 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn test_metadata_with_pipe_survives_reopen() {
+        // A '|' inside metadata must not corrupt the log record: the value has
+        // to survive a full close/reopen recovery cycle on a file-backed DB.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("pipe.db");
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "obj",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({"note": "a|b|c", "n": 1}),
+                None,
+            )
+            .unwrap();
+            db.close().unwrap();
+        }
+        {
+            let db = DB::open(&db_path).unwrap();
+            let loc = db
+                .get("ns", "obj")
+                .unwrap()
+                .expect("record with '|' in metadata must survive reopen");
+            assert_eq!(loc.metadata, serde_json::json!({"note": "a|b|c", "n": 1}));
+        }
+    }
+
+    #[test]
+    fn test_checkpoint_preserves_history_and_writes_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("traj.db");
+        let snap_path = dir.path().join("traj.db.snap");
+
+        let t1 = SystemTime::now();
+        let t2 = t1 + Duration::from_millis(5);
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(1.0, 1.0, 0.0),
+                serde_json::json!({"s": 1}),
+                Some(SetOptions {
+                    timestamp: Some(t1),
+                }),
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(2.0, 2.0, 0.0),
+                serde_json::json!({"s": 2}),
+                Some(SetOptions {
+                    timestamp: Some(t2),
+                }),
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "b",
+                Point3d::new(9.0, 9.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.close().unwrap();
+        }
+        {
+            let db = DB::open(&db_path).unwrap();
+            // Current state recovered correctly.
+            assert_eq!(db.get("ns", "a").unwrap().unwrap().position.x(), 2.0);
+            assert!(db.get("ns", "b").unwrap().is_some());
+            // Trajectory history is NOT discarded by the checkpoint. Bracket the
+            // window generously: stored timestamps are micro-truncated, so a raw
+            // lower bound could exclude the first record.
+            let traj = db
+                .query_trajectory(
+                    "ns",
+                    "a",
+                    t1 - Duration::from_secs(1),
+                    t2 + Duration::from_secs(1),
+                    10,
+                )
+                .unwrap();
+            assert_eq!(
+                traj.len(),
+                2,
+                "checkpoint must preserve full trajectory history"
+            );
+        }
+        // A checkpoint snapshot was written beside the log.
+        assert!(snap_path.exists(), "checkpoint snapshot should exist");
+    }
+
+    #[test]
+    fn test_corrupt_snapshot_falls_back_to_full_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("traj.db");
+        let snap_path = dir.path().join("traj.db.snap");
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(1.0, 1.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(2.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.close().unwrap();
+        }
+        // Open once more so the snapshot covers the records, then corrupt it.
+        {
+            let db = DB::open(&db_path).unwrap();
+            db.close().unwrap();
+        }
+        // Valid header, but a record with a bad CRC -> snapshot must be rejected.
+        std::fs::write(&snap_path, "#spatio-snap v1 0\n00000000|garbage-record\n").unwrap();
+
+        let db = DB::open(&db_path).unwrap();
+        let loc = db
+            .get("ns", "a")
+            .unwrap()
+            .expect("state must still recover via full log replay");
+        assert_eq!(loc.position.x(), 2.0);
+    }
+
+    #[test]
+    fn test_recovery_after_torn_final_write() {
+        // Simulate a crash mid-append: truncate the log inside the last record.
+        // Recovery must skip the torn record (CRC) and return the valid prefix
+        // without error.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("torn.db");
+        let t0 = SystemTime::now();
+
+        {
+            let db = DB::open(&db_path).unwrap();
+            for i in 0..3u64 {
+                db.upsert(
+                    "ns",
+                    "a",
+                    Point3d::new(i as f64, 0.0, 0.0),
+                    serde_json::json!({ "i": i }),
+                    Some(SetOptions {
+                        timestamp: Some(t0 + Duration::from_millis(i)),
+                    }),
+                )
+                .unwrap();
+            }
+            db.close().unwrap();
+        }
+
+        // Lop off the tail of the last record (leave earlier records intact).
+        let len = std::fs::metadata(&db_path).unwrap().len();
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&db_path)
+            .unwrap();
+        f.set_len(len - 4).unwrap();
+        drop(f);
+
+        let db = DB::open(&db_path).unwrap();
+        let loc = db
+            .get("ns", "a")
+            .unwrap()
+            .expect("a complete earlier record must still recover");
+        // The torn last record (i=2) is dropped; the last intact one is i=1.
+        assert_eq!(loc.position.x(), 1.0);
+    }
+
+    #[test]
+    fn test_concurrent_writes_same_object_converge() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Many threads hammer the same object with increasing timestamps while
+        // readers query concurrently. No panic; final value is the latest write.
+        let db = Arc::new(DB::memory().unwrap());
+        let base = SystemTime::now();
+        let writers = 8u64;
+        let per = 200u64;
+
+        let mut handles = Vec::new();
+        for w in 0..writers {
+            let db = Arc::clone(&db);
+            handles.push(thread::spawn(move || {
+                for i in 0..per {
+                    let ms = w * per + i; // globally unique, increasing timestamp
+                    // Position stays a valid coordinate; ordering is by timestamp.
+                    let _ = db.upsert(
+                        "ns",
+                        "hot",
+                        Point3d::new(1.0, 2.0, 0.0),
+                        serde_json::json!({ "ms": ms }),
+                        Some(SetOptions {
+                            timestamp: Some(base + Duration::from_millis(ms)),
+                        }),
+                    );
+                }
+            }));
+        }
+        // Concurrent readers — must never panic or deadlock.
+        for _ in 0..2 {
+            let db = Arc::clone(&db);
+            handles.push(thread::spawn(move || {
+                for _ in 0..per {
+                    let _ = db.get("ns", "hot");
+                    let _ = db.query_radius("ns", &Point3d::new(0.0, 0.0, 0.0), 1.0e6, 10);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Last-writer-wins by timestamp: the highest-timestamp write survives.
+        let max_ms = writers * per - 1;
+        let loc = db.get("ns", "hot").unwrap().unwrap();
+        assert_eq!(loc.timestamp, base + Duration::from_millis(max_ms));
+        assert_eq!(loc.metadata, serde_json::json!({ "ms": max_ms }));
+    }
+
+    #[test]
+    fn test_invalid_coordinates_are_rejected() {
+        let db = DB::memory().unwrap();
+        let meta = serde_json::json!({});
+
+        // NaN / Inf / out-of-range coordinates must never reach the index.
+        for bad in [
+            Point3d::new(f64::NAN, 0.0, 0.0),
+            Point3d::new(0.0, f64::INFINITY, 0.0),
+            Point3d::new(200.0, 0.0, 0.0), // lon > 180
+            Point3d::new(0.0, 95.0, 0.0),  // lat > 90
+            Point3d::new(0.0, 0.0, 1.0e9), // absurd altitude
+        ] {
+            assert!(
+                db.upsert("ns", "o", bad, meta.clone(), None).is_err(),
+                "invalid coordinate must be rejected on upsert"
+            );
+        }
+        // A valid point still works, and the bad ones left no trace.
+        assert!(
+            db.upsert("ns", "o", Point3d::new(1.0, 2.0, 0.0), meta, None)
+                .is_ok()
+        );
+        assert_eq!(db.stats().hot_state_objects, 1);
+    }
+
+    #[test]
+    fn test_invalid_query_inputs_are_rejected() {
+        let db = DB::memory().unwrap();
+        let c = Point3d::new(0.0, 0.0, 0.0);
+
+        assert!(
+            db.query_radius("ns", &c, 0.0, 10).is_err(),
+            "radius 0 rejected"
+        );
+        assert!(
+            db.query_radius("ns", &c, -5.0, 10).is_err(),
+            "negative radius rejected"
+        );
+        assert!(
+            db.query_radius("ns", &Point3d::new(f64::NAN, 0.0, 0.0), 1.0, 10)
+                .is_err()
+        );
+        assert!(
+            db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(),
+            "min>=max rejected"
+        );
+        assert!(
+            db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(),
+            "bad center rejected"
+        );
+    }
+
+    #[test]
+    fn test_unsafe_identifiers_are_rejected() {
+        let db = DB::memory().unwrap();
+        let pos = Point3d::new(0.0, 0.0, 0.0);
+        let meta = serde_json::json!({});
+
+        // Delimiter / ambiguity hazards must be rejected, not silently mangled.
+        for bad in ["a|b", "a\nb", "a\rb", "a::b", ""] {
+            assert!(
+                db.upsert(bad, "obj", pos.clone(), meta.clone(), None)
+                    .is_err(),
+                "namespace {bad:?} must be rejected"
+            );
+            assert!(
+                db.upsert("ns", bad, pos.clone(), meta.clone(), None)
+                    .is_err(),
+                "object_id {bad:?} must be rejected"
+            );
+            assert!(
+                db.delete("ns", bad).is_err(),
+                "delete {bad:?} must be rejected"
+            );
+        }
+
+        // A normal key still works.
+        assert!(db.upsert("ns", "ok", pos, meta, None).is_ok());
     }
 }

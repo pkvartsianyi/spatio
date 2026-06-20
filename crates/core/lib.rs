@@ -2,8 +2,7 @@
 //!
 //! ## Features
 //! - **Spatial indexing**: 2D/3D points, polygons, bounding boxes with R*-tree spatial indexing
-//! - **Persistence**: Append-only file (AOF) with configurable sync policies
-//! - **Atomic batches**: Group multiple operations atomically
+//! - **Persistence**: CRC-checked append-only log with configurable sync policies and checkpoint recovery
 //! - **Temporal queries**: Filter by creation time (with `time-index` feature)
 //!
 //! ## Example

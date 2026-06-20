@@ -25,7 +25,7 @@ The project is divided into the following crates:
 
 - **`spatio-server` (`crates/server`)**:
   - A lightweight TCP server wrapper around `spatio`.
-  - Exposes the database API via a custom RPC protocol (using `tarpc`).
+  - Exposes the database API as JSON-RPC over TCP (using `tarpc`).
   - Handles concurrent connections and offloads blocking DB operations to a thread pool.
   - Intended for remote access or multi-process architectures.
 
