@@ -75,7 +75,11 @@ impl ColdState {
         }
 
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open_file(log_path, config.buffer_size, sync)?),
+            trajectory_log: Mutex::new(TrajectoryLog::open_file(
+                log_path,
+                config.buffer_size,
+                sync,
+            )?),
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
@@ -231,9 +235,13 @@ impl ColdState {
                     )?
                 }
                 // Memory backend: scan in place (fast, no I/O).
-                None => {
-                    log.scan_memory(namespace, object_id, start_time, end_time, &buffer_timestamps)
-                }
+                None => log.scan_memory(
+                    namespace,
+                    object_id,
+                    start_time,
+                    end_time,
+                    &buffer_timestamps,
+                ),
             }
         };
 
@@ -419,7 +427,13 @@ fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, ser
     let lon: f64 = parts[4].parse().ok()?;
     let alt: f64 = parts[5].parse().ok()?;
     let metadata = serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
-    Some((timestamp, parts[1], parts[2], Point3d::new(lon, lat, alt), metadata))
+    Some((
+        timestamp,
+        parts[1],
+        parts[2],
+        Point3d::new(lon, lat, alt),
+        metadata,
+    ))
 }
 
 const SNAPSHOT_HEADER_PREFIX: &str = "#spatio-snap v1 ";
@@ -1434,8 +1448,10 @@ mod tests {
         let log_path = dir.path().join("traj.log");
         let cold = ColdState::new(
             &log_path,
-            2,                                          // tiny recent-buffer capacity
-            PersistenceConfig { buffer_size: 10_000 }, // large: no incidental OS flush
+            2, // tiny recent-buffer capacity
+            PersistenceConfig {
+                buffer_size: 10_000,
+            }, // large: no incidental OS flush
             SyncSettings {
                 policy: SyncPolicy::Never, // never fsyncs on its own
                 mode: SyncMode::All,
@@ -1489,10 +1505,22 @@ mod tests {
                 SyncSettings::default(),
             )
             .unwrap();
-            cold.append_update("ns", "good", Point3d::new(1.0, 2.0, 0.0),
-                serde_json::json!({"v": 1}), UNIX_EPOCH + Duration::from_secs(1)).unwrap();
-            cold.append_update("ns", "bad", Point3d::new(3.0, 4.0, 0.0),
-                serde_json::json!({"v": 2}), UNIX_EPOCH + Duration::from_secs(2)).unwrap();
+            cold.append_update(
+                "ns",
+                "good",
+                Point3d::new(1.0, 2.0, 0.0),
+                serde_json::json!({"v": 1}),
+                UNIX_EPOCH + Duration::from_secs(1),
+            )
+            .unwrap();
+            cold.append_update(
+                "ns",
+                "bad",
+                Point3d::new(3.0, 4.0, 0.0),
+                serde_json::json!({"v": 2}),
+                UNIX_EPOCH + Duration::from_secs(2),
+            )
+            .unwrap();
             cold.flush().unwrap();
         }
 
@@ -1519,7 +1547,10 @@ mod tests {
         )
         .unwrap();
         let recovered = cold.recover_current_locations().unwrap();
-        assert!(recovered.contains_key("ns::good"), "healthy record must survive");
+        assert!(
+            recovered.contains_key("ns::good"),
+            "healthy record must survive"
+        );
         assert!(
             !recovered.contains_key("ns::bad"),
             "CRC-failed record must be skipped, not silently trusted"
@@ -1546,7 +1577,9 @@ mod tests {
         )
         .unwrap();
         let recovered = cold.recover_current_locations().unwrap();
-        let loc = recovered.get("ns::obj").expect("legacy V1 record must recover");
+        let loc = recovered
+            .get("ns::obj")
+            .expect("legacy V1 record must recover");
         assert_eq!(loc.position.x(), 1.0);
         assert_eq!(loc.position.y(), 2.0);
     }

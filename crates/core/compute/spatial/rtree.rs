@@ -173,7 +173,10 @@ impl SpatialIndexManager {
         if let Some(tree) = self.indexes.get_mut(prefix) {
             tree.insert(point);
         } else {
-            self.indexes.entry(prefix.to_string()).or_default().insert(point);
+            self.indexes
+                .entry(prefix.to_string())
+                .or_default()
+                .insert(point);
         }
     }
 

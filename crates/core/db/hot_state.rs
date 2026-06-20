@@ -115,11 +115,7 @@ impl HotState {
                 if old_x != pos_x || old_y != pos_y || old_z != pos_z {
                     let mut spatial_idx = self.spatial_index.write();
                     // Remove old position
-                    spatial_idx.remove_entry(
-                        namespace,
-                        &full_key,
-                        Some((old_x, old_y, old_z)),
-                    );
+                    spatial_idx.remove_entry(namespace, &full_key, Some((old_x, old_y, old_z)));
                     // Insert new position
                     spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
                 }
@@ -468,7 +464,11 @@ mod tests {
         // Still present in the spatial index exactly once.
         let center = Point3d::new(-74.0, 40.7, 100.0);
         let results = hot.query_within_radius("drones", &center, 10.0, 10);
-        assert_eq!(results.len(), 1, "object must remain queryable, not duplicated");
+        assert_eq!(
+            results.len(),
+            1,
+            "object must remain queryable, not duplicated"
+        );
         assert_eq!(results[0].0.object_id, "d1");
     }
 

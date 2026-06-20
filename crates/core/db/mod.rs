@@ -35,13 +35,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// must be rejected at the write boundary rather than silently mangled.
 fn validate_identifier(kind: &str, value: &str) -> Result<()> {
     if value.is_empty() {
-        return Err(SpatioError::InvalidInput(format!("{kind} must not be empty")));
+        return Err(SpatioError::InvalidInput(format!(
+            "{kind} must not be empty"
+        )));
     }
-    if value.contains('|')
-        || value.contains('\n')
-        || value.contains('\r')
-        || value.contains("::")
-    {
+    if value.contains('|') || value.contains('\n') || value.contains('\r') || value.contains("::") {
         return Err(SpatioError::InvalidInput(format!(
             "{kind} must not contain '|', a newline, or '::' (got {value:?})"
         )));
@@ -838,11 +836,34 @@ mod tests {
 
         {
             let db = DB::open(&db_path).unwrap();
-            db.upsert("ns", "a", Point3d::new(1.0, 1.0, 0.0), serde_json::json!({"s": 1}),
-                Some(SetOptions { timestamp: Some(t1) })).unwrap();
-            db.upsert("ns", "a", Point3d::new(2.0, 2.0, 0.0), serde_json::json!({"s": 2}),
-                Some(SetOptions { timestamp: Some(t2) })).unwrap();
-            db.upsert("ns", "b", Point3d::new(9.0, 9.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(1.0, 1.0, 0.0),
+                serde_json::json!({"s": 1}),
+                Some(SetOptions {
+                    timestamp: Some(t1),
+                }),
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(2.0, 2.0, 0.0),
+                serde_json::json!({"s": 2}),
+                Some(SetOptions {
+                    timestamp: Some(t2),
+                }),
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "b",
+                Point3d::new(9.0, 9.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
             db.close().unwrap();
         }
         {
@@ -854,7 +875,11 @@ mod tests {
             let traj = db
                 .query_trajectory("ns", "a", t1, t2 + Duration::from_secs(1), 10)
                 .unwrap();
-            assert_eq!(traj.len(), 2, "checkpoint must preserve full trajectory history");
+            assert_eq!(
+                traj.len(),
+                2,
+                "checkpoint must preserve full trajectory history"
+            );
         }
         // A checkpoint snapshot was written beside the log.
         assert!(snap_path.exists(), "checkpoint snapshot should exist");
@@ -868,8 +893,22 @@ mod tests {
 
         {
             let db = DB::open(&db_path).unwrap();
-            db.upsert("ns", "a", Point3d::new(1.0, 1.0, 0.0), serde_json::json!({}), None).unwrap();
-            db.upsert("ns", "a", Point3d::new(2.0, 2.0, 0.0), serde_json::json!({}), None).unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(1.0, 1.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
+            db.upsert(
+                "ns",
+                "a",
+                Point3d::new(2.0, 2.0, 0.0),
+                serde_json::json!({}),
+                None,
+            )
+            .unwrap();
             db.close().unwrap();
         }
         // Open once more so the snapshot covers the records, then corrupt it.
@@ -905,7 +944,9 @@ mod tests {
                     "a",
                     Point3d::new(i as f64, 0.0, 0.0),
                     serde_json::json!({ "i": i }),
-                    Some(SetOptions { timestamp: Some(t0 + Duration::from_millis(i)) }),
+                    Some(SetOptions {
+                        timestamp: Some(t0 + Duration::from_millis(i)),
+                    }),
                 )
                 .unwrap();
             }
@@ -914,7 +955,10 @@ mod tests {
 
         // Lop off the tail of the last record (leave earlier records intact).
         let len = std::fs::metadata(&db_path).unwrap().len();
-        let f = std::fs::OpenOptions::new().write(true).open(&db_path).unwrap();
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&db_path)
+            .unwrap();
         f.set_len(len - 4).unwrap();
         drop(f);
 
@@ -951,7 +995,9 @@ mod tests {
                         "hot",
                         Point3d::new(1.0, 2.0, 0.0),
                         serde_json::json!({ "ms": ms }),
-                        Some(SetOptions { timestamp: Some(base + Duration::from_millis(ms)) }),
+                        Some(SetOptions {
+                            timestamp: Some(base + Duration::from_millis(ms)),
+                        }),
                     );
                 }
             }));
@@ -986,9 +1032,9 @@ mod tests {
         for bad in [
             Point3d::new(f64::NAN, 0.0, 0.0),
             Point3d::new(0.0, f64::INFINITY, 0.0),
-            Point3d::new(200.0, 0.0, 0.0),   // lon > 180
-            Point3d::new(0.0, 95.0, 0.0),    // lat > 90
-            Point3d::new(0.0, 0.0, 1.0e9),   // absurd altitude
+            Point3d::new(200.0, 0.0, 0.0), // lon > 180
+            Point3d::new(0.0, 95.0, 0.0),  // lat > 90
+            Point3d::new(0.0, 0.0, 1.0e9), // absurd altitude
         ] {
             assert!(
                 db.upsert("ns", "o", bad, meta.clone(), None).is_err(),
@@ -996,7 +1042,10 @@ mod tests {
             );
         }
         // A valid point still works, and the bad ones left no trace.
-        assert!(db.upsert("ns", "o", Point3d::new(1.0, 2.0, 0.0), meta, None).is_ok());
+        assert!(
+            db.upsert("ns", "o", Point3d::new(1.0, 2.0, 0.0), meta, None)
+                .is_ok()
+        );
         assert_eq!(db.stats().hot_state_objects, 1);
     }
 
@@ -1005,11 +1054,26 @@ mod tests {
         let db = DB::memory().unwrap();
         let c = Point3d::new(0.0, 0.0, 0.0);
 
-        assert!(db.query_radius("ns", &c, 0.0, 10).is_err(), "radius 0 rejected");
-        assert!(db.query_radius("ns", &c, -5.0, 10).is_err(), "negative radius rejected");
-        assert!(db.query_radius("ns", &Point3d::new(f64::NAN, 0.0, 0.0), 1.0, 10).is_err());
-        assert!(db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(), "min>=max rejected");
-        assert!(db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(), "bad center rejected");
+        assert!(
+            db.query_radius("ns", &c, 0.0, 10).is_err(),
+            "radius 0 rejected"
+        );
+        assert!(
+            db.query_radius("ns", &c, -5.0, 10).is_err(),
+            "negative radius rejected"
+        );
+        assert!(
+            db.query_radius("ns", &Point3d::new(f64::NAN, 0.0, 0.0), 1.0, 10)
+                .is_err()
+        );
+        assert!(
+            db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(),
+            "min>=max rejected"
+        );
+        assert!(
+            db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(),
+            "bad center rejected"
+        );
     }
 
     #[test]
@@ -1030,7 +1094,10 @@ mod tests {
                     .is_err(),
                 "object_id {bad:?} must be rejected"
             );
-            assert!(db.delete("ns", bad).is_err(), "delete {bad:?} must be rejected");
+            assert!(
+                db.delete("ns", bad).is_err(),
+                "delete {bad:?} must be rejected"
+            );
         }
 
         // A normal key still works.

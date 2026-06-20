@@ -65,10 +65,7 @@ impl Reader {
         center: &Point3d,
         k: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let results = self
-            .db
-            .knn(namespace, center, k)
-            .map_err(internal_err)?;
+        let results = self.db.knn(namespace, center, k).map_err(internal_err)?;
         results
             .into_iter()
             .map(|(loc, dist)| Ok((to_wire(&loc)?, dist)))
@@ -96,10 +93,7 @@ impl Reader {
             .db
             .query_bbox(namespace, min_x, min_y, max_x, max_y, limit)
             .map_err(internal_err)?;
-        results
-            .into_iter()
-            .map(|loc| to_wire(&loc))
-            .collect()
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn query_cylinder(
@@ -175,10 +169,7 @@ impl Reader {
             .db
             .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
             .map_err(internal_err)?;
-        results
-            .into_iter()
-            .map(|loc| to_wire(&loc))
-            .collect()
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn query_near(
@@ -208,10 +199,7 @@ impl Reader {
             .db
             .query_polygon(namespace, polygon, limit)
             .map_err(internal_err)?;
-        results
-            .into_iter()
-            .map(|loc| to_wire(&loc))
-            .collect()
+        results.into_iter().map(|loc| to_wire(&loc)).collect()
     }
 
     pub fn distance(
