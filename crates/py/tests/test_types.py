@@ -1,20 +1,18 @@
 import pytest
 
-from spatio.types import (
-    DEFAULT_QUERY_LIMIT,
-    DEFAULT_SEARCH_RADIUS_METERS,
-    EARTH_RADIUS_METERS,
-    KILOMETER,
-    MAX_LATITUDE,
-    MAX_LONGITUDE,
-    MILE,
-    MIN_LATITUDE,
-    MIN_LONGITUDE,
-    NAUTICAL_MILE,
-    validate_coordinates,
-    validate_latitude,
-    validate_longitude,
-)
+from spatio.types import DEFAULT_QUERY_LIMIT
+from spatio.types import DEFAULT_SEARCH_RADIUS_METERS
+from spatio.types import EARTH_RADIUS_METERS
+from spatio.types import KILOMETER
+from spatio.types import MAX_LATITUDE
+from spatio.types import MAX_LONGITUDE
+from spatio.types import MILE
+from spatio.types import MIN_LATITUDE
+from spatio.types import MIN_LONGITUDE
+from spatio.types import NAUTICAL_MILE
+from spatio.types import validate_coordinates
+from spatio.types import validate_latitude
+from spatio.types import validate_longitude
 
 
 @pytest.mark.parametrize("lat", [0.0, MIN_LATITUDE, MAX_LATITUDE, 45.0, -45.0])
