@@ -176,6 +176,8 @@ let stats = client.stats().await?;
 
 ## Documentation
 
+- **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Operation complexity:** [docs/COMPLEXITY.md](docs/COMPLEXITY.md)
 - **Python docs:** [crates/py/README.md](crates/py/README.md)
 - **Server docs:** [crates/server/README.md](crates/server/README.md)
 - **Client docs:** [crates/client/README.md](crates/client/README.md)
