@@ -222,12 +222,10 @@ impl ColdState {
             match log.flush_and_file_target()? {
                 // File backend: flush done; scan the stable on-disk prefix with
                 // the lock released so a long scan doesn't stall the writer.
-                Some((path, version, len)) => {
+                Some(target) => {
                     drop(log);
                     scan_file(
-                        &path,
-                        version,
-                        len,
+                        &target,
                         namespace,
                         object_id,
                         start_time,
@@ -512,21 +510,31 @@ fn write_snapshot(
     Ok(())
 }
 
-/// Scan a file-backed log for an object's updates within `[start, end]`,
-/// skipping `exclude`d timestamps. A free function so it can run *without* the
-/// log lock held (the path, version, and `len` are captured under the lock
-/// first). Reading stops at `len` bytes — the stable prefix that existed at
-/// capture time — so concurrent appends past it never present a torn line.
-fn scan_file(
-    path: &Path,
+/// A point-in-time view of the file-backed log, captured under the log lock:
+/// the path, on-disk format, and the byte length to scan. Bounding reads to
+/// `len` keeps a concurrent writer's appended tail (possibly a half-written
+/// final line) out of the scan.
+struct FileScanTarget {
+    path: std::path::PathBuf,
     version: LogVersion,
     len: u64,
+}
+
+/// Scan a file-backed log for an object's updates within `[start, end]`,
+/// skipping `exclude`d timestamps. A free function so it can run *without* the
+/// log lock held (the [`FileScanTarget`] is captured under the lock first).
+/// Reading stops at `target.len` — the stable prefix that existed at capture
+/// time — so concurrent appends past it never present a torn line.
+fn scan_file(
+    target: &FileScanTarget,
     namespace: &str,
     object_id: &str,
     start_time: SystemTime,
     end_time: SystemTime,
     exclude: &std::collections::HashSet<SystemTime>,
 ) -> Result<Vec<LocationUpdate>> {
+    let FileScanTarget { path, version, len } = target;
+    let (version, len) = (*version, *len);
     let mut out: Vec<LocationUpdate> = Vec::new();
     if !path.exists() || len == 0 {
         return Ok(out);
@@ -788,7 +796,7 @@ impl TrajectoryLog {
     /// present a torn final line — which would otherwise trip a spurious CRC
     /// warning and drop a record. Returns `None` for memory logs, which must be
     /// scanned in place via [`Self::scan_memory`].
-    fn flush_and_file_target(&mut self) -> Result<Option<(std::path::PathBuf, LogVersion, u64)>> {
+    fn flush_and_file_target(&mut self) -> Result<Option<FileScanTarget>> {
         match &mut self.backend {
             LogBackend::File {
                 writer,
@@ -802,7 +810,11 @@ impl TrajectoryLog {
                 writer.flush()?;
                 *pending_writes = 0;
                 let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
-                Ok(Some((path.clone(), *version, len)))
+                Ok(Some(FileScanTarget {
+                    path: path.clone(),
+                    version: *version,
+                    len,
+                }))
             }
             LogBackend::Memory { .. } => Ok(None),
         }
