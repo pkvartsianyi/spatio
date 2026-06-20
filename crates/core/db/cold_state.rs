@@ -220,13 +220,14 @@ impl ColdState {
         let from_disk = {
             let mut log = self.trajectory_log.lock();
             match log.flush_and_file_target()? {
-                // File backend: flush done; scan the file with the lock released
-                // so a long scan doesn't stall the writer.
-                Some((path, version)) => {
+                // File backend: flush done; scan the stable on-disk prefix with
+                // the lock released so a long scan doesn't stall the writer.
+                Some((path, version, len)) => {
                     drop(log);
                     scan_file(
                         &path,
                         version,
+                        len,
                         namespace,
                         object_id,
                         start_time,
@@ -513,10 +514,13 @@ fn write_snapshot(
 
 /// Scan a file-backed log for an object's updates within `[start, end]`,
 /// skipping `exclude`d timestamps. A free function so it can run *without* the
-/// log lock held (the path + version are captured under the lock first).
+/// log lock held (the path, version, and `len` are captured under the lock
+/// first). Reading stops at `len` bytes — the stable prefix that existed at
+/// capture time — so concurrent appends past it never present a torn line.
 fn scan_file(
     path: &Path,
     version: LogVersion,
+    len: u64,
     namespace: &str,
     object_id: &str,
     start_time: SystemTime,
@@ -524,11 +528,13 @@ fn scan_file(
     exclude: &std::collections::HashSet<SystemTime>,
 ) -> Result<Vec<LocationUpdate>> {
     let mut out: Vec<LocationUpdate> = Vec::new();
-    if !path.exists() {
+    if !path.exists() || len == 0 {
         return Ok(out);
     }
     let file = File::open(path)?;
-    let reader = std::io::BufReader::new(file);
+    // Bound the read to the prefix captured under the lock; anything appended
+    // afterwards (a possibly half-written final line) is intentionally ignored.
+    let reader = std::io::BufReader::new(std::io::Read::take(file, len));
 
     for line_result in std::io::BufRead::lines(reader) {
         let line = match line_result {
@@ -776,10 +782,13 @@ impl TrajectoryLog {
 
     /// Prepare a file-backed trajectory scan: flush buffered writes to the OS so
     /// a fresh read sees every appended record (including ones already evicted
-    /// from the recent buffer), and return the path + version so the caller can
-    /// scan the file *without* holding the log lock. Returns `None` for memory
-    /// logs, which must be scanned in place via [`Self::scan_memory`].
-    fn flush_and_file_target(&mut self) -> Result<Option<(std::path::PathBuf, LogVersion)>> {
+    /// from the recent buffer), and return the path, version, and the on-disk
+    /// length captured *under the lock*. The caller scans only this stable prefix
+    /// (without holding the lock), so concurrent appends past the boundary can't
+    /// present a torn final line — which would otherwise trip a spurious CRC
+    /// warning and drop a record. Returns `None` for memory logs, which must be
+    /// scanned in place via [`Self::scan_memory`].
+    fn flush_and_file_target(&mut self) -> Result<Option<(std::path::PathBuf, LogVersion, u64)>> {
         match &mut self.backend {
             LogBackend::File {
                 writer,
@@ -792,7 +801,8 @@ impl TrajectoryLog {
                 // File::open read observes all appended bytes.
                 writer.flush()?;
                 *pending_writes = 0;
-                Ok(Some((path.clone(), *version)))
+                let len = std::fs::metadata(&*path).map(|m| m.len()).unwrap_or(0);
+                Ok(Some((path.clone(), *version, len)))
             }
             LogBackend::Memory { .. } => Ok(None),
         }
@@ -1480,6 +1490,69 @@ mod tests {
             5,
             "all records must be visible even though 3 were evicted from the \
              buffer and none were explicitly flushed"
+        );
+    }
+
+    #[test]
+    fn test_concurrent_trajectory_scan_is_stable() {
+        // A reader scanning the log while a writer appends must see a coherent
+        // point-in-time prefix: never an error, never a count that goes
+        // backwards, and the full history once the writer finishes. (Before the
+        // stable-prefix bound, a concurrent append could present a torn final
+        // line and drop a record mid-scan.)
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let cold = Arc::new(
+            ColdState::new(
+                &dir.path().join("traj.log"),
+                2, // tiny buffer => trajectory queries hit the disk-scan path
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+            .unwrap(),
+        );
+
+        let base = UNIX_EPOCH + Duration::from_secs(1_000);
+        let n = 500u64;
+
+        let writer = {
+            let cold = Arc::clone(&cold);
+            thread::spawn(move || {
+                for i in 0..n {
+                    cold.append_update(
+                        "ns",
+                        "o",
+                        Point3d::new(1.0, 2.0, 0.0),
+                        serde_json::json!({ "i": i }),
+                        base + Duration::from_millis(i),
+                    )
+                    .unwrap();
+                }
+            })
+        };
+
+        // Concurrent reads while the writer appends: append-only, so the visible
+        // count must be monotonically non-decreasing and never error.
+        let window_end = base + Duration::from_secs(10);
+        let mut last = 0usize;
+        for _ in 0..200 {
+            let traj = cold
+                .query_trajectory("ns", "o", base, window_end, 100_000)
+                .unwrap();
+            assert!(traj.len() >= last, "visible record count must not go backwards");
+            last = traj.len();
+        }
+        writer.join().unwrap();
+
+        let final_traj = cold
+            .query_trajectory("ns", "o", base, window_end, 100_000)
+            .unwrap();
+        assert_eq!(
+            final_traj.len() as u64,
+            n,
+            "all appended records visible once the writer finishes"
         );
     }
 
