@@ -2394,6 +2394,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatio-cabi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spatio",
+ "spatio-types",
+ "tempfile",
+]
+
+[[package]]
 name = "spatio-client"
 version = "0.2.6"
 dependencies = [

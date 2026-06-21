@@ -5,17 +5,17 @@ default:
 # =============
 
 build:
-    cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client --release
+    cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi --release
 
 test *args:
-    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-integration-tests --all-features -- {{args}}
+    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi -p spatio-integration-tests --all-features -- {{args}}
 
 test-integration *args:
     cargo test -p spatio-integration-tests --all-features -- {{args}}
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py --all-targets --all-features -- -D warnings
+    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
