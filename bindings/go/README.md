@@ -3,7 +3,7 @@
 Go bindings for [Spatio](https://github.com/pkvartsianyi/spatio), a
 high-performance embedded spatio-temporal database. The bindings call the Rust
 core in-process through its C ABI using
-[purego](https://github.com/ebitengine/purego) — **no cgo**, so there's no C
+[purego](https://github.com/ebitengine/purego) (no cgo), so there's no C
 toolchain needed to build your program. Geometry types come from
 [`github.com/twpayne/go-geom`](https://github.com/twpayne/go-geom).
 
@@ -76,7 +76,7 @@ for _, n := range nearby {
 
 Result sets cross the FFI boundary as a single packed little-endian binary
 buffer (allocated once in Rust, read directly in Go via `unsafe.Slice`), not
-JSON — there's no per-record float formatting, JSON envelope, or reflection.
+JSON, so there's no per-record float formatting, JSON envelope, or reflection.
 Coordinates are scalars; per-record metadata is an opaque blob decoded only when
 `Metadata()` is called. `convex_hull` still returns GeoJSON (low-volume,
 geometry-shaped).

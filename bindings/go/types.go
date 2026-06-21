@@ -73,9 +73,7 @@ type Stats struct {
 	MemoryUsageBytes      uint64 `json:"memory_usage_bytes"`
 }
 
-// ---------------------------------------------------------------------------
 // Errors
-// ---------------------------------------------------------------------------
 
 // Sentinel errors for the stable status codes; use errors.Is to match.
 var (
@@ -137,9 +135,7 @@ func decode(code int32, errPtr unsafe.Pointer) error {
 	return &Error{Code: int(code), Message: consumeString(errPtr)}
 }
 
-// ---------------------------------------------------------------------------
 // Options
-// ---------------------------------------------------------------------------
 
 // Option configures a database at open time.
 type Option func(*openConfig)
@@ -197,9 +193,7 @@ func (w writeOptions) json() (*string, error) {
 	return &s, nil
 }
 
-// ---------------------------------------------------------------------------
 // geom <-> scalar / GeoJSON conversion
-// ---------------------------------------------------------------------------
 
 func timeToSeconds(t time.Time) float64 {
 	return float64(t.UnixNano()) / 1e9
@@ -258,9 +252,7 @@ func geoJSONToPolygon(s string) (*geom.Polygon, error) {
 	return poly.SetSRID(srid4326), nil
 }
 
-// ---------------------------------------------------------------------------
 // Binary result decoding (mirrors crates/cabi/src/wire.rs)
-// ---------------------------------------------------------------------------
 
 func decodeMetadata(meta []byte) (map[string]any, error) {
 	if len(meta) == 0 {
@@ -307,8 +299,8 @@ func (r *reader) str() string {
 }
 
 // metaView returns the metadata blob as a sub-slice of the (Go-owned) result
-// buffer — no copy. The buffer stays alive as long as any returned record holds
-// this slice, so lazy metadata access costs nothing until it's decoded.
+// buffer, without copying. The buffer stays alive as long as any returned record
+// holds this slice, so lazy metadata access costs nothing until it's decoded.
 func (r *reader) metaView() []byte {
 	b := r.blob()
 	if len(b) == 0 {

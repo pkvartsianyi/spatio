@@ -24,9 +24,8 @@
 //! workspace release profile uses `panic = "abort"`, so an unwind across the
 //! ABI would abort the host process.
 
-// The `extern "C"` boundary functions take raw pointers but are intentionally
-// safe-to-call from C (they null-check and validate), so they are not marked
-// `unsafe`. This mirrors how Turso's `sdk-kit` suppresses the same lint.
+// The boundary functions take raw pointers but null-check and validate them, so
+// they are exported as safe-to-call from C rather than marked `unsafe`.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 mod ffi;
@@ -99,9 +98,7 @@ pub extern "C" fn spatio_buffer_free(ptr: *mut u8, len: usize) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Input parsing helpers
-// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct ConfigDto {
@@ -182,9 +179,7 @@ unsafe fn emit_locations(
     unsafe { emit_buffer(out_ptr, out_len, wire::encode_locations(&results)) }
 }
 
-// ---------------------------------------------------------------------------
 // Lifecycle
-// ---------------------------------------------------------------------------
 
 /// Create an in-memory database. `config_json` may be null for defaults.
 #[unsafe(no_mangle)]
@@ -243,9 +238,7 @@ pub extern "C" fn spatio_close(handle_ptr: *mut c_void, err: *mut *mut c_char) -
     }
 }
 
-// ---------------------------------------------------------------------------
 // Writes
-// ---------------------------------------------------------------------------
 
 /// Upsert an object's location. `metadata_json` and `opts_json` may be null.
 #[unsafe(no_mangle)]
@@ -333,9 +326,7 @@ pub extern "C" fn spatio_insert_trajectory(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Reads
-// ---------------------------------------------------------------------------
 
 /// Get an object's current location as a binary buffer of 0 or 1 location
 /// records.
@@ -386,9 +377,7 @@ pub extern "C" fn spatio_stats(
     SPATIO_OK
 }
 
-// ---------------------------------------------------------------------------
 // Point / volume queries (return binary buffers)
-// ---------------------------------------------------------------------------
 
 /// Objects within `radius` of a point, with distances.
 #[unsafe(no_mangle)]
@@ -666,9 +655,7 @@ pub extern "C" fn spatio_query_trajectory(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Distance & geometry
-// ---------------------------------------------------------------------------
 
 /// Distance between two objects under `metric`. `*out_found` is false if either
 /// object is missing.

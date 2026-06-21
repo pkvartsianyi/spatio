@@ -175,9 +175,7 @@ func Version() (string, error) {
 	return v, nil
 }
 
-// ---------------------------------------------------------------------------
 // C string marshaling
-// ---------------------------------------------------------------------------
 
 // cString holds a null-terminated copy of a Go string for passing to C. The
 // backing slice must be kept alive (via runtime.KeepAlive) until the call that
