@@ -4,14 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"sync"
 	"unsafe"
 
 	"github.com/twpayne/go-geom"
 )
 
 // DB is a handle to an embedded Spatio database. It is safe for concurrent use:
-// the underlying engine handles its own locking. A DB must be closed with Close.
+// the underlying engine handles its own locking, and Close is synchronized
+// against in-flight operations. A DB must be closed with Close.
 type DB struct {
+	// mu guards handle so Close cannot free the native database while another
+	// goroutine is calling into it. Operations take RLock (and run
+	// concurrently); Close takes the write lock and so waits for them to finish.
+	mu     sync.RWMutex
 	handle uintptr
 }
 
@@ -77,9 +83,12 @@ func open(path string, inMemory bool, opts ...Option) (*DB, error) {
 	return &DB{handle: handle}, nil
 }
 
-// Close flushes buffered writes and releases the database. The DB must not be
-// used afterwards.
+// Close flushes buffered writes and releases the database. It blocks until any
+// in-flight operations finish, and is safe to call more than once. The DB must
+// not be used afterwards (further calls return ErrClosed).
 func (db *DB) Close() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	if db.handle == 0 {
 		return nil
 	}
@@ -89,17 +98,12 @@ func (db *DB) Close() error {
 	return decode(code, errOut)
 }
 
-func (db *DB) check() error {
-	if db.handle == 0 {
-		return ErrClosed
-	}
-	return nil
-}
-
 // Upsert inserts or updates an object's current location and metadata.
 func (db *DB) Upsert(namespace, objectID string, point *geom.Point, metadata map[string]any, opts ...WriteOption) error {
-	if err := db.check(); err != nil {
-		return err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return ErrClosed
 	}
 	x, y, z, err := pointXYZ(point)
 	if err != nil {
@@ -130,8 +134,10 @@ func (db *DB) Upsert(namespace, objectID string, point *geom.Point, metadata map
 
 // Delete removes an object.
 func (db *DB) Delete(namespace, objectID string) error {
-	if err := db.check(); err != nil {
-		return err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -145,8 +151,10 @@ func (db *DB) Delete(namespace, objectID string) error {
 // The line's layout must carry an M ordinate holding unix-seconds timestamps
 // (geom.XYM or geom.XYZM).
 func (db *DB) InsertTrajectory(namespace, objectID string, line *geom.LineString) error {
-	if err := db.check(); err != nil {
-		return err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return ErrClosed
 	}
 	if line == nil {
 		return fmt.Errorf("%w: line is nil", ErrInvalidInput)
@@ -182,8 +190,10 @@ type trajIn struct {
 
 // Get returns an object's current location, or nil if it does not exist.
 func (db *DB) Get(namespace, objectID string) (*Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -200,8 +210,10 @@ func (db *DB) Get(namespace, objectID string) (*Location, error) {
 
 // Stats returns a snapshot of database counters.
 func (db *DB) Stats() (*Stats, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	var arr [7]uint64
 	var errOut unsafe.Pointer
@@ -238,8 +250,10 @@ func finishLocations(code int32, ptr unsafe.Pointer, n uintptr, errOut unsafe.Po
 
 // QueryRadius returns objects within radius meters of center, with distances.
 func (db *DB) QueryRadius(namespace string, center *geom.Point, radius float64, limit int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	x, y, z, err := pointXYZ(center)
 	if err != nil {
@@ -256,8 +270,10 @@ func (db *DB) QueryRadius(namespace string, center *geom.Point, radius float64, 
 
 // QueryNear returns objects within radius meters of another object.
 func (db *DB) QueryNear(namespace, objectID string, radius float64, limit int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -271,8 +287,10 @@ func (db *DB) QueryNear(namespace, objectID string, radius float64, limit int) (
 
 // KNN returns the k nearest neighbors of a point.
 func (db *DB) KNN(namespace string, center *geom.Point, k int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	x, y, z, err := pointXYZ(center)
 	if err != nil {
@@ -289,8 +307,10 @@ func (db *DB) KNN(namespace string, center *geom.Point, k int) ([]Neighbor, erro
 
 // KNNNearObject returns the k nearest neighbors of another object.
 func (db *DB) KNNNearObject(namespace, objectID string, k int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -304,8 +324,10 @@ func (db *DB) KNNNearObject(namespace, objectID string, k int) ([]Neighbor, erro
 
 // QueryBBox returns objects within a 2D bounding box.
 func (db *DB) QueryBBox(namespace string, minX, minY, maxX, maxY float64, limit int) ([]Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	var ptr unsafe.Pointer
@@ -318,8 +340,10 @@ func (db *DB) QueryBBox(namespace string, minX, minY, maxX, maxY float64, limit 
 
 // QueryWithinCylinder returns objects within a vertical cylinder, with distances.
 func (db *DB) QueryWithinCylinder(namespace string, center *geom.Point, minZ, maxZ, radius float64, limit int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	x, y, _, err := pointXYZ(center)
 	if err != nil {
@@ -336,8 +360,10 @@ func (db *DB) QueryWithinCylinder(namespace string, center *geom.Point, minZ, ma
 
 // QueryWithinBBox3D returns objects within a 3D bounding box.
 func (db *DB) QueryWithinBBox3D(namespace string, minX, minY, minZ, maxX, maxY, maxZ float64, limit int) ([]Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	var ptr unsafe.Pointer
@@ -350,8 +376,10 @@ func (db *DB) QueryWithinBBox3D(namespace string, minX, minY, minZ, maxX, maxY, 
 
 // QueryBBoxNearObject returns objects within a width×height box centered on an object.
 func (db *DB) QueryBBoxNearObject(namespace, objectID string, width, height float64, limit int) ([]Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -365,8 +393,10 @@ func (db *DB) QueryBBoxNearObject(namespace, objectID string, width, height floa
 
 // QueryCylinderNearObject returns objects within a cylinder centered on an object.
 func (db *DB) QueryCylinderNearObject(namespace, objectID string, minZ, maxZ, radius float64, limit int) ([]Neighbor, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -380,8 +410,10 @@ func (db *DB) QueryCylinderNearObject(namespace, objectID string, minZ, maxZ, ra
 
 // QueryBBox3DNearObject returns objects within a width×height×depth box centered on an object.
 func (db *DB) QueryBBox3DNearObject(namespace, objectID string, width, height, depth float64, limit int) ([]Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -395,8 +427,10 @@ func (db *DB) QueryBBox3DNearObject(namespace, objectID string, width, height, d
 
 // QueryPolygon returns objects whose location falls within polygon.
 func (db *DB) QueryPolygon(namespace string, polygon *geom.Polygon, limit int) ([]Location, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	geoJSON, err := polygonToGeoJSON(polygon)
 	if err != nil {
@@ -414,8 +448,10 @@ func (db *DB) QueryPolygon(namespace string, polygon *geom.Polygon, limit int) (
 
 // QueryTrajectory returns historical samples for an object between start and end.
 func (db *DB) QueryTrajectory(namespace, objectID string, start, end float64, limit int) ([]TrajectoryPoint, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
@@ -433,8 +469,10 @@ func (db *DB) QueryTrajectory(namespace, objectID string, start, end float64, li
 // DistanceBetween returns the distance (meters) between two objects under
 // metric. It returns ErrObjectNotFound if either object is missing.
 func (db *DB) DistanceBetween(namespace, id1, id2 string, metric DistanceMetric) (float64, error) {
-	if err := db.check(); err != nil {
-		return 0, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return 0, ErrClosed
 	}
 	nsC := newCString(namespace)
 	a := newCString(id1)
@@ -458,8 +496,10 @@ func (db *DB) DistanceBetween(namespace, id1, id2 string, metric DistanceMetric)
 // DistanceTo returns the distance (meters) from an object to a point under
 // metric. It returns ErrObjectNotFound if the object is missing.
 func (db *DB) DistanceTo(namespace, objectID string, point *geom.Point, metric DistanceMetric) (float64, error) {
-	if err := db.check(); err != nil {
-		return 0, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return 0, ErrClosed
 	}
 	x, y, _, err := pointXYZ(point)
 	if err != nil {
@@ -486,8 +526,10 @@ func (db *DB) DistanceTo(namespace, objectID string, point *geom.Point, metric D
 // ConvexHull returns the convex hull of all objects in a namespace, or nil if
 // there are fewer than three points.
 func (db *DB) ConvexHull(namespace string) (*geom.Polygon, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	var outGeo, errOut unsafe.Pointer
@@ -506,8 +548,10 @@ func (db *DB) ConvexHull(namespace string) (*geom.Polygon, error) {
 // BoundingBox returns the axis-aligned 2D bounds of all objects in a namespace,
 // or nil for an empty namespace.
 func (db *DB) BoundingBox(namespace string) (*geom.Bounds, error) {
-	if err := db.check(); err != nil {
-		return nil, err
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return nil, ErrClosed
 	}
 	nsC := newCString(namespace)
 	var minX, minY, maxX, maxY float64

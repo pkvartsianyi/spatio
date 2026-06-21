@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -302,4 +303,32 @@ func BenchmarkQueryRadius(b *testing.B) {
 			b.Fatal("expected results")
 		}
 	}
+}
+
+// TestCloseRace runs concurrent operations against Close under the race
+// detector to ensure Close cannot free the native handle while a call is in
+// flight. After Close, operations must return ErrClosed rather than crash.
+func TestCloseRace(t *testing.T) {
+	db := openTestDB(t)
+	_ = db.Upsert("ns", "a", point(1, 1), nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				// Either succeeds or returns ErrClosed once Close wins; never a crash.
+				if _, err := db.QueryRadius("ns", point(1, 1), 1000, 10); err != nil &&
+					!errors.Is(err, spatio.ErrClosed) {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	// Close concurrently with the readers above.
+	go func() { _ = db.Close() }()
+	wg.Wait()
 }
