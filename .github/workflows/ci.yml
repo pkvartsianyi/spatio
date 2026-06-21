@@ -213,3 +213,60 @@ jobs:
         run: cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # Go bindings (purego, no cgo): build the C-ABI cdylib per-OS, then test.
+  go:
+    name: Go bindings on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: bindings/go/go.sum
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build C-ABI cdylib and stage for go:embed
+        shell: bash
+        run: |
+          cargo build -p spatio-cabi --release
+          os=$(go env GOOS); arch=$(go env GOARCH)
+          case "$os" in
+            darwin) file=libspatio_cabi.dylib;;
+            *)      file=libspatio_cabi.so;;
+          esac
+          dest="bindings/go/libs/${os}_${arch}"
+          mkdir -p "$dest"
+          cp "target/release/${file}" "$dest/"
+
+      - name: Check formatting
+        working-directory: bindings/go
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt"; exit 1; }
+
+      - name: Run go vet
+        working-directory: bindings/go
+        run: go vet ./...
+
+      - name: Run tests
+        working-directory: bindings/go
+        run: go test -race ./...
