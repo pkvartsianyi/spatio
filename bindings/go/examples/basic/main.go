@@ -39,6 +39,7 @@ func main() {
 	}
 	fmt.Printf("found %d cities within 100km of NYC:\n", len(nearby))
 	for _, n := range nearby {
-		fmt.Printf("  %-7s %8.0f m  pop=%v\n", n.ObjectID, n.Distance, n.Metadata["population"])
+		meta, _ := n.Metadata()
+		fmt.Printf("  %-7s %8.0f m  pop=%v\n", n.ObjectID, n.Distance, meta["population"])
 	}
 }

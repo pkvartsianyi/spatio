@@ -1,9 +1,11 @@
 package spatio
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 	"unsafe"
 
@@ -25,13 +27,20 @@ const (
 	Euclidean DistanceMetric = "euclidean"
 )
 
-// Location is an object's current position and metadata.
+// Location is an object's current position. Metadata is decoded lazily via the
+// Metadata method, so position/distance queries pay nothing for metadata they
+// don't read.
 type Location struct {
 	ObjectID  string
 	Namespace string
 	Point     *geom.Point
-	Metadata  map[string]any
 	Timestamp time.Time
+	meta      []byte
+}
+
+// Metadata decodes and returns the object's metadata, or nil if it has none.
+func (l *Location) Metadata() (map[string]any, error) {
+	return decodeMetadata(l.meta)
 }
 
 // Neighbor is a Location paired with its distance (meters) from the query
@@ -45,7 +54,12 @@ type Neighbor struct {
 type TrajectoryPoint struct {
 	Point     *geom.Point
 	Timestamp time.Time
-	Metadata  map[string]any
+	meta      []byte
+}
+
+// Metadata decodes and returns the sample's metadata, or nil if it has none.
+func (t *TrajectoryPoint) Metadata() (map[string]any, error) {
+	return decodeMetadata(t.meta)
 }
 
 // Stats is a snapshot of database counters.
@@ -245,73 +259,120 @@ func geoJSONToPolygon(s string) (*geom.Polygon, error) {
 }
 
 // ---------------------------------------------------------------------------
-// JSON result shapes (mirror crates/cabi/src/dto.rs)
+// Binary result decoding (mirrors crates/cabi/src/wire.rs)
 // ---------------------------------------------------------------------------
 
-type rawLocation struct {
-	ObjectID  string         `json:"object_id"`
-	Namespace string         `json:"namespace"`
-	X         float64        `json:"x"`
-	Y         float64        `json:"y"`
-	Z         float64        `json:"z"`
-	Metadata  map[string]any `json:"metadata"`
-	Timestamp float64        `json:"timestamp"`
-	Distance  float64        `json:"distance"` // present only for neighbor results
+func decodeMetadata(meta []byte) (map[string]any, error) {
+	if len(meta) == 0 {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return nil, fmt.Errorf("spatio: decoding metadata: %w", err)
+	}
+	return m, nil
 }
 
-func (r rawLocation) location() Location {
-	return Location{
-		ObjectID:  r.ObjectID,
-		Namespace: r.Namespace,
-		Point:     newPoint(r.X, r.Y, r.Z),
-		Metadata:  r.Metadata,
-		Timestamp: secondsToTime(r.Timestamp),
-	}
+// reader walks a little-endian result buffer. The buffer is produced by our own
+// library, so layout is trusted; out-of-range access would panic, which only a
+// version mismatch could trigger.
+type reader struct {
+	b   []byte
+	off int
 }
 
-type rawTrajectoryPoint struct {
-	X         float64        `json:"x"`
-	Y         float64        `json:"y"`
-	Timestamp float64        `json:"timestamp"`
-	Metadata  map[string]any `json:"metadata"`
+func (r *reader) u32() uint32 {
+	v := binary.LittleEndian.Uint32(r.b[r.off:])
+	r.off += 4
+	return v
 }
 
-func parseLocations(jsonStr string) ([]Location, error) {
-	var raws []rawLocation
-	if err := json.Unmarshal([]byte(jsonStr), &raws); err != nil {
-		return nil, fmt.Errorf("spatio: decoding result: %w", err)
-	}
-	out := make([]Location, len(raws))
-	for i, r := range raws {
-		out[i] = r.location()
-	}
-	return out, nil
+func (r *reader) f64() float64 {
+	v := math.Float64frombits(binary.LittleEndian.Uint64(r.b[r.off:]))
+	r.off += 8
+	return v
 }
 
-func parseNeighbors(jsonStr string) ([]Neighbor, error) {
-	var raws []rawLocation
-	if err := json.Unmarshal([]byte(jsonStr), &raws); err != nil {
-		return nil, fmt.Errorf("spatio: decoding result: %w", err)
-	}
-	out := make([]Neighbor, len(raws))
-	for i, r := range raws {
-		out[i] = Neighbor{Location: r.location(), Distance: r.Distance}
-	}
-	return out, nil
+// blob returns a view into the buffer (no copy); callers must copy before the
+// buffer is freed if the bytes need to outlive it.
+func (r *reader) blob() []byte {
+	n := int(r.u32())
+	s := r.b[r.off : r.off+n]
+	r.off += n
+	return s
 }
 
-func parseTrajectory(jsonStr string) ([]TrajectoryPoint, error) {
-	var raws []rawTrajectoryPoint
-	if err := json.Unmarshal([]byte(jsonStr), &raws); err != nil {
-		return nil, fmt.Errorf("spatio: decoding trajectory: %w", err)
+func (r *reader) str() string {
+	return string(r.blob()) // copies into a Go string
+}
+
+// metaView returns the metadata blob as a sub-slice of the (Go-owned) result
+// buffer — no copy. The buffer stays alive as long as any returned record holds
+// this slice, so lazy metadata access costs nothing until it's decoded.
+func (r *reader) metaView() []byte {
+	b := r.blob()
+	if len(b) == 0 {
+		return nil
 	}
-	out := make([]TrajectoryPoint, len(raws))
-	for i, r := range raws {
-		out[i] = TrajectoryPoint{
-			Point:     geom.NewPointFlat(geom.XY, []float64{r.X, r.Y}).SetSRID(srid4326),
-			Timestamp: secondsToTime(r.Timestamp),
-			Metadata:  r.Metadata,
+	return b
+}
+
+func decodeNeighbors(buf []byte, namespace string) []Neighbor {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]Neighbor, n)
+	for i := range out {
+		x, y, z, ts, dist := r.f64(), r.f64(), r.f64(), r.f64(), r.f64()
+		out[i] = Neighbor{
+			Location: Location{
+				ObjectID:  r.str(),
+				Namespace: namespace,
+				Point:     newPoint(x, y, z),
+				Timestamp: secondsToTime(ts),
+				meta:      r.metaView(),
+			},
+			Distance: dist,
 		}
 	}
-	return out, nil
+	return out
+}
+
+func decodeLocations(buf []byte, namespace string) []Location {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]Location, n)
+	for i := range out {
+		x, y, z, ts := r.f64(), r.f64(), r.f64(), r.f64()
+		out[i] = Location{
+			ObjectID:  r.str(),
+			Namespace: namespace,
+			Point:     newPoint(x, y, z),
+			Timestamp: secondsToTime(ts),
+			meta:      r.metaView(),
+		}
+	}
+	return out
+}
+
+func decodeLocationOne(buf []byte, namespace string) *Location {
+	locs := decodeLocations(buf, namespace)
+	if len(locs) == 0 {
+		return nil
+	}
+	return &locs[0]
+}
+
+func decodeTrajectory(buf []byte) []TrajectoryPoint {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]TrajectoryPoint, n)
+	for i := range out {
+		x, y, ts := r.f64(), r.f64(), r.f64()
+		out[i] = TrajectoryPoint{
+			Point:     geom.NewPointFlat(geom.XY, []float64{x, y}).SetSRID(srid4326),
+			Timestamp: secondsToTime(ts),
+			meta:      r.metaView(),
+		}
+	}
+	return out
 }

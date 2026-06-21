@@ -58,6 +58,29 @@ unix seconds (use `geom.XYM`).
 Errors map to sentinel values (`spatio.ErrObjectNotFound`, `spatio.ErrClosed`,
 …); match them with `errors.Is`.
 
+## Metadata
+
+`Location` and `TrajectoryPoint` expose metadata lazily via a `Metadata()
+(map[string]any, error)` method rather than an eager field, so queries that only
+need positions/distances never pay to decode it:
+
+```go
+for _, n := range nearby {
+	meta, err := n.Metadata()
+	if err != nil { /* ... */ }
+	_ = meta["population"]
+}
+```
+
+## Performance
+
+Result sets cross the FFI boundary as a single packed little-endian binary
+buffer (allocated once in Rust, read directly in Go via `unsafe.Slice`), not
+JSON — there's no per-record float formatting, JSON envelope, or reflection.
+Coordinates are scalars; per-record metadata is an opaque blob decoded only when
+`Metadata()` is called. `convex_hull` still returns GeoJSON (low-volume,
+geometry-shaped).
+
 ## Native library resolution
 
 At first use the bindings load the platform shared library, in order:

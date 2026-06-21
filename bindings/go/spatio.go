@@ -23,6 +23,19 @@ func keep(cs ...cString) {
 	}
 }
 
+// takeBuffer copies a native result buffer into a Go-owned slice and frees the
+// native allocation. Decoders then reference sub-slices of this copy (e.g. lazy
+// metadata) without further allocation, and without dangling into freed memory.
+func takeBuffer(ptr unsafe.Pointer, n uintptr) []byte {
+	if ptr == nil || n == 0 {
+		return nil
+	}
+	buf := make([]byte, int(n))
+	copy(buf, unsafe.Slice((*byte)(ptr), int(n)))
+	fnBufferFree(ptr, n)
+	return buf
+}
+
 // OpenMemory creates an in-memory database.
 func OpenMemory(opts ...Option) (*DB, error) {
 	return open("", true, opts...)
@@ -174,22 +187,15 @@ func (db *DB) Get(namespace, objectID string) (*Location, error) {
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnGet(db.handle, nsC.ptr(), idC.ptr(), unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnGet(db.handle, nsC.ptr(), idC.ptr(), unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
 	if err := decode(code, errOut); err != nil {
 		return nil, err
 	}
-	s := consumeString(outJSON)
-	if s == "" {
-		return nil, nil
-	}
-	var r rawLocation
-	if err := json.Unmarshal([]byte(s), &r); err != nil {
-		return nil, fmt.Errorf("spatio: decoding location: %w", err)
-	}
-	loc := r.location()
-	return &loc, nil
+	return decodeLocationOne(takeBuffer(ptr, n), namespace), nil
 }
 
 // Stats returns a snapshot of database counters.
@@ -197,16 +203,37 @@ func (db *DB) Stats() (*Stats, error) {
 	if err := db.check(); err != nil {
 		return nil, err
 	}
-	var outJSON, errOut unsafe.Pointer
-	code := fnStats(db.handle, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var arr [7]uint64
+	var errOut unsafe.Pointer
+	code := fnStats(db.handle, unsafe.Pointer(&arr[0]), unsafe.Pointer(&errOut))
 	if err := decode(code, errOut); err != nil {
 		return nil, err
 	}
-	var s Stats
-	if err := json.Unmarshal([]byte(consumeString(outJSON)), &s); err != nil {
-		return nil, fmt.Errorf("spatio: decoding stats: %w", err)
+	return &Stats{
+		ExpiredCount:          arr[0],
+		OperationsCount:       arr[1],
+		SizeBytes:             arr[2],
+		HotStateObjects:       arr[3],
+		ColdStateTrajectories: arr[4],
+		ColdStateBufferBytes:  arr[5],
+		MemoryUsageBytes:      arr[6],
+	}, nil
+}
+
+// finishNeighbors / finishLocations decode the status + binary buffer for the
+// two common result shapes, then free the buffer.
+func finishNeighbors(code int32, ptr unsafe.Pointer, n uintptr, errOut unsafe.Pointer, namespace string) ([]Neighbor, error) {
+	if err := decode(code, errOut); err != nil {
+		return nil, err
 	}
-	return &s, nil
+	return decodeNeighbors(takeBuffer(ptr, n), namespace), nil
+}
+
+func finishLocations(code int32, ptr unsafe.Pointer, n uintptr, errOut unsafe.Pointer, namespace string) ([]Location, error) {
+	if err := decode(code, errOut); err != nil {
+		return nil, err
+	}
+	return decodeLocations(takeBuffer(ptr, n), namespace), nil
 }
 
 // QueryRadius returns objects within radius meters of center, with distances.
@@ -219,10 +246,12 @@ func (db *DB) QueryRadius(namespace string, center *geom.Point, radius float64, 
 		return nil, err
 	}
 	nsC := newCString(namespace)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryRadius(db.handle, nsC.ptr(), x, y, z, radius, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryRadius(db.handle, nsC.ptr(), x, y, z, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // QueryNear returns objects within radius meters of another object.
@@ -232,10 +261,12 @@ func (db *DB) QueryNear(namespace, objectID string, radius float64, limit int) (
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryNear(db.handle, nsC.ptr(), idC.ptr(), radius, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryNear(db.handle, nsC.ptr(), idC.ptr(), radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // KNN returns the k nearest neighbors of a point.
@@ -248,10 +279,12 @@ func (db *DB) KNN(namespace string, center *geom.Point, k int) ([]Neighbor, erro
 		return nil, err
 	}
 	nsC := newCString(namespace)
-	var outJSON, errOut unsafe.Pointer
-	code := fnKNN(db.handle, nsC.ptr(), x, y, z, k, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnKNN(db.handle, nsC.ptr(), x, y, z, k, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // KNNNearObject returns the k nearest neighbors of another object.
@@ -261,10 +294,12 @@ func (db *DB) KNNNearObject(namespace, objectID string, k int) ([]Neighbor, erro
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnKNNNearObject(db.handle, nsC.ptr(), idC.ptr(), k, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnKNNNearObject(db.handle, nsC.ptr(), idC.ptr(), k, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // QueryBBox returns objects within a 2D bounding box.
@@ -273,10 +308,12 @@ func (db *DB) QueryBBox(namespace string, minX, minY, maxX, maxY float64, limit 
 		return nil, err
 	}
 	nsC := newCString(namespace)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryBBox(db.handle, nsC.ptr(), minX, minY, maxX, maxY, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryBBox(db.handle, nsC.ptr(), minX, minY, maxX, maxY, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC)
-	return finishLocations(code, outJSON, errOut)
+	return finishLocations(code, ptr, n, errOut, namespace)
 }
 
 // QueryWithinCylinder returns objects within a vertical cylinder, with distances.
@@ -289,10 +326,12 @@ func (db *DB) QueryWithinCylinder(namespace string, center *geom.Point, minZ, ma
 		return nil, err
 	}
 	nsC := newCString(namespace)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryCylinder(db.handle, nsC.ptr(), x, y, minZ, maxZ, radius, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryCylinder(db.handle, nsC.ptr(), x, y, minZ, maxZ, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // QueryWithinBBox3D returns objects within a 3D bounding box.
@@ -301,10 +340,12 @@ func (db *DB) QueryWithinBBox3D(namespace string, minX, minY, minZ, maxX, maxY, 
 		return nil, err
 	}
 	nsC := newCString(namespace)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryBBox3D(db.handle, nsC.ptr(), minX, minY, minZ, maxX, maxY, maxZ, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryBBox3D(db.handle, nsC.ptr(), minX, minY, minZ, maxX, maxY, maxZ, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC)
-	return finishLocations(code, outJSON, errOut)
+	return finishLocations(code, ptr, n, errOut, namespace)
 }
 
 // QueryBBoxNearObject returns objects within a width×height box centered on an object.
@@ -314,10 +355,12 @@ func (db *DB) QueryBBoxNearObject(namespace, objectID string, width, height floa
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryBBoxNear(db.handle, nsC.ptr(), idC.ptr(), width, height, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryBBoxNear(db.handle, nsC.ptr(), idC.ptr(), width, height, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
-	return finishLocations(code, outJSON, errOut)
+	return finishLocations(code, ptr, n, errOut, namespace)
 }
 
 // QueryCylinderNearObject returns objects within a cylinder centered on an object.
@@ -327,10 +370,12 @@ func (db *DB) QueryCylinderNearObject(namespace, objectID string, minZ, maxZ, ra
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryCylinderNear(db.handle, nsC.ptr(), idC.ptr(), minZ, maxZ, radius, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryCylinderNear(db.handle, nsC.ptr(), idC.ptr(), minZ, maxZ, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
-	return finishNeighbors(code, outJSON, errOut)
+	return finishNeighbors(code, ptr, n, errOut, namespace)
 }
 
 // QueryBBox3DNearObject returns objects within a width×height×depth box centered on an object.
@@ -340,10 +385,12 @@ func (db *DB) QueryBBox3DNearObject(namespace, objectID string, width, height, d
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryBBox3DNear(db.handle, nsC.ptr(), idC.ptr(), width, height, depth, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryBBox3DNear(db.handle, nsC.ptr(), idC.ptr(), width, height, depth, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
-	return finishLocations(code, outJSON, errOut)
+	return finishLocations(code, ptr, n, errOut, namespace)
 }
 
 // QueryPolygon returns objects whose location falls within polygon.
@@ -357,10 +404,12 @@ func (db *DB) QueryPolygon(namespace string, polygon *geom.Polygon, limit int) (
 	}
 	nsC := newCString(namespace)
 	polyC := newCString(geoJSON)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryPolygon(db.handle, nsC.ptr(), polyC.ptr(), limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryPolygon(db.handle, nsC.ptr(), polyC.ptr(), limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, polyC)
-	return finishLocations(code, outJSON, errOut)
+	return finishLocations(code, ptr, n, errOut, namespace)
 }
 
 // QueryTrajectory returns historical samples for an object between start and end.
@@ -370,13 +419,15 @@ func (db *DB) QueryTrajectory(namespace, objectID string, start, end float64, li
 	}
 	nsC := newCString(namespace)
 	idC := newCString(objectID)
-	var outJSON, errOut unsafe.Pointer
-	code := fnQueryTrajectory(db.handle, nsC.ptr(), idC.ptr(), start, end, limit, unsafe.Pointer(&outJSON), unsafe.Pointer(&errOut))
+	var ptr unsafe.Pointer
+	var n uintptr
+	var errOut unsafe.Pointer
+	code := fnQueryTrajectory(db.handle, nsC.ptr(), idC.ptr(), start, end, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
 	keep(nsC, idC)
 	if err := decode(code, errOut); err != nil {
 		return nil, err
 	}
-	return parseTrajectory(consumeString(outJSON))
+	return decodeTrajectory(takeBuffer(ptr, n)), nil
 }
 
 // DistanceBetween returns the distance (meters) between two objects under
@@ -473,22 +524,6 @@ func (db *DB) BoundingBox(namespace string) (*geom.Bounds, error) {
 		return nil, nil
 	}
 	return geom.NewBounds(geom.XY).Set(minX, minY, maxX, maxY), nil
-}
-
-// finishNeighbors / finishLocations decode the status + JSON for the two common
-// result shapes.
-func finishNeighbors(code int32, outJSON, errOut unsafe.Pointer) ([]Neighbor, error) {
-	if err := decode(code, errOut); err != nil {
-		return nil, err
-	}
-	return parseNeighbors(consumeString(outJSON))
-}
-
-func finishLocations(code int32, outJSON, errOut unsafe.Pointer) ([]Location, error) {
-	if err := decode(code, errOut); err != nil {
-		return nil, err
-	}
-	return parseLocations(consumeString(outJSON))
 }
 
 // metadataJSON marshals optional metadata, returning nil for a nil map.

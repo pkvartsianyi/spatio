@@ -41,6 +41,7 @@ const (
 var (
 	fnVersion    func() unsafe.Pointer
 	fnStringFree func(unsafe.Pointer)
+	fnBufferFree func(ptr unsafe.Pointer, length uintptr)
 
 	fnOpenMemory func(cfg, outHandle, errOut unsafe.Pointer) int32
 	fnOpen       func(path, cfg, outHandle, errOut unsafe.Pointer) int32
@@ -50,21 +51,23 @@ var (
 	fnDelete           func(h uintptr, ns, id, errOut unsafe.Pointer) int32
 	fnInsertTrajectory func(h uintptr, ns, id, traj, errOut unsafe.Pointer) int32
 
-	fnGet   func(h uintptr, ns, id, outJSON, errOut unsafe.Pointer) int32
-	fnStats func(h uintptr, outJSON, errOut unsafe.Pointer) int32
+	// Result-set functions write a packed binary buffer (ptr,len) the caller
+	// frees with fnBufferFree. See wire.rs for the layout.
+	fnGet   func(h uintptr, ns, id, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnStats func(h uintptr, outArr, errOut unsafe.Pointer) int32
 
-	fnQueryRadius       func(h uintptr, ns unsafe.Pointer, x, y, z, radius float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryNear         func(h uintptr, ns, id unsafe.Pointer, radius float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnKNN               func(h uintptr, ns unsafe.Pointer, x, y, z float64, k int, outJSON, errOut unsafe.Pointer) int32
-	fnKNNNearObject     func(h uintptr, ns, id unsafe.Pointer, k int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryBBox         func(h uintptr, ns unsafe.Pointer, minX, minY, maxX, maxY float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryCylinder     func(h uintptr, ns unsafe.Pointer, x, y, minZ, maxZ, radius float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryBBox3D       func(h uintptr, ns unsafe.Pointer, minX, minY, minZ, maxX, maxY, maxZ float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryBBoxNear     func(h uintptr, ns, id unsafe.Pointer, width, height float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryCylinderNear func(h uintptr, ns, id unsafe.Pointer, minZ, maxZ, radius float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryBBox3DNear   func(h uintptr, ns, id unsafe.Pointer, width, height, depth float64, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryPolygon      func(h uintptr, ns, geojson unsafe.Pointer, limit int, outJSON, errOut unsafe.Pointer) int32
-	fnQueryTrajectory   func(h uintptr, ns, id unsafe.Pointer, start, end float64, limit int, outJSON, errOut unsafe.Pointer) int32
+	fnQueryRadius       func(h uintptr, ns unsafe.Pointer, x, y, z, radius float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryNear         func(h uintptr, ns, id unsafe.Pointer, radius float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnKNN               func(h uintptr, ns unsafe.Pointer, x, y, z float64, k int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnKNNNearObject     func(h uintptr, ns, id unsafe.Pointer, k int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryBBox         func(h uintptr, ns unsafe.Pointer, minX, minY, maxX, maxY float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryCylinder     func(h uintptr, ns unsafe.Pointer, x, y, minZ, maxZ, radius float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryBBox3D       func(h uintptr, ns unsafe.Pointer, minX, minY, minZ, maxX, maxY, maxZ float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryBBoxNear     func(h uintptr, ns, id unsafe.Pointer, width, height float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryCylinderNear func(h uintptr, ns, id unsafe.Pointer, minZ, maxZ, radius float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryBBox3DNear   func(h uintptr, ns, id unsafe.Pointer, width, height, depth float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryPolygon      func(h uintptr, ns, geojson unsafe.Pointer, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnQueryTrajectory   func(h uintptr, ns, id unsafe.Pointer, start, end float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
 
 	fnDistanceBetween func(h uintptr, ns, id1, id2, metric, outDist, outFound, errOut unsafe.Pointer) int32
 	fnDistanceTo      func(h uintptr, ns, id unsafe.Pointer, x, y float64, metric, outDist, outFound, errOut unsafe.Pointer) int32
@@ -131,6 +134,7 @@ func loadLibrary() (uintptr, error) {
 func registerLibrary(lib uintptr) {
 	purego.RegisterLibFunc(&fnVersion, lib, "spatio_version")
 	purego.RegisterLibFunc(&fnStringFree, lib, "spatio_string_free")
+	purego.RegisterLibFunc(&fnBufferFree, lib, "spatio_buffer_free")
 
 	purego.RegisterLibFunc(&fnOpenMemory, lib, "spatio_open_memory")
 	purego.RegisterLibFunc(&fnOpen, lib, "spatio_open")

@@ -2,6 +2,7 @@ package spatio_test
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -45,7 +46,11 @@ func TestUpsertGetDelete(t *testing.T) {
 	if loc.ObjectID != "nyc" {
 		t.Errorf("object id = %q, want nyc", loc.ObjectID)
 	}
-	if got := loc.Metadata["population"]; got != float64(8_000_000) {
+	meta, err := loc.Metadata()
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if got := meta["population"]; got != float64(8_000_000) {
 		t.Errorf("population = %v, want 8000000", got)
 	}
 	if dx := math.Abs(loc.Point.X() - -74.0060); dx > 1e-9 {
@@ -264,5 +269,37 @@ func TestStats(t *testing.T) {
 	}
 	if stats.HotStateObjects != 2 {
 		t.Errorf("hot objects = %d, want 2", stats.HotStateObjects)
+	}
+}
+
+// BenchmarkQueryRadius exercises the read path (FFI call + binary decode) over a
+// dense namespace, returning ~hundreds of results per call. Metadata is left
+// undecoded (lazy), which is the common hot-path case.
+func BenchmarkQueryRadius(b *testing.B) {
+	db, err := spatio.OpenMemory()
+	if err != nil {
+		b.Skipf("native library unavailable: %v", err)
+	}
+	defer db.Close()
+
+	for i := 0; i < 10_000; i++ {
+		lon := -74.0 + float64(i%100)*0.001
+		lat := 40.0 + float64(i/100)*0.001
+		if err := db.Upsert("f", fmt.Sprintf("o%d", i), point(lon, lat), map[string]any{"i": i}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	center := point(-74.0+0.05, 40.0+0.05)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, err := db.QueryRadius("f", center, 10_000, 1_000)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(res) == 0 {
+			b.Fatal("expected results")
+		}
 	}
 }
