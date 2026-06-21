@@ -77,6 +77,36 @@ py-dev-setup:
 py-ci:
     cd crates/py && just ci
 
+# Go commands (purego bindings)
+# =============================
+
+# Build the C-ABI cdylib and stage it under bindings/go/libs/<goos>_<goarch>/.
+go-build-lib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p spatio-cabi --release
+    os=$(go env GOOS); arch=$(go env GOARCH)
+    case "$os" in
+      darwin) file=libspatio_cabi.dylib;;
+      *)      file=libspatio_cabi.so;;
+    esac
+    dest="bindings/go/libs/${os}_${arch}"
+    mkdir -p "$dest"
+    cp "target/release/${file}" "$dest/"
+    echo "staged ${file} -> ${dest}"
+
+go-test: go-build-lib
+    cd bindings/go && go test ./...
+
+go-vet:
+    cd bindings/go && go vet ./...
+
+go-fmt:
+    cd bindings/go && gofmt -w .
+
+go-example: go-build-lib
+    cd bindings/go && go run ./examples/basic
+
 # Version management
 # ==================
 

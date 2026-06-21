@@ -1,0 +1,2 @@
+# Ignore committed platform binaries; CI/release builds them.
+*/
