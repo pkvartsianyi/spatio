@@ -12,9 +12,12 @@
 //!   `SPATIO_ERR_*` constants in [`ffi`]).
 //! - **Errors:** human-readable detail is written to an `err: *mut *mut c_char`
 //!   out-param; the caller frees it with `spatio_string_free`.
-//! - **Points:** passed as scalar `f64 x, y, z`. Composite results are returned
-//!   as JSON strings (out-params) built from the flat DTOs in [`dto`].
-//! - **Polygons:** cross the boundary as GeoJSON strings.
+//! - **Points:** passed as scalar `f64 x, y, z`.
+//! - **Result sets:** returned as a packed little-endian binary buffer
+//!   (`out_ptr`/`out_len`) the caller frees with `spatio_buffer_free`. See
+//!   [`wire`] for the layout. Per-record metadata is an opaque length-prefixed
+//!   blob (JSON), decoded lazily by the caller.
+//! - **Polygons / convex hull:** GeoJSON strings.
 //! - **Timestamps:** `f64` seconds since the unix epoch.
 //!
 //! The boundary functions are written to never panic on caller input: the
@@ -26,10 +29,9 @@
 // `unsafe`. This mirrors how Turso's `sdk-kit` suppresses the same lint.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-mod dto;
 mod ffi;
+mod wire;
 
-use dto::{LocationDto, NeighborDto, TrajectoryPointDto};
 use ffi::*;
 use serde::Deserialize;
 use spatio::config::{Config, SetOptions};
@@ -76,12 +78,24 @@ pub extern "C" fn spatio_version() -> *const c_char {
     VERSION_C.as_ptr() as *const c_char
 }
 
-/// Free a string previously returned by this library (error messages, JSON
-/// results, GeoJSON). Null is ignored.
+/// Free a string previously returned by this library (error messages, GeoJSON).
+/// Null is ignored.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_string_free(s: *mut c_char) {
     if !s.is_null() {
         unsafe { drop(CString::from_raw(s)) };
+    }
+}
+
+/// Free a result buffer previously returned through `out_ptr`/`out_len`. Null is
+/// ignored.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_buffer_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
     }
 }
 
@@ -150,22 +164,22 @@ fn parse_metric(s: &str) -> Result<DistanceMetric, i32> {
     }
 }
 
-/// Emit a `(location, distance)` result list as a JSON array of [`NeighborDto`].
-unsafe fn emit_neighbors(out: *mut *mut c_char, results: Vec<(Arc<CurrentLocation>, f64)>) -> i32 {
-    let dtos: Vec<NeighborDto> = results
-        .iter()
-        .map(|(loc, dist)| NeighborDto::new(loc, *dist))
-        .collect();
-    unsafe { emit_json(out, &dtos) }
+/// Emit a `(location, distance)` result list as a binary buffer.
+unsafe fn emit_neighbors(
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    results: Vec<(Arc<CurrentLocation>, f64)>,
+) -> i32 {
+    unsafe { emit_buffer(out_ptr, out_len, wire::encode_neighbors(&results)) }
 }
 
-/// Emit a location result list as a JSON array of [`LocationDto`].
-unsafe fn emit_locations(out: *mut *mut c_char, results: Vec<Arc<CurrentLocation>>) -> i32 {
-    let dtos: Vec<LocationDto> = results
-        .iter()
-        .map(|loc| LocationDto::from(loc.as_ref()))
-        .collect();
-    unsafe { emit_json(out, &dtos) }
+/// Emit a location result list as a binary buffer.
+unsafe fn emit_locations(
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    results: Vec<Arc<CurrentLocation>>,
+) -> i32 {
+    unsafe { emit_buffer(out_ptr, out_len, wire::encode_locations(&results)) }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,45 +337,57 @@ pub extern "C" fn spatio_insert_trajectory(
 // Reads
 // ---------------------------------------------------------------------------
 
-/// Get an object's current location as JSON, or set `*out_json` to null if
-/// absent.
+/// Get an object's current location as a binary buffer of 0 or 1 location
+/// records.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_get(
     handle_ptr: *mut c_void,
     namespace: *const c_char,
     object_id: *const c_char,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    if out_json.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.get(ns, id) {
-        Ok(Some(loc)) => unsafe { emit_json(out_json, &LocationDto::from(loc.as_ref())) },
-        Ok(None) => {
-            unsafe { *out_json = std::ptr::null_mut() };
-            SPATIO_OK
-        }
+        Ok(opt) => unsafe {
+            emit_buffer(out_ptr, out_len, wire::encode_location_opt(opt.as_deref()))
+        },
         Err(e) => unsafe { report(err, &e) },
     }
 }
 
-/// Database statistics as JSON.
+/// Database statistics, written as 7 `u64` values into `out` (an array of at
+/// least 7): expired_count, operations_count, size_bytes, hot_state_objects,
+/// cold_state_trajectories, cold_state_buffer_bytes, memory_usage_bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_stats(
     handle_ptr: *mut c_void,
-    out_json: *mut *mut c_char,
+    out: *mut u64,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
-    unsafe { emit_json(out_json, &db.stats()) }
+    if out.is_null() {
+        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
+    }
+    let s = db.stats();
+    unsafe {
+        let a = std::slice::from_raw_parts_mut(out, 7);
+        a[0] = s.expired_count;
+        a[1] = s.operations_count;
+        a[2] = s.size_bytes as u64;
+        a[3] = s.hot_state_objects as u64;
+        a[4] = s.cold_state_trajectories as u64;
+        a[5] = s.cold_state_buffer_bytes as u64;
+        a[6] = s.memory_usage_bytes as u64;
+    }
+    SPATIO_OK
 }
 
 // ---------------------------------------------------------------------------
-// Point / volume queries (return JSON arrays)
+// Point / volume queries (return binary buffers)
 // ---------------------------------------------------------------------------
 
 /// Objects within `radius` of a point, with distances.
@@ -374,13 +400,14 @@ pub extern "C" fn spatio_query_radius(
     z: f64,
     radius: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     match db.query_radius(ns, &Point3d::new(x, y, z), radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -393,14 +420,15 @@ pub extern "C" fn spatio_query_near(
     object_id: *const c_char,
     radius: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.query_near(ns, id, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -414,13 +442,14 @@ pub extern "C" fn spatio_knn(
     y: f64,
     z: f64,
     k: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     match db.knn(ns, &Point3d::new(x, y, z), k) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -432,14 +461,15 @@ pub extern "C" fn spatio_knn_near_object(
     namespace: *const c_char,
     object_id: *const c_char,
     k: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.knn_near_object(ns, id, k) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -454,13 +484,14 @@ pub extern "C" fn spatio_query_bbox(
     max_x: f64,
     max_y: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     match db.query_bbox(ns, min_x, min_y, max_x, max_y, limit) {
-        Ok(results) => unsafe { emit_locations(out_json, results) },
+        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -476,13 +507,14 @@ pub extern "C" fn spatio_query_within_cylinder(
     max_z: f64,
     radius: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     match db.query_within_cylinder(ns, Point::new(x, y), min_z, max_z, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -499,13 +531,14 @@ pub extern "C" fn spatio_query_within_bbox_3d(
     max_y: f64,
     max_z: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     match db.query_within_bbox_3d(ns, min_x, min_y, min_z, max_x, max_y, max_z, limit) {
-        Ok(results) => unsafe { emit_locations(out_json, results) },
+        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -519,14 +552,15 @@ pub extern "C" fn spatio_query_bbox_near_object(
     width: f64,
     height: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.query_bbox_near_object(ns, id, width, height, limit) {
-        Ok(results) => unsafe { emit_locations(out_json, results) },
+        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -541,14 +575,15 @@ pub extern "C" fn spatio_query_cylinder_near_object(
     max_z: f64,
     radius: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.query_cylinder_near_object(ns, id, min_z, max_z, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_json, results) },
+        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -563,14 +598,15 @@ pub extern "C" fn spatio_query_bbox_3d_near_object(
     height: f64,
     depth: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
     let ns = tri!(unsafe { cstr(namespace) }, err);
     let id = tri!(unsafe { cstr(object_id) }, err);
     match db.query_bbox_3d_near_object(ns, id, width, height, depth, limit) {
-        Ok(results) => unsafe { emit_locations(out_json, results) },
+        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
@@ -582,7 +618,8 @@ pub extern "C" fn spatio_query_polygon(
     namespace: *const c_char,
     polygon_geojson: *const c_char,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
@@ -593,13 +630,13 @@ pub extern "C" fn spatio_query_polygon(
         err
     );
     match db.query_polygon(ns, &polygon, limit) {
-        Ok(results) => unsafe { emit_locations(out_json, results) },
+        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
         Err(e) => unsafe { report(err, &e) },
     }
 }
 
-/// Historical trajectory between two timestamps (unix seconds), as a JSON array
-/// of `{x, y, timestamp, metadata}`.
+/// Historical trajectory between two timestamps (unix seconds), as a binary
+/// buffer of trajectory records.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_query_trajectory(
     handle_ptr: *mut c_void,
@@ -608,7 +645,8 @@ pub extern "C" fn spatio_query_trajectory(
     start_secs: f64,
     end_secs: f64,
     limit: usize,
-    out_json: *mut *mut c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
     let db = tri!(unsafe { handle(handle_ptr) }, err);
@@ -623,11 +661,7 @@ pub extern "C" fn spatio_query_trajectory(
         err
     );
     match db.query_trajectory(ns, id, start, end, limit) {
-        Ok(updates) => {
-            let dtos: Vec<TrajectoryPointDto> =
-                updates.iter().map(TrajectoryPointDto::from).collect();
-            unsafe { emit_json(out_json, &dtos) }
-        }
+        Ok(updates) => unsafe { emit_buffer(out_ptr, out_len, wire::encode_trajectory(&updates)) },
         Err(e) => unsafe { report(err, &e) },
     }
 }

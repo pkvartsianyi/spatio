@@ -120,14 +120,22 @@ pub unsafe fn handle<'a>(handle: *mut c_void) -> Result<&'a Spatio, i32> {
     Ok(unsafe { &*(handle as *const Spatio) })
 }
 
-/// Serialize any value to JSON and emit it through `out`, mapping failures to a
-/// serialization error.
+/// Hand a packed binary result buffer to the caller through `out_ptr`/`out_len`.
+/// Ownership transfers to the caller, who must release it with
+/// `spatio_buffer_free`. See `wire.rs` for the layout.
 ///
 /// # Safety
-/// `out` must be null or a valid, writable `*mut *mut c_char`.
-pub unsafe fn emit_json<T: serde::Serialize>(out: *mut *mut c_char, value: &T) -> i32 {
-    match serde_json::to_string(value) {
-        Ok(s) => unsafe { out_string(out, s) },
-        Err(_) => SPATIO_ERR_SERIALIZATION,
+/// `out_ptr`/`out_len` must be null or valid, writable pointers.
+pub unsafe fn emit_buffer(out_ptr: *mut *mut u8, out_len: *mut usize, data: Box<[u8]>) -> i32 {
+    if out_ptr.is_null() || out_len.is_null() {
+        return SPATIO_ERR_NULL_ARG;
     }
+    let len = data.len();
+    // Leak the boxed slice; spatio_buffer_free reconstitutes and drops it.
+    let raw = Box::into_raw(data) as *mut u8;
+    unsafe {
+        *out_ptr = raw;
+        *out_len = len;
+    }
+    SPATIO_OK
 }
