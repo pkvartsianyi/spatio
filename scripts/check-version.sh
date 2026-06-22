@@ -82,17 +82,27 @@ fi
 if [[ -z "$SERVER_VERSION" ]]; then
     SERVER_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/server/Cargo.toml)
 fi
+CABI_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | \
+    grep -o '"name":"spatio-cabi","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+if [[ -z "$CABI_VERSION" ]]; then
+    CABI_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/cabi/Cargo.toml)
+fi
+GO_VERSION=$(tr -d '[:space:]' < bindings/go/VERSION 2>/dev/null || echo "")
 
 # Get latest git tags
 LATEST_CORE_TAG=$(git tag -l "core-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_PYTHON_TAG=$(git tag -l "python-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_TYPES_TAG=$(git tag -l "types-v*" | sort -V | tail -1 2>/dev/null || echo "none")
 LATEST_SERVER_TAG=$(git tag -l "server-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_CABI_TAG=$(git tag -l "cabi-v*" | sort -V | tail -1 2>/dev/null || echo "none")
+LATEST_GO_TAG=$(git tag -l "bindings/go/v*" | sort -V | tail -1 2>/dev/null || echo "none")
 
 LATEST_CORE_TAG_VERSION=${LATEST_CORE_TAG#core-v}
 LATEST_PYTHON_TAG_VERSION=${LATEST_PYTHON_TAG#python-v}
 LATEST_TYPES_TAG_VERSION=${LATEST_TYPES_TAG#types-v}
 LATEST_SERVER_TAG_VERSION=${LATEST_SERVER_TAG#server-v}
+LATEST_CABI_TAG_VERSION=${LATEST_CABI_TAG#cabi-v}
+LATEST_GO_TAG_VERSION=${LATEST_GO_TAG#bindings/go/v}
 
 print_info "Version Check Report"
 print_info "==================="
@@ -101,11 +111,15 @@ print_info "spatio (core) version:  $CORE_VERSION"
 print_info "spatio-py version:      $PYTHON_VERSION"
 print_info "spatio-types version:   $TYPES_VERSION"
 print_info "spatio-server version:  $SERVER_VERSION"
+print_info "spatio-cabi version:    $CABI_VERSION"
+print_info "go bindings version:    $GO_VERSION"
 print_info ""
 print_info "Latest core tag:        $LATEST_CORE_TAG"
 print_info "Latest Python tag:      $LATEST_PYTHON_TAG"
 print_info "Latest types tag:       $LATEST_TYPES_TAG"
 print_info "Latest server tag:      $LATEST_SERVER_TAG"
+print_info "Latest cabi tag:        $LATEST_CABI_TAG"
+print_info "Latest go tag:          $LATEST_GO_TAG"
 print_info ""
 
 print_info "Version Status:"
@@ -167,6 +181,34 @@ else
     print_info "No server-specific tags found. Ready for first server release."
 fi
 
+# Check cabi version against its tag
+if [[ "$LATEST_CABI_TAG" != "none" ]]; then
+    if [[ "$CABI_VERSION" == "$LATEST_CABI_TAG_VERSION" ]]; then
+        print_success "spatio-cabi version matches latest tag"
+    elif [[ "$CABI_VERSION" > "$LATEST_CABI_TAG_VERSION" ]]; then
+        print_info "spatio-cabi version ($CABI_VERSION) is newer than latest tag ($LATEST_CABI_TAG_VERSION)"
+        print_info "✓ Ready for new cabi release"
+    else
+        print_warning "spatio-cabi version ($CABI_VERSION) is older than latest tag ($LATEST_CABI_TAG_VERSION)"
+    fi
+else
+    print_info "No cabi-specific tags found. Ready for first cabi release."
+fi
+
+# Check Go bindings version against its tag
+if [[ "$LATEST_GO_TAG" != "none" ]]; then
+    if [[ "$GO_VERSION" == "$LATEST_GO_TAG_VERSION" ]]; then
+        print_success "go bindings version matches latest tag"
+    elif [[ "$GO_VERSION" > "$LATEST_GO_TAG_VERSION" ]]; then
+        print_info "go bindings version ($GO_VERSION) is newer than latest tag ($LATEST_GO_TAG_VERSION)"
+        print_info "✓ Ready for new go release"
+    else
+        print_warning "go bindings version ($GO_VERSION) is older than latest tag ($LATEST_GO_TAG_VERSION)"
+    fi
+else
+    print_info "No go-specific tags found. Ready for first go release."
+fi
+
 # Check workspace dependency consistency
 print_info ""
 print_info "Workspace Dependencies:"
@@ -201,6 +243,8 @@ print_info "  Core only:   ./scripts/bump-version.sh core <version>"
 print_info "  Python only: ./scripts/bump-version.sh python <version>"
 print_info "  Types only:  ./scripts/bump-version.sh types <version>"
 print_info "  Server only: ./scripts/bump-version.sh server <version>"
+print_info "  Cabi only:   ./scripts/bump-version.sh cabi <version>"
+print_info "  Go only:     ./scripts/bump-version.sh go <version>"
 print_info "  All:         ./scripts/bump-version.sh all <version>"
 print_info ""
 print_info "Dry run:       ./scripts/bump-version.sh <package> <version> --dry-run"

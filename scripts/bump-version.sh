@@ -60,6 +60,8 @@ The script will update versions in:
     - types: crates/types/Cargo.toml (Core types)
     - server: crates/server/Cargo.toml (RPC server)
     - client: crates/client/Cargo.toml (RPC client)
+    - cabi: crates/cabi/Cargo.toml (C ABI for language bindings)
+    - go: bindings/go/VERSION (Go bindings module)
     - all: All Cargo.toml files (same version)
 
 Note: GitHub Actions will automatically detect version changes and create releases.
@@ -126,8 +128,8 @@ if [[ -z "$NEW_VERSION" ]]; then
 fi
 
 # Validate package argument
-if [[ "$PACKAGE" != "core" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "server" && "$PACKAGE" != "client" && "$PACKAGE" != "all" ]]; then
-    print_error "Invalid package: $PACKAGE. Must be 'core', 'python', 'types', 'server', 'client', or 'all'"
+if [[ "$PACKAGE" != "core" && "$PACKAGE" != "python" && "$PACKAGE" != "types" && "$PACKAGE" != "server" && "$PACKAGE" != "client" && "$PACKAGE" != "cabi" && "$PACKAGE" != "go" && "$PACKAGE" != "all" ]]; then
+    print_error "Invalid package: $PACKAGE. Must be 'core', 'python', 'types', 'server', 'client', 'cabi', 'go', or 'all'"
     show_usage
     exit 1
 fi
@@ -218,8 +220,14 @@ case "$PACKAGE" in
     "client")
         FILES_TO_UPDATE=("crates/client/Cargo.toml")
         ;;
+    "cabi")
+        FILES_TO_UPDATE=("crates/cabi/Cargo.toml")
+        ;;
+    "go")
+        FILES_TO_UPDATE=("bindings/go/VERSION")
+        ;;
     "all")
-        FILES_TO_UPDATE=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml")
+        FILES_TO_UPDATE=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "crates/cabi/Cargo.toml" "bindings/go/VERSION")
         ;;
 esac
 
@@ -231,6 +239,18 @@ update_version_in_file() {
     if [[ ! -f "$file" ]]; then
         print_warning "File not found: $file"
         return 1
+    fi
+
+    # Bare VERSION files (e.g. the Go bindings) hold just the version string.
+    if [[ "$(basename "$file")" == "VERSION" ]]; then
+        local current_version=$(tr -d '[:space:]' < "$file")
+        if [[ "$DRY_RUN" == true ]]; then
+            print_info "Would update $file: $current_version -> $new_version"
+        else
+            print_info "Updating $file: $current_version -> $new_version"
+            echo "$new_version" > "$file"
+        fi
+        return 0
     fi
 
     local current_version=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' "$file")
@@ -534,8 +554,14 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
         "client")
             FILES_TO_ADD=("crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
+        "cabi")
+            FILES_TO_ADD=("crates/cabi/Cargo.toml" "Cargo.toml" "Cargo.lock")
+            ;;
+        "go")
+            FILES_TO_ADD=("bindings/go/VERSION")
+            ;;
         "all")
-            FILES_TO_ADD=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "crates/cabi/Cargo.toml" "bindings/go/VERSION" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
             if [[ "$NO_BENCH" == false ]]; then
                 FILES_TO_ADD+=("crates/benchmarks/results/core-v$NEW_VERSION.json" "crates/benchmarks/results/core-v$NEW_VERSION.md")
             fi

@@ -129,8 +129,14 @@ bump-server VERSION:
 bump-client VERSION:
     ./scripts/bump-version.sh client {{VERSION}}
 
-# Bump patch versions for types, core, server, client, python (dependency order).
-# Runs the core release benchmark and includes its results in the commit.
+bump-cabi VERSION:
+    ./scripts/bump-version.sh cabi {{VERSION}}
+
+bump-go VERSION:
+    ./scripts/bump-version.sh go {{VERSION}}
+
+# Bump patch versions for types, core, server, client, python, cabi, go
+# (dependency order). Runs the core release benchmark and includes its results.
 patch-all:
     #!/usr/bin/env bash
     set -e
@@ -141,6 +147,8 @@ patch-all:
     SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
     CLIENT_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-client","version":"[^"]*"' | head -1 | cut -d'"' -f8)
     PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+    CABI_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-cabi","version":"[^"]*"' | head -1 | cut -d'"' -f8)
+    GO_VERSION=$(tr -d '[:space:]' < bindings/go/VERSION)
 
     # Function to bump patch version
     bump_patch() {
@@ -156,6 +164,8 @@ patch-all:
     NEW_SERVER=$(bump_patch "$SERVER_VERSION")
     NEW_CLIENT=$(bump_patch "$CLIENT_VERSION")
     NEW_PYTHON=$(bump_patch "$PYTHON_VERSION")
+    NEW_CABI=$(bump_patch "$CABI_VERSION")
+    NEW_GO=$(bump_patch "$GO_VERSION")
 
     echo "=== Patch Version Bump ==="
     echo "  types:  $TYPES_VERSION -> $NEW_TYPES"
@@ -163,6 +173,8 @@ patch-all:
     echo "  server: $SERVER_VERSION -> $NEW_SERVER"
     echo "  client: $CLIENT_VERSION -> $NEW_CLIENT"
     echo "  python: $PYTHON_VERSION -> $NEW_PYTHON"
+    echo "  cabi:   $CABI_VERSION -> $NEW_CABI"
+    echo "  go:     $GO_VERSION -> $NEW_GO"
     echo ""
 
     # Bump in dependency order: types > core > server > client > python.
@@ -187,13 +199,21 @@ patch-all:
     ./scripts/bump-version.sh python "$NEW_PYTHON" --no-commit
 
     echo ""
+    echo "=== Bumping cabi ==="
+    ./scripts/bump-version.sh cabi "$NEW_CABI" --no-commit
+
+    echo ""
+    echo "=== Bumping go ==="
+    ./scripts/bump-version.sh go "$NEW_GO" --no-commit
+
+    echo ""
     echo "=== Committing changes ==="
-    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml bindings/python/Cargo.toml Cargo.toml Cargo.lock
+    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml bindings/python/Cargo.toml crates/cabi/Cargo.toml bindings/go/VERSION Cargo.toml Cargo.lock
     # Include the benchmark results produced by the core bump.
     if [ -f "crates/benchmarks/results/core-v$NEW_CORE.json" ]; then
         git add "crates/benchmarks/results/core-v$NEW_CORE.json" "crates/benchmarks/results/core-v$NEW_CORE.md"
     fi
-    git commit -m "bump: types $NEW_TYPES, core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT, python $NEW_PYTHON"
+    git commit -m "bump: types $NEW_TYPES, core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT, python $NEW_PYTHON, cabi $NEW_CABI, go $NEW_GO"
 
     echo ""
     echo "=== Done! ==="
