@@ -31,7 +31,7 @@ it, or run it standalone with `just bench-release <version>`.
 
 Before releasing, ensure:
 - [ ] All tests pass locally: `cargo test --all`
-- [ ] Python tests pass: `cd crates/py && python -m pytest`
+- [ ] Python tests pass: `cd bindings/python && python -m pytest`
 - [ ] Lints pass: `cargo clippy --all-targets -- -D warnings`
 - [ ] Code is formatted: `cargo fmt --all -- --check`
 - [ ] Documentation builds: `cargo doc --no-deps`
@@ -77,7 +77,7 @@ Check:
 
 ### 1. Update Version
 
-Edit `crates/py/Cargo.toml`:
+Edit `bindings/python/Cargo.toml`:
 ```toml
 [package]
 version = "0.1.0-alpha.11"  # Bump from current version
@@ -85,7 +85,7 @@ version = "0.1.0-alpha.11"  # Bump from current version
 
 ### 2. Update Python Package Metadata (Optional)
 
-If you need to update Python-specific metadata, edit `crates/py/pyproject.toml`:
+If you need to update Python-specific metadata, edit `bindings/python/pyproject.toml`:
 ```toml
 [project]
 version = "0.1.0-alpha.11"  # Should match Cargo.toml
@@ -94,7 +94,7 @@ version = "0.1.0-alpha.11"  # Should match Cargo.toml
 ### 3. Commit and Push
 
 ```bash
-git add crates/py/Cargo.toml crates/py/pyproject.toml
+git add bindings/python/Cargo.toml bindings/python/pyproject.toml
 git commit -m "chore(python): bump version to 0.1.0-alpha.11"
 git push origin main
 ```
@@ -187,7 +187,7 @@ git tag python-vX
 git push origin python-vX
 
 # Build and publish
-cd crates/py
+cd bindings/python
 maturin build --release
 maturin publish
 ```

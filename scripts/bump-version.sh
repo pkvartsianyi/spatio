@@ -56,7 +56,7 @@ EXAMPLES:
 
 The script will update versions in:
     - core: crates/core/Cargo.toml (spatio core crate)
-    - python: crates/py/Cargo.toml (Python bindings)
+    - python: bindings/python/Cargo.toml (Python bindings)
     - types: crates/types/Cargo.toml (Core types)
     - server: crates/server/Cargo.toml (RPC server)
     - client: crates/client/Cargo.toml (RPC client)
@@ -178,7 +178,7 @@ if [[ -z "$CURRENT_CORE_VERSION" ]]; then
     CURRENT_CORE_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
 fi
 if [[ -z "$CURRENT_PYTHON_VERSION" ]]; then
-    CURRENT_PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
+    CURRENT_PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' bindings/python/Cargo.toml)
 fi
 if [[ -z "$CURRENT_TYPES_VERSION" ]]; then
     CURRENT_TYPES_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
@@ -207,7 +207,7 @@ case "$PACKAGE" in
         FILES_TO_UPDATE=("crates/core/Cargo.toml")
         ;;
     "python")
-        FILES_TO_UPDATE=("crates/py/Cargo.toml")
+        FILES_TO_UPDATE=("bindings/python/Cargo.toml")
         ;;
     "types")
         FILES_TO_UPDATE=("crates/types/Cargo.toml")
@@ -219,7 +219,7 @@ case "$PACKAGE" in
         FILES_TO_UPDATE=("crates/client/Cargo.toml")
         ;;
     "all")
-        FILES_TO_UPDATE=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml")
+        FILES_TO_UPDATE=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml")
         ;;
 esac
 
@@ -523,7 +523,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             fi
             ;;
         "python")
-            FILES_TO_ADD=("crates/py/Cargo.toml" "Cargo.lock")
+            FILES_TO_ADD=("bindings/python/Cargo.toml" "Cargo.lock")
             ;;
         "types")
             FILES_TO_ADD=("crates/types/Cargo.toml" "Cargo.toml" "Cargo.lock")
@@ -535,7 +535,7 @@ if [[ "$DRY_RUN" == false && "$NO_COMMIT" == false ]]; then
             FILES_TO_ADD=("crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock")
             ;;
         "all")
-            FILES_TO_ADD=("crates/core/Cargo.toml" "crates/py/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
+            FILES_TO_ADD=("crates/core/Cargo.toml" "bindings/python/Cargo.toml" "crates/types/Cargo.toml" "crates/server/Cargo.toml" "crates/client/Cargo.toml" "Cargo.toml" "Cargo.lock" "CHANGELOG.md")
             if [[ "$NO_BENCH" == false ]]; then
                 FILES_TO_ADD+=("crates/benchmarks/results/core-v$NEW_VERSION.json" "crates/benchmarks/results/core-v$NEW_VERSION.md")
             fi

@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('crates/py/requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('bindings/python/requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -109,7 +109,7 @@ jobs:
 
       # Python testing
       - name: Install Python dependencies
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade setuptools
@@ -117,7 +117,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Build Python package
-        working-directory: crates/py
+        working-directory: bindings/python
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
@@ -125,7 +125,7 @@ jobs:
           maturin build --out dist
 
       - name: Install Python package
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           echo "Installing Python package..."
           wheel_file=$(find dist -name "*.whl" -type f | head -1)
@@ -140,13 +140,13 @@ jobs:
           python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
 
       - name: Run Python tests
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           echo "Running Python tests..."
           pytest -v
 
       - name: Run Python linting
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           ruff check src/ tests/ examples/
           mypy src/
@@ -213,3 +213,60 @@ jobs:
         run: cargo doc -p spatio -p spatio-types -p spatio-server --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # Go bindings (purego, no cgo): build the C-ABI cdylib per-OS, then test.
+  go:
+    name: Go bindings on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: bindings/go/go.sum
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build C-ABI cdylib and stage for go:embed
+        shell: bash
+        run: |
+          cargo build -p spatio-cabi --release
+          os=$(go env GOOS); arch=$(go env GOARCH)
+          case "$os" in
+            darwin) file=libspatio_cabi.dylib;;
+            *)      file=libspatio_cabi.so;;
+          esac
+          dest="bindings/go/libs/${os}_${arch}"
+          mkdir -p "$dest"
+          cp "target/release/${file}" "$dest/"
+
+      - name: Check formatting
+        working-directory: bindings/go
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt"; exit 1; }
+
+      - name: Run go vet
+        working-directory: bindings/go
+        run: go vet ./...
+
+      - name: Run tests
+        working-directory: bindings/go
+        run: go test -race ./...

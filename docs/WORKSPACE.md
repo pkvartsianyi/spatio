@@ -93,7 +93,7 @@ cargo build -p spatio-types
 cargo test -p spatio-types
 ```
 
-### `crates/py` - Python Bindings
+### `bindings/python` - Python Bindings
 
 **Package name:** `spatio-py`  
 **Published as:** `spatio` on PyPI
@@ -106,7 +106,7 @@ Python bindings for Spatio using PyO3 and Maturin.
 
 **Building:**
 ```bash
-cd crates/py
+cd bindings/python
 
 # Build and install in development mode
 maturin develop
@@ -174,7 +174,7 @@ cargo check --workspace --all-features
    members = [
        "crates/core",
        "crates/types",
-       "crates/py",
+       "bindings/python",
        "crates/new-crate",  # Add here
    ]
    ```
@@ -218,9 +218,9 @@ serde.workspace = true
 [dependencies]
 spatio-types = { version = "0.1.7", path = "../types" }
 
-# In crates/py/Cargo.toml
+# In bindings/python/Cargo.toml
 [dependencies]
-spatio = { path = "../core", features = ["sync"] }
+spatio = { path = "../../crates/core", features = ["sync"] }
 ```
 
 ## Release Process
@@ -257,7 +257,7 @@ version.workspace = true
 
 3. **spatio-py** (depends on spatio)
    ```bash
-   cd crates/py
+   cd bindings/python
    maturin publish
    ```
 
@@ -293,7 +293,7 @@ jobs:
       
       - name: Test Python bindings
         run: |
-          cd crates/py
+          cd bindings/python
           pip install maturin pytest
           maturin develop
           pytest tests/
@@ -325,7 +325,7 @@ Or exclude from default workspace builds and build separately.
 
 Ensure all path references use the correct relative paths:
 - From `crates/core` to `crates/types`: `path = "../types"`
-- From `crates/py` to `crates/core`: `path = "../core"`
+- From `bindings/python` to `crates/core`: `path = "../../crates/core"`
 
 ### Tests not found
 

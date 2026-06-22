@@ -5,17 +5,17 @@ default:
 # =============
 
 build:
-    cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client --release
+    cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi --release
 
 test *args:
-    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-integration-tests --all-features -- {{args}}
+    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi -p spatio-integration-tests --all-features -- {{args}}
 
 test-integration *args:
     cargo test -p spatio-integration-tests --all-features -- {{args}}
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py --all-targets --all-features -- -D warnings
+    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -30,52 +30,82 @@ doc:
 # ======================================
 
 py-setup:
-    cd crates/py && just setup
+    cd bindings/python && just setup
 
 py-build:
-    cd crates/py && just build
+    cd bindings/python && just build
 
 py-build-release:
-    cd crates/py && just build-release
+    cd bindings/python && just build-release
 
 py-test:
-    cd crates/py && just test
+    cd bindings/python && just test
 
 py-coverage:
-    cd crates/py && just coverage
+    cd bindings/python && just coverage
 
 py-fmt:
-    cd crates/py && just fmt
+    cd bindings/python && just fmt
 
 py-lint:
-    cd crates/py && just lint
+    cd bindings/python && just lint
 
 py-typecheck:
-    cd crates/py && just typecheck
+    cd bindings/python && just typecheck
 
 py-examples:
-    cd crates/py && just examples
+    cd bindings/python && just examples
 
 py-example name:
-    cd crates/py && just example {{name}}
+    cd bindings/python && just example {{name}}
 
 py-wheel:
-    cd crates/py && just wheel
+    cd bindings/python && just wheel
 
 py-clean:
-    cd crates/py && just clean
+    cd bindings/python && just clean
 
 py-bench:
-    cd crates/py && just bench
+    cd bindings/python && just bench
 
 py-version:
-    cd crates/py && just version
+    cd bindings/python && just version
 
 py-dev-setup:
-    cd crates/py && just dev-setup
+    cd bindings/python && just dev-setup
 
 py-ci:
-    cd crates/py && just ci
+    cd bindings/python && just ci
+
+# Go commands (purego bindings)
+# =============================
+
+# Build the C-ABI cdylib and stage it under bindings/go/libs/<goos>_<goarch>/.
+go-build-lib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p spatio-cabi --release
+    os=$(go env GOOS); arch=$(go env GOARCH)
+    case "$os" in
+      darwin) file=libspatio_cabi.dylib;;
+      *)      file=libspatio_cabi.so;;
+    esac
+    dest="bindings/go/libs/${os}_${arch}"
+    mkdir -p "$dest"
+    cp "target/release/${file}" "$dest/"
+    echo "staged ${file} -> ${dest}"
+
+go-test: go-build-lib
+    cd bindings/go && go test ./...
+
+go-vet:
+    cd bindings/go && go vet ./...
+
+go-fmt:
+    cd bindings/go && gofmt -w .
+
+go-example: go-build-lib
+    cd bindings/go && go run ./examples/basic
 
 # Version management
 # ==================
@@ -158,7 +188,7 @@ patch-all:
 
     echo ""
     echo "=== Committing changes ==="
-    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml crates/py/Cargo.toml Cargo.toml Cargo.lock
+    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml bindings/python/Cargo.toml Cargo.toml Cargo.lock
     # Include the benchmark results produced by the core bump.
     if [ -f "crates/benchmarks/results/core-v$NEW_CORE.json" ]; then
         git add "crates/benchmarks/results/core-v$NEW_CORE.json" "crates/benchmarks/results/core-v$NEW_CORE.md"
@@ -193,7 +223,7 @@ bump-python-no-commit VERSION:
 
 security-audit:
     cargo audit
-    cd crates/py && bandit -r src/ && safety check
+    cd bindings/python && bandit -r src/ && safety check
 
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
@@ -231,14 +261,14 @@ bench-server:
 
 coverage:
     cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server -p spatio-client --timeout 120 --out html
-    cd crates/py && just coverage
+    cd bindings/python && just coverage
 
 test-examples:
     cargo run -p spatio --example getting_started
     cargo run -p spatio --example spatial_queries
     cargo run -p spatio --example trajectory_tracking
     cargo run -p spatio --example 3d_spatial_tracking
-    cd crates/py && just examples
+    cd bindings/python && just examples
 
 # Combined commands
 # ================
