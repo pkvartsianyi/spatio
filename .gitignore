@@ -1,6 +1,7 @@
 # Rust build artifacts
 /target/
 crates/*/target/
+bindings/*/target/
 
 # The workspace Cargo.lock is committed (the workspace builds binaries).
 # Library-only crates keep their own lock out of version control.
@@ -78,10 +79,10 @@ env/
 ENV/
 .env/
 .python-version
-crates/py/.venv/
-crates/py/venv/
-crates/py/publish_env/
-crates/py/test_venv/
+bindings/python/.venv/
+bindings/python/venv/
+bindings/python/publish_env/
+bindings/python/test_venv/
 
 # Python artifacts
 __pycache__/
@@ -105,11 +106,11 @@ coverage.xml
 htmlcov/
 .tox/
 .nox/
-crates/py/.pytest_cache/
-crates/py/.mypy_cache/
-crates/py/.ruff_cache/
-crates/py/.qodo/
-crates/py/.benchmarks/
+bindings/python/.pytest_cache/
+bindings/python/.mypy_cache/
+bindings/python/.ruff_cache/
+bindings/python/.qodo/
+bindings/python/.benchmarks/
 
 # Python tools
 .mypy_cache/
@@ -126,7 +127,7 @@ pip-delete-this-directory.txt
 
 # maturin build artifacts
 target/wheels/
-crates/py/dist/
+bindings/python/dist/
 
 # Development and debugging
 profile.svg

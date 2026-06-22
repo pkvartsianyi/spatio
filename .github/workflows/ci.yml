@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('crates/py/requirements-dev.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('bindings/python/requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -109,7 +109,7 @@ jobs:
 
       # Python testing
       - name: Install Python dependencies
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade setuptools
@@ -117,7 +117,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Build Python package
-        working-directory: crates/py
+        working-directory: bindings/python
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         run: |
@@ -125,7 +125,7 @@ jobs:
           maturin build --out dist
 
       - name: Install Python package
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           echo "Installing Python package..."
           wheel_file=$(find dist -name "*.whl" -type f | head -1)
@@ -140,13 +140,13 @@ jobs:
           python -c "import spatio; print(f'Successfully imported spatio version {spatio.__version__}')"
 
       - name: Run Python tests
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           echo "Running Python tests..."
           pytest -v
 
       - name: Run Python linting
-        working-directory: crates/py
+        working-directory: bindings/python
         run: |
           ruff check src/ tests/ examples/
           mypy src/

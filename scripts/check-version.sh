@@ -45,8 +45,8 @@ if [[ ! -f "crates/core/Cargo.toml" ]]; then
     exit 1
 fi
 
-if [[ ! -f "crates/py/Cargo.toml" ]]; then
-    print_error "crates/py/Cargo.toml not found"
+if [[ ! -f "bindings/python/Cargo.toml" ]]; then
+    print_error "bindings/python/Cargo.toml not found"
     exit 1
 fi
 
@@ -74,7 +74,7 @@ if [[ -z "$CORE_VERSION" ]]; then
     CORE_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
 fi
 if [[ -z "$PYTHON_VERSION" ]]; then
-    PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
+    PYTHON_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' bindings/python/Cargo.toml)
 fi
 if [[ -z "$TYPES_VERSION" ]]; then
     TYPES_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)

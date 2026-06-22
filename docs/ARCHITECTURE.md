@@ -36,7 +36,7 @@ The project is divided into the following crates:
 
 ### Interface Layer
 
-- **`spatio-py` (`crates/py`)**:
+- **`spatio-py` (`bindings/python`)**:
   - Python bindings for the core `spatio` engine using `PyO3`.
   - Allows using Spatio as a native Python library (`import spatio`).
   - Bypasses the server/client layer for maximum performance in Python applications.

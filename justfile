@@ -30,52 +30,52 @@ doc:
 # ======================================
 
 py-setup:
-    cd crates/py && just setup
+    cd bindings/python && just setup
 
 py-build:
-    cd crates/py && just build
+    cd bindings/python && just build
 
 py-build-release:
-    cd crates/py && just build-release
+    cd bindings/python && just build-release
 
 py-test:
-    cd crates/py && just test
+    cd bindings/python && just test
 
 py-coverage:
-    cd crates/py && just coverage
+    cd bindings/python && just coverage
 
 py-fmt:
-    cd crates/py && just fmt
+    cd bindings/python && just fmt
 
 py-lint:
-    cd crates/py && just lint
+    cd bindings/python && just lint
 
 py-typecheck:
-    cd crates/py && just typecheck
+    cd bindings/python && just typecheck
 
 py-examples:
-    cd crates/py && just examples
+    cd bindings/python && just examples
 
 py-example name:
-    cd crates/py && just example {{name}}
+    cd bindings/python && just example {{name}}
 
 py-wheel:
-    cd crates/py && just wheel
+    cd bindings/python && just wheel
 
 py-clean:
-    cd crates/py && just clean
+    cd bindings/python && just clean
 
 py-bench:
-    cd crates/py && just bench
+    cd bindings/python && just bench
 
 py-version:
-    cd crates/py && just version
+    cd bindings/python && just version
 
 py-dev-setup:
-    cd crates/py && just dev-setup
+    cd bindings/python && just dev-setup
 
 py-ci:
-    cd crates/py && just ci
+    cd bindings/python && just ci
 
 # Go commands (purego bindings)
 # =============================
@@ -188,7 +188,7 @@ patch-all:
 
     echo ""
     echo "=== Committing changes ==="
-    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml crates/py/Cargo.toml Cargo.toml Cargo.lock
+    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml bindings/python/Cargo.toml Cargo.toml Cargo.lock
     # Include the benchmark results produced by the core bump.
     if [ -f "crates/benchmarks/results/core-v$NEW_CORE.json" ]; then
         git add "crates/benchmarks/results/core-v$NEW_CORE.json" "crates/benchmarks/results/core-v$NEW_CORE.md"
@@ -223,7 +223,7 @@ bump-python-no-commit VERSION:
 
 security-audit:
     cargo audit
-    cd crates/py && bandit -r src/ && safety check
+    cd bindings/python && bandit -r src/ && safety check
 
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
@@ -261,14 +261,14 @@ bench-server:
 
 coverage:
     cargo tarpaulin --verbose --all-features -p spatio -p spatio-types -p spatio-server -p spatio-client --timeout 120 --out html
-    cd crates/py && just coverage
+    cd bindings/python && just coverage
 
 test-examples:
     cargo run -p spatio --example getting_started
     cargo run -p spatio --example spatial_queries
     cargo run -p spatio --example trajectory_tracking
     cargo run -p spatio --example 3d_spatial_tracking
-    cd crates/py && just examples
+    cd bindings/python && just examples
 
 # Combined commands
 # ================

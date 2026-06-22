@@ -7,7 +7,7 @@ on:
       - "crates/types/Cargo.toml"
       - "crates/client/Cargo.toml"
       - "crates/core/Cargo.toml"
-      - "crates/py/Cargo.toml"
+      - "bindings/python/Cargo.toml"
       - "crates/server/Cargo.toml"
   workflow_dispatch:
 
@@ -119,16 +119,16 @@ jobs:
       - name: Check Python version changes
         id: check-python
         run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/py/Cargo.toml)
+          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' bindings/python/Cargo.toml)
           TAG_NAME="python-v$CURRENT_VERSION"
           if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/py/Cargo.toml | tail -1)
+          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 bindings/python/Cargo.toml | tail -1)
           if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/py/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
+            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:bindings/python/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
           else
             PREVIOUS_VERSION=""
           fi
@@ -466,14 +466,14 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --interpreter python${{ matrix.python-version }}
           manylinux: ${{ matrix.platform.manylinux || 'auto' }}
-          working-directory: crates/py
+          working-directory: bindings/python
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.platform.os }}-${{ matrix.platform.target }}-py${{ matrix.python-version }}
-          path: crates/py/dist/*.whl
+          path: bindings/python/dist/*.whl
 
 
   publish-to-pypi:
