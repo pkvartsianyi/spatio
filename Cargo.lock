@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "spatio"
-version = "0.3.8"
+version = "0.3.9"
 dependencies = [
  "bytes",
  "criterion",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-client"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "futures",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-py"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "pyo3",
  "pythonize",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-server"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "axum",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "spatio-types"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "geo",
  "geojson",

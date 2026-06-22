@@ -56,10 +56,10 @@ tarpc = { version = "0.34", features = [
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
 
 # Workspace crates
-spatio = { version = "0.3.8", path = "crates/core" }
-spatio-types = { version = "0.2.2", path = "crates/types" }
-spatio-server = { version = "0.2.7", path = "crates/server" }
-spatio-client = { version = "0.2.6", path = "crates/client" }
+spatio = { version = "0.3.9", path = "crates/core" }
+spatio-types = { version = "0.2.3", path = "crates/types" }
+spatio-server = { version = "0.2.8", path = "crates/server" }
+spatio-client = { version = "0.2.7", path = "crates/client" }
 
 # Dev dependencies
 criterion = "0.7.0"
