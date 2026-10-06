@@ -12,7 +12,7 @@ This crate provides fundamental types for working with spatio-temporal data, bui
 
 ```toml
 [dependencies]
-spatio-types = "0.1"
+spatio-types = "0.3"
 ```
 
 ### Optional Features
@@ -20,7 +20,7 @@ spatio-types = "0.1"
 ```toml
 [dependencies]
 # Enable GeoJSON support for serialization/deserialization
-spatio-types = { version = "0.1", features = ["geojson"] }
+spatio-types = { version = "0.3", features = ["geojson"] }
 ```
 
 ## Types
