@@ -1,4 +1,4 @@
-use spatio::{Point3d, Spatio};
+use spatio::{Point, Point3d, Spatio};
 use spatio_client::SpatioClient;
 use spatio_server::run_server;
 use std::sync::Arc;
@@ -53,8 +53,7 @@ async fn test_client_lifecycle_and_crud() -> anyhow::Result<()> {
     assert_eq!(loc.position.x(), 10.0);
 
     // Deserialize metadata
-    let meta: serde_json::Value = serde_json::from_slice(&loc.metadata)?;
-    assert_eq!(meta["city"], "Berlin");
+    assert_eq!(loc.metadata["city"], "Berlin");
 
     // Delete
     client.delete("test_ns", "p1").await?;
@@ -141,17 +140,9 @@ async fn test_trajectory() -> anyhow::Result<()> {
 
     // Insert trajectory
     let points = vec![
-        (
-            now - 100.0,
-            Point3d::new(0.0, 0.0, 0.0),
-            serde_json::json!({}),
-        ),
-        (
-            now - 50.0,
-            Point3d::new(10.0, 10.0, 0.0),
-            serde_json::json!({}),
-        ),
-        (now, Point3d::new(20.0, 20.0, 0.0), serde_json::json!({})),
+        (now - 100.0, Point::new(0.0, 0.0)),
+        (now - 50.0, Point::new(10.0, 10.0)),
+        (now, Point::new(20.0, 20.0)),
     ];
 
     client.insert_trajectory("traj", "v1", points).await?;

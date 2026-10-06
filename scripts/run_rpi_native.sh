@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Script to run Spatio benchmarks natively on Raspberry Pi 5
 # Usage: ./scripts/run_rpi_native.sh [optional-tag]

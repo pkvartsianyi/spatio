@@ -7,7 +7,7 @@ Each core release stores a `bench_core` run here, named by version:
   previous version's results.
 
 These files are generated and committed automatically by
-`scripts/bench-release.sh`, which `scripts/bump-version.sh core <version>` runs
+`scripts/bench-release.sh`, which `just bump spatio <version>` runs
 as part of cutting a core release. The `.md` file is also used as the GitHub
 Release body for the `core-v<version>` tag.
 

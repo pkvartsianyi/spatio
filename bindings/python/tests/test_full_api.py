@@ -22,6 +22,11 @@ def test_insert_trajectory(db):
 
     db.insert_trajectory(namespace, "drone1", points)
 
+    with pytest.raises(ValueError, match="z must be 0"):
+        db.insert_trajectory(
+            namespace, "drone2", [TemporalPoint(Point(0, 0, 50), time.time())]
+        )
+
     # Verify current location is the last point
     locs = db.query_radius(namespace, Point(2, 2, 0), 0.1)
     assert len(locs) == 1

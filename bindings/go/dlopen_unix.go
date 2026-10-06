@@ -10,7 +10,7 @@ import (
 
 // dlopen loads a shared library by path on Unix-like systems.
 func dlopen(path string) (uintptr, error) {
-	lib, err := purego.Dlopen(path, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	lib, err := purego.Dlopen(path, purego.RTLD_NOW|purego.RTLD_LOCAL)
 	if err != nil {
 		return 0, fmt.Errorf("spatio: dlopen %q: %w", path, err)
 	}

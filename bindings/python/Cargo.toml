@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # Core Spatio dependency
-spatio = { workspace = true, features = ["sync"] }
+spatio = { workspace = true }
 spatio-types = { workspace = true }
 serde_json = { workspace = true }
 pythonize = "0.27"

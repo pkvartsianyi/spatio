@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Script to run Spatio SERVER benchmarks natively on Raspberry Pi 5
 # Usage: ./scripts/run_rpi_server_bench.sh [optional-tag]
@@ -17,28 +17,22 @@ echo "Results will be saved to: $OUTPUT_PATH"
 
 echo "Starting Spatio Server..."
 
-if [ -f "./spatio-server" ]; then
-    SERVER_BIN="./spatio-server"
+if [ -f "./spatio-server" ] && [ -f "./bench_server" ]; then
+    BIN_DIR="."
 else
-    SERVER_BIN="cargo run --release -p spatio-server --bin spatio-server --"
+    cargo build --release -p spatio-server -p spatio-benchmarks --bin spatio-server --bin bench_server
+    BIN_DIR="./target/release"
 fi
 
-# Starting server
-$SERVER_BIN --port 3000 > server_log.txt 2>&1 &
+"$BIN_DIR/spatio-server" --port 3000 > server_log.txt 2>&1 &
 SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 echo "Server started with PID $SERVER_PID. Waiting for it to be ready..."
 
 sleep 5
 
 echo "Running benchmarks..."
-if [ -f "./bench_server" ]; then
-    ./bench_server --addr "127.0.0.1:3000" --json "$OUTPUT_PATH" -n 100000 -c 100
-else
-    cargo run --release -p spatio-benchmarks --bin bench_server -- --addr "127.0.0.1:3000" --json "$OUTPUT_PATH" -n 100000 -c 100
-fi
-
-echo "Benchmark complete. Stopping server..."
-kill $SERVER_PID
+"$BIN_DIR/bench_server" --addr "127.0.0.1:3000" --json "$OUTPUT_PATH" -n 100000 -c 100
 
 echo "------------------------------------------------"
 echo "Results saved to: $OUTPUT_PATH"

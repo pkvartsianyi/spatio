@@ -12,6 +12,7 @@
 use pyo3::exceptions::{PyIOError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use spatio::db::CurrentLocation;
 use spatio::error::SpatioError;
 use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Polygon as RustPolygon, Spatio};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
@@ -42,6 +43,40 @@ fn handle_error<T>(result: RustResult<T>) -> PyResult<T> {
 /// raising `ValueError` rather than panicking on invalid input.
 fn systemtime_from_secs(secs: f64) -> PyResult<SystemTime> {
     spatio_types::time::system_time_from_secs(secs).map_err(PyValueError::new_err)
+}
+
+fn build(py: Python<'_>, builder: spatio::DBBuilder) -> PyResult<PySpatio> {
+    let db = handle_error(py.detach(|| builder.build()))?;
+    Ok(PySpatio { db: Arc::new(db) })
+}
+
+/// `[(object_id, point, metadata, distance)]`
+fn neighbor_list(
+    py: Python<'_>,
+    results: Vec<(Arc<CurrentLocation>, f64)>,
+) -> PyResult<Py<PyList>> {
+    let list = PyList::empty(py);
+    for (loc, dist) in results {
+        let point = PyPoint {
+            inner: loc.position.clone(),
+        };
+        let meta = pythonize::pythonize(py, &loc.metadata)?;
+        list.append((loc.object_id.clone(), point, meta, dist))?;
+    }
+    Ok(list.unbind())
+}
+
+/// `[(object_id, point, metadata)]`
+fn location_list(py: Python<'_>, results: Vec<Arc<CurrentLocation>>) -> PyResult<Py<PyList>> {
+    let list = PyList::empty(py);
+    for loc in results {
+        let point = PyPoint {
+            inner: loc.position.clone(),
+        };
+        let meta = pythonize::pythonize(py, &loc.metadata)?;
+        list.append((loc.object_id.clone(), point, meta))?;
+    }
+    Ok(list.unbind())
 }
 
 /// Python wrapper for geographic Point (3D)
@@ -295,42 +330,29 @@ pub struct PySpatio {
 impl PySpatio {
     /// Create an in-memory Spatio database
     #[staticmethod]
-    fn memory() -> PyResult<Self> {
-        let db = Spatio::builder()
-            .build()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(PySpatio { db: Arc::new(db) })
+    fn memory(py: Python<'_>) -> PyResult<Self> {
+        build(py, Spatio::builder())
     }
 
     /// Create an in-memory database with custom configuration
     #[staticmethod]
-    fn memory_with_config(config: &PyConfig) -> PyResult<Self> {
-        let db = Spatio::builder()
-            .config(config.inner.clone())
-            .build()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(PySpatio { db: Arc::new(db) })
+    fn memory_with_config(py: Python<'_>, config: &PyConfig) -> PyResult<Self> {
+        build(py, Spatio::builder().config(config.inner.clone()))
     }
 
     /// Open a persistent Spatio database from file
     #[staticmethod]
-    fn open(path: &str) -> PyResult<Self> {
-        let db = Spatio::builder()
-            .path(path)
-            .build()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(PySpatio { db: Arc::new(db) })
+    fn open(py: Python<'_>, path: &str) -> PyResult<Self> {
+        build(py, Spatio::builder().path(path))
     }
 
     /// Open a persistent database with custom configuration
     #[staticmethod]
-    fn open_with_config(path: &str, config: &PyConfig) -> PyResult<Self> {
-        let db = Spatio::builder()
-            .path(path)
-            .config(config.inner.clone())
-            .build()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok(PySpatio { db: Arc::new(db) })
+    fn open_with_config(py: Python<'_>, path: &str, config: &PyConfig) -> PyResult<Self> {
+        build(
+            py,
+            Spatio::builder().path(path).config(config.inner.clone()),
+        )
     }
 
     /// Upsert an object's location
@@ -374,7 +396,8 @@ impl PySpatio {
         self.upsert(py, namespace, object_id, point, metadata, opts)
     }
 
-    /// Insert a trajectory (sequence of points)
+    /// Insert a trajectory (sequence of points). Trajectories are stored in 2D,
+    /// so a point with a non-zero z is rejected.
     #[pyo3(signature = (namespace, object_id, trajectory))]
     fn insert_trajectory(
         &self,
@@ -385,6 +408,11 @@ impl PySpatio {
     ) -> PyResult<()> {
         let mut core_trajectory = Vec::with_capacity(trajectory.len());
         for tp in trajectory {
+            if tp.point.inner.z() != 0.0 {
+                return Err(PyValueError::new_err(
+                    "trajectories are stored in 2D; point z must be 0",
+                ));
+            }
             core_trajectory.push(spatio::TemporalPoint {
                 point: spatio::Point::new(tp.point.inner.x(), tp.point.inner.y()),
                 timestamp: systemtime_from_secs(tp.timestamp)?,
@@ -411,18 +439,7 @@ impl PySpatio {
         let center_pos = center.inner.clone();
         // Release the GIL for the spatial query so other Python threads run.
         let results = py.detach(|| self.db.query_radius(namespace, &center_pos, radius, limit));
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Query objects near another object
@@ -436,18 +453,7 @@ impl PySpatio {
         limit: usize,
     ) -> PyResult<Py<PyList>> {
         let results = py.detach(|| self.db.query_near(namespace, object_id, radius, limit));
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Find k nearest neighbors in 3D
@@ -461,18 +467,7 @@ impl PySpatio {
     ) -> PyResult<Py<PyList>> {
         let center_pos = center.inner.clone();
         let results = py.detach(|| self.db.knn(namespace, &center_pos, k));
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Find k nearest neighbors near an object
@@ -485,18 +480,7 @@ impl PySpatio {
         k: usize,
     ) -> PyResult<Py<PyList>> {
         let results = py.detach(|| self.db.knn_near_object(namespace, object_id, k));
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Query trajectory
@@ -554,18 +538,7 @@ impl PySpatio {
             self.db
                 .query_bbox(namespace, min_x, min_y, max_x, max_y, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for loc in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        location_list(py, handle_error(results)?)
     }
 
     /// Query objects within a cylindrical volume
@@ -585,18 +558,7 @@ impl PySpatio {
             self.db
                 .query_within_cylinder(namespace, center_geo, min_z, max_z, radius, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Query objects within a 3D bounding box
@@ -617,18 +579,7 @@ impl PySpatio {
             self.db
                 .query_within_bbox_3d(namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for loc in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        location_list(py, handle_error(results)?)
     }
 
     /// Query objects within a bounding box relative to another object
@@ -646,18 +597,7 @@ impl PySpatio {
             self.db
                 .query_bbox_near_object(namespace, object_id, width, height, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for loc in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        location_list(py, handle_error(results)?)
     }
 
     /// Query objects within a cylindrical volume relative to another object
@@ -676,18 +616,7 @@ impl PySpatio {
             self.db
                 .query_cylinder_near_object(namespace, object_id, min_z, max_z, radius, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for (loc, dist) in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta, dist).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        neighbor_list(py, handle_error(results)?)
     }
 
     /// Query objects within a 3D bounding box relative to another object
@@ -706,18 +635,7 @@ impl PySpatio {
             self.db
                 .query_bbox_3d_near_object(namespace, object_id, width, height, depth, limit)
         });
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for loc in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        location_list(py, handle_error(results)?)
     }
 
     /// Get current location of an object
@@ -762,18 +680,7 @@ impl PySpatio {
     ) -> PyResult<Py<PyList>> {
         let poly = polygon.inner.clone();
         let results = py.detach(|| self.db.query_polygon(namespace, &poly, limit));
-        let results = handle_error(results)?;
-
-        let py_list = PyList::empty(py);
-        for loc in results {
-            let py_point = PyPoint {
-                inner: loc.position.clone(),
-            };
-            let py_meta = pythonize::pythonize(py, &loc.metadata)?;
-            let tuple = (loc.object_id.clone(), py_point, py_meta).into_pyobject(py)?;
-            py_list.append(tuple)?;
-        }
-        Ok(py_list.unbind())
+        location_list(py, handle_error(results)?)
     }
 
     /// Calculate distance between two objects
@@ -824,20 +731,15 @@ impl PySpatio {
     }
 
     /// Get database statistics
-    fn stats(&self) -> PyResult<Py<PyAny>> {
-        let stats = self.db.stats();
-
-        Python::attach(|py| {
-            let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("expired_count", stats.expired_count)?;
-            dict.set_item("operations_count", stats.operations_count)?;
-            dict.set_item("size_bytes", stats.size_bytes)?;
-            dict.set_item("hot_state_objects", stats.hot_state_objects)?;
-            dict.set_item("cold_state_trajectories", stats.cold_state_trajectories)?;
-            dict.set_item("cold_state_buffer_bytes", stats.cold_state_buffer_bytes)?;
-            dict.set_item("memory_usage_bytes", stats.memory_usage_bytes)?;
-            Ok(dict.into_any().unbind())
-        })
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let stats = py.detach(|| self.db.stats());
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("operations_count", stats.operations_count)?;
+        dict.set_item("hot_state_objects", stats.hot_state_objects)?;
+        dict.set_item("cold_state_trajectories", stats.cold_state_trajectories)?;
+        dict.set_item("cold_state_buffer_bytes", stats.cold_state_buffer_bytes)?;
+        dict.set_item("memory_usage_bytes", stats.memory_usage_bytes)?;
+        Ok(dict.into_any().unbind())
     }
 
     /// Close the database, flushing buffered writes to disk.

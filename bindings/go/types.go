@@ -38,8 +38,14 @@ type Location struct {
 	meta      []byte
 }
 
-// Metadata decodes and returns the object's metadata, or nil if it has none.
+// Metadata decodes the object's metadata as a JSON object, or nil if it has
+// none. Use MetadataValue for metadata that is not an object.
 func (l *Location) Metadata() (map[string]any, error) {
+	return decodeMetadataObject(l.meta)
+}
+
+// MetadataValue decodes the object's metadata as any JSON value, or nil.
+func (l *Location) MetadataValue() (any, error) {
 	return decodeMetadata(l.meta)
 }
 
@@ -57,16 +63,20 @@ type TrajectoryPoint struct {
 	meta      []byte
 }
 
-// Metadata decodes and returns the sample's metadata, or nil if it has none.
+// Metadata decodes the sample's metadata as a JSON object, or nil if it has
+// none. Use MetadataValue for metadata that is not an object.
 func (t *TrajectoryPoint) Metadata() (map[string]any, error) {
+	return decodeMetadataObject(t.meta)
+}
+
+// MetadataValue decodes the sample's metadata as any JSON value, or nil.
+func (t *TrajectoryPoint) MetadataValue() (any, error) {
 	return decodeMetadata(t.meta)
 }
 
 // Stats is a snapshot of database counters.
 type Stats struct {
-	ExpiredCount          uint64 `json:"expired_count"`
 	OperationsCount       uint64 `json:"operations_count"`
-	SizeBytes             uint64 `json:"size_bytes"`
 	HotStateObjects       uint64 `json:"hot_state_objects"`
 	ColdStateTrajectories uint64 `json:"cold_state_trajectories"`
 	ColdStateBufferBytes  uint64 `json:"cold_state_buffer_bytes"`
@@ -254,13 +264,25 @@ func geoJSONToPolygon(s string) (*geom.Polygon, error) {
 
 // Binary result decoding (mirrors crates/cabi/src/wire.rs)
 
-func decodeMetadata(meta []byte) (map[string]any, error) {
+func decodeMetadata(meta []byte) (any, error) {
 	if len(meta) == 0 {
 		return nil, nil
 	}
-	var m map[string]any
-	if err := json.Unmarshal(meta, &m); err != nil {
+	var v any
+	if err := json.Unmarshal(meta, &v); err != nil {
 		return nil, fmt.Errorf("spatio: decoding metadata: %w", err)
+	}
+	return v, nil
+}
+
+func decodeMetadataObject(meta []byte) (map[string]any, error) {
+	v, err := decodeMetadata(meta)
+	if v == nil || err != nil {
+		return nil, err
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("spatio: metadata is a %T, not an object; use MetadataValue", v)
 	}
 	return m, nil
 }
@@ -359,9 +381,9 @@ func decodeTrajectory(buf []byte) []TrajectoryPoint {
 	n := int(r.u32())
 	out := make([]TrajectoryPoint, n)
 	for i := range out {
-		x, y, ts := r.f64(), r.f64(), r.f64()
+		x, y, z, ts := r.f64(), r.f64(), r.f64(), r.f64()
 		out[i] = TrajectoryPoint{
-			Point:     geom.NewPointFlat(geom.XY, []float64{x, y}).SetSRID(srid4326),
+			Point:     newPoint(x, y, z),
 			Timestamp: secondsToTime(ts),
 			meta:      r.metaView(),
 		}

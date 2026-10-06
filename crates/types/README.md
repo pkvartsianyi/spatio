@@ -28,14 +28,7 @@ spatio-types = { version = "0.1", features = ["geojson"] }
 ### Point Types
 
 - **`TemporalPoint`** - 2D point with timestamp
-- **`TemporalPoint3D`** - 3D point with timestamp and altitude
 - **`Point3d`** - 3D point with altitude
-
-### Polygon Types
-
-- **`PolygonDynamic`** - 2D polygon with dynamic metadata
-- **`Polygon3D`** - 3D polygon with altitude
-- **`PolygonDynamic3D`** - 3D polygon with dynamic metadata
 
 ### Trajectory Types
 
@@ -45,9 +38,6 @@ spatio-types = { version = "0.1", features = ["geojson"] }
 ### Bounding Box Types
 
 - **`BoundingBox2D`** - 2D rectangular bounds
-- **`BoundingBox3D`** - 3D cuboid bounds
-- **`TemporalBoundingBox2D`** - 2D bounds with time range
-- **`TemporalBoundingBox3D`** - 3D bounds with time range
 
 ## Examples
 
@@ -120,23 +110,6 @@ let points = vec![
 
 let trajectory = Trajectory::new(points);
 println!("Trajectory has {} points", trajectory.points.len());
-```
-
-### 3D Bounding Boxes
-
-```rust
-use spatio_types::bbox::BoundingBox3D;
-use spatio_types::point::Point3d;
-
-// Create a 3D airspace boundary
-let airspace = BoundingBox3D::new(
-    -74.05, 40.68, 0.0,    // min_lon, min_lat, min_altitude
-    -73.90, 40.88, 500.0   // max_lon, max_lat, max_altitude
-);
-
-// Check if a drone is within airspace
-let drone = Point3d::new(-74.00, 40.75, 150.0);
-assert!(airspace.contains_point(&drone));
 ```
 
 ## Serialization

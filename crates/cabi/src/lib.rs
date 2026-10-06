@@ -20,9 +20,8 @@
 //! - **Polygons / convex hull:** GeoJSON strings.
 //! - **Timestamps:** `f64` seconds since the unix epoch.
 //!
-//! The boundary functions are written to never panic on caller input: the
-//! workspace release profile uses `panic = "abort"`, so an unwind across the
-//! ABI would abort the host process.
+//! Every fallible export runs inside [`guard`], so a panic becomes
+//! `SPATIO_ERR_OTHER` instead of unwinding into the host.
 
 // The boundary functions take raw pointers but null-check and validate them, so
 // they are exported as safe-to-call from C rather than marked `unsafe`.
@@ -51,6 +50,14 @@ macro_rules! tri {
     };
 }
 
+/// Run an export body, turning a panic into `SPATIO_ERR_OTHER`.
+fn guard(err: *mut *mut c_char, f: impl FnOnce() -> i32) -> i32 {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        unsafe { set_err(err, "internal panic") };
+        SPATIO_ERR_OTHER
+    })
+}
+
 /// Set a stock message for a non-`SpatioError` status code and return it.
 ///
 /// # Safety
@@ -66,6 +73,12 @@ unsafe fn arg_err(err: *mut *mut c_char, code: i32) -> i32 {
     };
     unsafe { set_err(err, msg) };
     code
+}
+
+/// Version of the binary result layout in [`wire`]; bumped on any change.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_wire_version() -> u32 {
+    wire::WIRE_VERSION
 }
 
 static VERSION_C: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
@@ -188,18 +201,20 @@ pub extern "C" fn spatio_open_memory(
     out_handle: *mut *mut c_void,
     err: *mut *mut c_char,
 ) -> i32 {
-    if out_handle.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
-    let cfg_json = tri!(unsafe { cstr_opt(config_json) }, err);
-    let cfg = tri!(build_config(cfg_json), err);
-    match Spatio::memory_with_config(cfg) {
-        Ok(db) => {
-            unsafe { *out_handle = Box::into_raw(Box::new(db)) as *mut c_void };
-            SPATIO_OK
+    guard(err, || {
+        if out_handle.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
         }
-        Err(e) => unsafe { report(err, &e) },
-    }
+        let cfg_json = tri!(unsafe { cstr_opt(config_json) }, err);
+        let cfg = tri!(build_config(cfg_json), err);
+        match Spatio::memory_with_config(cfg) {
+            Ok(db) => {
+                unsafe { *out_handle = Box::into_raw(Box::new(db)) as *mut c_void };
+                SPATIO_OK
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Open (or create) a persistent database at `path`. `config_json` may be null.
@@ -210,32 +225,37 @@ pub extern "C" fn spatio_open(
     out_handle: *mut *mut c_void,
     err: *mut *mut c_char,
 ) -> i32 {
-    if out_handle.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
-    let path = tri!(unsafe { cstr(path) }, err);
-    let cfg_json = tri!(unsafe { cstr_opt(config_json) }, err);
-    let cfg = tri!(build_config(cfg_json), err);
-    match Spatio::open_with_config(path, cfg) {
-        Ok(db) => {
-            unsafe { *out_handle = Box::into_raw(Box::new(db)) as *mut c_void };
-            SPATIO_OK
+    guard(err, || {
+        if out_handle.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
         }
-        Err(e) => unsafe { report(err, &e) },
-    }
+        let path = tri!(unsafe { cstr(path) }, err);
+        let cfg_json = tri!(unsafe { cstr_opt(config_json) }, err);
+        let cfg = tri!(build_config(cfg_json), err);
+        match Spatio::open_with_config(path, cfg) {
+            Ok(db) => {
+                unsafe { *out_handle = Box::into_raw(Box::new(db)) as *mut c_void };
+                SPATIO_OK
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
-/// Flush buffered writes and free the handle. The handle must not be used again.
+/// Flush buffered writes and free the handle. The handle is freed even if the
+/// flush fails and must not be used again.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_close(handle_ptr: *mut c_void, err: *mut *mut c_char) -> i32 {
-    if handle_ptr.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
-    let db = unsafe { Box::from_raw(handle_ptr as *mut Spatio) };
-    match db.close() {
-        Ok(()) => SPATIO_OK,
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        if handle_ptr.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
+        }
+        let db = unsafe { Box::from_raw(handle_ptr as *mut Spatio) };
+        match db.close() {
+            Ok(()) => SPATIO_OK,
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 // Writes
@@ -253,18 +273,20 @@ pub extern "C" fn spatio_upsert(
     opts_json: *const c_char,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    let meta = tri!(
-        parse_metadata(tri!(unsafe { cstr_opt(metadata_json) }, err)),
-        err
-    );
-    let opts = tri!(build_opts(tri!(unsafe { cstr_opt(opts_json) }, err)), err);
-    match db.upsert(ns, id, Point3d::new(x, y, z), meta, opts) {
-        Ok(()) => SPATIO_OK,
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        let meta = tri!(
+            parse_metadata(tri!(unsafe { cstr_opt(metadata_json) }, err)),
+            err
+        );
+        let opts = tri!(build_opts(tri!(unsafe { cstr_opt(opts_json) }, err)), err);
+        match db.upsert(ns, id, Point3d::new(x, y, z), meta, opts) {
+            Ok(()) => SPATIO_OK,
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Delete an object.
@@ -275,16 +297,19 @@ pub extern "C" fn spatio_delete(
     object_id: *const c_char,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.delete(ns, id) {
-        Ok(()) => SPATIO_OK,
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.delete(ns, id) {
+            Ok(()) => SPATIO_OK,
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TrajInputPoint {
     x: f64,
     y: f64,
@@ -300,30 +325,32 @@ pub extern "C" fn spatio_insert_trajectory(
     trajectory_json: *const c_char,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    let json = tri!(unsafe { cstr(trajectory_json) }, err);
-    let points: Vec<TrajInputPoint> = tri!(
-        serde_json::from_str(json).map_err(|_| SPATIO_ERR_INVALID_INPUT),
-        err
-    );
-
-    let mut trajectory = Vec::with_capacity(points.len());
-    for p in points {
-        let ts = tri!(
-            system_time_from_secs(p.t).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        let json = tri!(unsafe { cstr(trajectory_json) }, err);
+        let points: Vec<TrajInputPoint> = tri!(
+            serde_json::from_str(json).map_err(|_| SPATIO_ERR_INVALID_INPUT),
             err
         );
-        trajectory.push(TemporalPoint {
-            point: Point::new(p.x, p.y),
-            timestamp: ts,
-        });
-    }
-    match db.insert_trajectory(ns, id, &trajectory) {
-        Ok(()) => SPATIO_OK,
-        Err(e) => unsafe { report(err, &e) },
-    }
+
+        let mut trajectory = Vec::with_capacity(points.len());
+        for p in points {
+            let ts = tri!(
+                system_time_from_secs(p.t).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
+                err
+            );
+            trajectory.push(TemporalPoint {
+                point: Point::new(p.x, p.y),
+                timestamp: ts,
+            });
+        }
+        match db.insert_trajectory(ns, id, &trajectory) {
+            Ok(()) => SPATIO_OK,
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 // Reads
@@ -339,42 +366,44 @@ pub extern "C" fn spatio_get(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.get(ns, id) {
-        Ok(opt) => unsafe {
-            emit_buffer(out_ptr, out_len, wire::encode_location_opt(opt.as_deref()))
-        },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.get(ns, id) {
+            Ok(opt) => unsafe {
+                emit_buffer(out_ptr, out_len, wire::encode_location_opt(opt.as_deref()))
+            },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
-/// Database statistics, written as 7 `u64` values into `out` (an array of at
-/// least 7): expired_count, operations_count, size_bytes, hot_state_objects,
-/// cold_state_trajectories, cold_state_buffer_bytes, memory_usage_bytes.
+/// Database statistics, written as 5 `u64` values into `out`: operations_count,
+/// hot_state_objects, cold_state_trajectories, cold_state_buffer_bytes,
+/// memory_usage_bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_stats(
     handle_ptr: *mut c_void,
     out: *mut u64,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    if out.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
-    let s = db.stats();
-    unsafe {
-        let a = std::slice::from_raw_parts_mut(out, 7);
-        a[0] = s.expired_count;
-        a[1] = s.operations_count;
-        a[2] = s.size_bytes as u64;
-        a[3] = s.hot_state_objects as u64;
-        a[4] = s.cold_state_trajectories as u64;
-        a[5] = s.cold_state_buffer_bytes as u64;
-        a[6] = s.memory_usage_bytes as u64;
-    }
-    SPATIO_OK
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        if out.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
+        }
+        let s = db.stats();
+        unsafe {
+            let a = std::slice::from_raw_parts_mut(out, 5);
+            a[0] = s.operations_count;
+            a[1] = s.hot_state_objects as u64;
+            a[2] = s.cold_state_trajectories as u64;
+            a[3] = s.cold_state_buffer_bytes as u64;
+            a[4] = s.memory_usage_bytes as u64;
+        }
+        SPATIO_OK
+    })
 }
 
 // Point / volume queries (return binary buffers)
@@ -393,12 +422,14 @@ pub extern "C" fn spatio_query_radius(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.query_radius(ns, &Point3d::new(x, y, z), radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.query_radius(ns, &Point3d::new(x, y, z), radius, limit) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects near another object, with distances.
@@ -413,13 +444,15 @@ pub extern "C" fn spatio_query_near(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.query_near(ns, id, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.query_near(ns, id, radius, limit) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// k nearest neighbors of a point.
@@ -435,12 +468,14 @@ pub extern "C" fn spatio_knn(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.knn(ns, &Point3d::new(x, y, z), k) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.knn(ns, &Point3d::new(x, y, z), k) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// k nearest neighbors of another object.
@@ -454,13 +489,15 @@ pub extern "C" fn spatio_knn_near_object(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.knn_near_object(ns, id, k) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.knn_near_object(ns, id, k) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a 2D bounding box.
@@ -477,12 +514,14 @@ pub extern "C" fn spatio_query_bbox(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.query_bbox(ns, min_x, min_y, max_x, max_y, limit) {
-        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.query_bbox(ns, min_x, min_y, max_x, max_y, limit) {
+            Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a cylindrical volume, with distances.
@@ -500,12 +539,14 @@ pub extern "C" fn spatio_query_within_cylinder(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.query_within_cylinder(ns, Point::new(x, y), min_z, max_z, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.query_within_cylinder(ns, Point::new(x, y), min_z, max_z, radius, limit) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a 3D bounding box.
@@ -524,12 +565,14 @@ pub extern "C" fn spatio_query_within_bbox_3d(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.query_within_bbox_3d(ns, min_x, min_y, min_z, max_x, max_y, max_z, limit) {
-        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.query_within_bbox_3d(ns, min_x, min_y, min_z, max_x, max_y, max_z, limit) {
+            Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a bounding box centered on another object.
@@ -545,13 +588,15 @@ pub extern "C" fn spatio_query_bbox_near_object(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.query_bbox_near_object(ns, id, width, height, limit) {
-        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.query_bbox_near_object(ns, id, width, height, limit) {
+            Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a cylinder centered on another object, with distances.
@@ -568,13 +613,15 @@ pub extern "C" fn spatio_query_cylinder_near_object(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.query_cylinder_near_object(ns, id, min_z, max_z, radius, limit) {
-        Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.query_cylinder_near_object(ns, id, min_z, max_z, radius, limit) {
+            Ok(results) => unsafe { emit_neighbors(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects within a 3D bounding box centered on another object.
@@ -591,13 +638,15 @@ pub extern "C" fn spatio_query_bbox_3d_near_object(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    match db.query_bbox_3d_near_object(ns, id, width, height, depth, limit) {
-        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        match db.query_bbox_3d_near_object(ns, id, width, height, depth, limit) {
+            Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Objects whose location falls within a polygon (supplied as GeoJSON).
@@ -611,17 +660,19 @@ pub extern "C" fn spatio_query_polygon(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let geojson = tri!(unsafe { cstr(polygon_geojson) }, err);
-    let polygon = tri!(
-        Polygon::from_geojson(geojson).map_err(|_| SPATIO_ERR_INVALID_INPUT),
-        err
-    );
-    match db.query_polygon(ns, &polygon, limit) {
-        Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let geojson = tri!(unsafe { cstr(polygon_geojson) }, err);
+        let polygon = tri!(
+            Polygon::from_geojson(geojson).map_err(|_| SPATIO_ERR_INVALID_INPUT),
+            err
+        );
+        match db.query_polygon(ns, &polygon, limit) {
+            Ok(results) => unsafe { emit_locations(out_ptr, out_len, results) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Historical trajectory between two timestamps (unix seconds), as a binary
@@ -638,21 +689,25 @@ pub extern "C" fn spatio_query_trajectory(
     out_len: *mut usize,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    let start = tri!(
-        system_time_from_secs(start_secs).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
-        err
-    );
-    let end = tri!(
-        system_time_from_secs(end_secs).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
-        err
-    );
-    match db.query_trajectory(ns, id, start, end, limit) {
-        Ok(updates) => unsafe { emit_buffer(out_ptr, out_len, wire::encode_trajectory(&updates)) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        let start = tri!(
+            system_time_from_secs(start_secs).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
+            err
+        );
+        let end = tri!(
+            system_time_from_secs(end_secs).map_err(|_| SPATIO_ERR_INVALID_TIMESTAMP),
+            err
+        );
+        match db.query_trajectory(ns, id, start, end, limit) {
+            Ok(updates) => unsafe {
+                emit_buffer(out_ptr, out_len, wire::encode_trajectory(&updates))
+            },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 // Distance & geometry
@@ -670,15 +725,17 @@ pub extern "C" fn spatio_distance_between(
     out_found: *mut bool,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let a = tri!(unsafe { cstr(id1) }, err);
-    let b = tri!(unsafe { cstr(id2) }, err);
-    let m = tri!(parse_metric(tri!(unsafe { cstr(metric) }, err)), err);
-    match db.distance_between(ns, a, b, m) {
-        Ok(opt) => unsafe { write_optional_f64(out_distance, out_found, opt) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let a = tri!(unsafe { cstr(id1) }, err);
+        let b = tri!(unsafe { cstr(id2) }, err);
+        let m = tri!(parse_metric(tri!(unsafe { cstr(metric) }, err)), err);
+        match db.distance_between(ns, a, b, m) {
+            Ok(opt) => unsafe { write_optional_f64(out_distance, out_found, opt) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Distance from an object to a point under `metric`. `*out_found` is false if
@@ -695,14 +752,16 @@ pub extern "C" fn spatio_distance_to(
     out_found: *mut bool,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    let id = tri!(unsafe { cstr(object_id) }, err);
-    let m = tri!(parse_metric(tri!(unsafe { cstr(metric) }, err)), err);
-    match db.distance_to(ns, id, &Point::new(x, y), m) {
-        Ok(opt) => unsafe { write_optional_f64(out_distance, out_found, opt) },
-        Err(e) => unsafe { report(err, &e) },
-    }
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(object_id) }, err);
+        let m = tri!(parse_metric(tri!(unsafe { cstr(metric) }, err)), err);
+        match db.distance_to(ns, id, &Point::new(x, y), m) {
+            Ok(opt) => unsafe { write_optional_f64(out_distance, out_found, opt) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Helper for the `Option<f64>` return shape shared by the distance functions.
@@ -734,22 +793,27 @@ pub extern "C" fn spatio_convex_hull(
     out_geojson: *mut *mut c_char,
     err: *mut *mut c_char,
 ) -> i32 {
-    if out_geojson.is_null() {
-        return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
-    }
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.convex_hull(ns) {
-        Ok(Some(poly)) => match poly.to_geojson() {
-            Ok(s) => unsafe { out_string(out_geojson, s) },
-            Err(_) => SPATIO_ERR_SERIALIZATION,
-        },
-        Ok(None) => {
-            unsafe { *out_geojson = std::ptr::null_mut() };
-            SPATIO_OK
+    guard(err, || {
+        if out_geojson.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
         }
-        Err(e) => unsafe { report(err, &e) },
-    }
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.convex_hull(ns) {
+            Ok(Some(poly)) => match poly.to_geojson() {
+                Ok(s) => match unsafe { out_string(out_geojson, s) } {
+                    SPATIO_OK => SPATIO_OK,
+                    code => unsafe { arg_err(err, code) },
+                },
+                Err(_) => unsafe { arg_err(err, SPATIO_ERR_SERIALIZATION) },
+            },
+            Ok(None) => {
+                unsafe { *out_geojson = std::ptr::null_mut() };
+                SPATIO_OK
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
 }
 
 /// Axis-aligned 2D bounding box of all objects in a namespace. `*out_found` is
@@ -765,37 +829,39 @@ pub extern "C" fn spatio_bounding_box(
     out_found: *mut bool,
     err: *mut *mut c_char,
 ) -> i32 {
-    let db = tri!(unsafe { handle(handle_ptr) }, err);
-    let ns = tri!(unsafe { cstr(namespace) }, err);
-    match db.bounding_box(ns) {
-        Ok(Some(rect)) => {
-            unsafe {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.bounding_box(ns) {
+            Ok(Some(rect)) => {
+                unsafe {
+                    if !out_found.is_null() {
+                        *out_found = true;
+                    }
+                    if !out_min_x.is_null() {
+                        *out_min_x = rect.min().x;
+                    }
+                    if !out_min_y.is_null() {
+                        *out_min_y = rect.min().y;
+                    }
+                    if !out_max_x.is_null() {
+                        *out_max_x = rect.max().x;
+                    }
+                    if !out_max_y.is_null() {
+                        *out_max_y = rect.max().y;
+                    }
+                }
+                SPATIO_OK
+            }
+            Ok(None) => {
                 if !out_found.is_null() {
-                    *out_found = true;
+                    unsafe { *out_found = false };
                 }
-                if !out_min_x.is_null() {
-                    *out_min_x = rect.min().x;
-                }
-                if !out_min_y.is_null() {
-                    *out_min_y = rect.min().y;
-                }
-                if !out_max_x.is_null() {
-                    *out_max_x = rect.max().x;
-                }
-                if !out_max_y.is_null() {
-                    *out_max_y = rect.max().y;
-                }
+                SPATIO_OK
             }
-            SPATIO_OK
+            Err(e) => unsafe { report(err, &e) },
         }
-        Ok(None) => {
-            if !out_found.is_null() {
-                unsafe { *out_found = false };
-            }
-            SPATIO_OK
-        }
-        Err(e) => unsafe { report(err, &e) },
-    }
+    })
 }
 
 #[cfg(test)]

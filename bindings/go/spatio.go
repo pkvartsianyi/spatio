@@ -42,6 +42,40 @@ func takeBuffer(ptr unsafe.Pointer, n uintptr) []byte {
 	return buf
 }
 
+// call runs a native function under the read lock with strs converted to C
+// strings, and decodes its status.
+func (db *DB) call(strs []string, f func(h uintptr, c []cString, errOut unsafe.Pointer) int32) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == 0 {
+		return ErrClosed
+	}
+	c, err := cStrings(strs...)
+	if err != nil {
+		return err
+	}
+	var errOut unsafe.Pointer
+	code := f(db.handle, c, unsafe.Pointer(&errOut))
+	keep(c...)
+	return decode(code, errOut)
+}
+
+// query is call for functions that return a binary result buffer.
+func (db *DB) query(limit int, strs []string, f func(h uintptr, c []cString, outPtr, outLen, errOut unsafe.Pointer) int32) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("%w: limit must not be negative", ErrInvalidInput)
+	}
+	var ptr unsafe.Pointer
+	var n uintptr
+	err := db.call(strs, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return f(h, c, unsafe.Pointer(&ptr), unsafe.Pointer(&n), errOut)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return takeBuffer(ptr, n), nil
+}
+
 // OpenMemory creates an in-memory database.
 func OpenMemory(opts ...Option) (*DB, error) {
 	return open("", true, opts...)
@@ -73,9 +107,12 @@ func open(path string, inMemory bool, opts ...Option) (*DB, error) {
 		code = fnOpenMemory(cfgC.ptr(), unsafe.Pointer(&handle), unsafe.Pointer(&errOut))
 		keep(cfgC)
 	} else {
-		pathC := newCString(path)
-		code = fnOpen(pathC.ptr(), cfgC.ptr(), unsafe.Pointer(&handle), unsafe.Pointer(&errOut))
-		keep(pathC, cfgC)
+		c, err := cStrings(path)
+		if err != nil {
+			return nil, err
+		}
+		code = fnOpen(c[0].ptr(), cfgC.ptr(), unsafe.Pointer(&handle), unsafe.Pointer(&errOut))
+		keep(c[0], cfgC)
 	}
 	if err := decode(code, errOut); err != nil {
 		return nil, err
@@ -85,7 +122,8 @@ func open(path string, inMemory bool, opts ...Option) (*DB, error) {
 
 // Close flushes buffered writes and releases the database. It blocks until any
 // in-flight operations finish, and is safe to call more than once. The DB must
-// not be used afterwards (further calls return ErrClosed).
+// not be used afterwards (further calls return ErrClosed). The native handle
+// is released even if the final flush fails.
 func (db *DB) Close() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -99,12 +137,8 @@ func (db *DB) Close() error {
 }
 
 // Upsert inserts or updates an object's current location and metadata.
-func (db *DB) Upsert(namespace, objectID string, point *geom.Point, metadata map[string]any, opts ...WriteOption) error {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return ErrClosed
-	}
+// Metadata may be any JSON-encodable value; nil stores none.
+func (db *DB) Upsert(namespace, objectID string, point *geom.Point, metadata any, opts ...WriteOption) error {
 	x, y, z, err := pointXYZ(point)
 	if err != nil {
 		return err
@@ -121,41 +155,26 @@ func (db *DB) Upsert(namespace, objectID string, point *geom.Point, metadata map
 	if err != nil {
 		return fmt.Errorf("spatio: encoding write options: %w", err)
 	}
-
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
 	metaC := optCString(metaJSON)
 	optsC := optCString(optsJSON)
-	var errOut unsafe.Pointer
-	code := fnUpsert(db.handle, nsC.ptr(), idC.ptr(), x, y, z, metaC.ptr(), optsC.ptr(), unsafe.Pointer(&errOut))
-	keep(nsC, idC, metaC, optsC)
-	return decode(code, errOut)
+	err = db.call([]string{namespace, objectID}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnUpsert(h, c[0].ptr(), c[1].ptr(), x, y, z, metaC.ptr(), optsC.ptr(), errOut)
+	})
+	keep(metaC, optsC)
+	return err
 }
 
 // Delete removes an object.
 func (db *DB) Delete(namespace, objectID string) error {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var errOut unsafe.Pointer
-	code := fnDelete(db.handle, nsC.ptr(), idC.ptr(), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return decode(code, errOut)
+	return db.call([]string{namespace, objectID}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnDelete(h, c[0].ptr(), c[1].ptr(), errOut)
+	})
 }
 
 // InsertTrajectory appends a sequence of timestamped positions for an object.
 // The line's layout must carry an M ordinate holding unix-seconds timestamps
-// (geom.XYM or geom.XYZM).
+// (geom.XYM). Trajectories are stored in 2D, so a non-zero Z is rejected.
 func (db *DB) InsertTrajectory(namespace, objectID string, line *geom.LineString) error {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return ErrClosed
-	}
 	if line == nil {
 		return fmt.Errorf("%w: line is nil", ErrInvalidInput)
 	}
@@ -163,23 +182,22 @@ func (db *DB) InsertTrajectory(namespace, objectID string, line *geom.LineString
 	if mi == -1 {
 		return fmt.Errorf("%w: trajectory line needs an M ordinate for timestamps (use geom.XYM)", ErrInvalidInput)
 	}
+	zi := line.Layout().ZIndex()
 	coords := line.Coords()
 	traj := make([]trajIn, len(coords))
 	for i, c := range coords {
+		if zi != -1 && c[zi] != 0 {
+			return fmt.Errorf("%w: trajectories are 2D; z must be 0", ErrInvalidInput)
+		}
 		traj[i] = trajIn{X: c[0], Y: c[1], T: c[mi]}
 	}
 	payload, err := json.Marshal(traj)
 	if err != nil {
 		return fmt.Errorf("spatio: encoding trajectory: %w", err)
 	}
-
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	trajC := newCString(string(payload))
-	var errOut unsafe.Pointer
-	code := fnInsertTrajectory(db.handle, nsC.ptr(), idC.ptr(), trajC.ptr(), unsafe.Pointer(&errOut))
-	keep(nsC, idC, trajC)
-	return decode(code, errOut)
+	return db.call([]string{namespace, objectID, string(payload)}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnInsertTrajectory(h, c[0].ptr(), c[1].ptr(), c[2].ptr(), errOut)
+	})
 }
 
 type trajIn struct {
@@ -190,301 +208,172 @@ type trajIn struct {
 
 // Get returns an object's current location, or nil if it does not exist.
 func (db *DB) Get(namespace, objectID string) (*Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnGet(db.handle, nsC.ptr(), idC.ptr(), unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	if err := decode(code, errOut); err != nil {
+	buf, err := db.query(0, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnGet(h, c[0].ptr(), c[1].ptr(), p, n, e)
+	})
+	if err != nil {
 		return nil, err
 	}
-	return decodeLocationOne(takeBuffer(ptr, n), namespace), nil
+	return decodeLocationOne(buf, namespace), nil
 }
 
 // Stats returns a snapshot of database counters.
 func (db *DB) Stats() (*Stats, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	var arr [7]uint64
-	var errOut unsafe.Pointer
-	code := fnStats(db.handle, unsafe.Pointer(&arr[0]), unsafe.Pointer(&errOut))
-	if err := decode(code, errOut); err != nil {
+	var arr [5]uint64
+	err := db.call(nil, func(h uintptr, _ []cString, errOut unsafe.Pointer) int32 {
+		return fnStats(h, unsafe.Pointer(&arr[0]), errOut)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &Stats{
-		ExpiredCount:          arr[0],
-		OperationsCount:       arr[1],
-		SizeBytes:             arr[2],
-		HotStateObjects:       arr[3],
-		ColdStateTrajectories: arr[4],
-		ColdStateBufferBytes:  arr[5],
-		MemoryUsageBytes:      arr[6],
+		OperationsCount:       arr[0],
+		HotStateObjects:       arr[1],
+		ColdStateTrajectories: arr[2],
+		ColdStateBufferBytes:  arr[3],
+		MemoryUsageBytes:      arr[4],
 	}, nil
 }
 
-// finishNeighbors / finishLocations decode the status + binary buffer for the
-// two common result shapes, then free the buffer.
-func finishNeighbors(code int32, ptr unsafe.Pointer, n uintptr, errOut unsafe.Pointer, namespace string) ([]Neighbor, error) {
-	if err := decode(code, errOut); err != nil {
+func neighbors(buf []byte, err error, namespace string) ([]Neighbor, error) {
+	if err != nil {
 		return nil, err
 	}
-	return decodeNeighbors(takeBuffer(ptr, n), namespace), nil
+	return decodeNeighbors(buf, namespace), nil
 }
 
-func finishLocations(code int32, ptr unsafe.Pointer, n uintptr, errOut unsafe.Pointer, namespace string) ([]Location, error) {
-	if err := decode(code, errOut); err != nil {
+func locations(buf []byte, err error, namespace string) ([]Location, error) {
+	if err != nil {
 		return nil, err
 	}
-	return decodeLocations(takeBuffer(ptr, n), namespace), nil
+	return decodeLocations(buf, namespace), nil
 }
 
 // QueryRadius returns objects within radius meters of center, with distances.
 func (db *DB) QueryRadius(namespace string, center *geom.Point, radius float64, limit int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
 	x, y, z, err := pointXYZ(center)
 	if err != nil {
 		return nil, err
 	}
-	nsC := newCString(namespace)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryRadius(db.handle, nsC.ptr(), x, y, z, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryRadius(h, c[0].ptr(), x, y, z, radius, limit, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // QueryNear returns objects within radius meters of another object.
 func (db *DB) QueryNear(namespace, objectID string, radius float64, limit int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryNear(db.handle, nsC.ptr(), idC.ptr(), radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryNear(h, c[0].ptr(), c[1].ptr(), radius, limit, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // KNN returns the k nearest neighbors of a point.
 func (db *DB) KNN(namespace string, center *geom.Point, k int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
 	x, y, z, err := pointXYZ(center)
 	if err != nil {
 		return nil, err
 	}
-	nsC := newCString(namespace)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnKNN(db.handle, nsC.ptr(), x, y, z, k, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(k, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnKNN(h, c[0].ptr(), x, y, z, k, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // KNNNearObject returns the k nearest neighbors of another object.
 func (db *DB) KNNNearObject(namespace, objectID string, k int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnKNNNearObject(db.handle, nsC.ptr(), idC.ptr(), k, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(k, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnKNNNearObject(h, c[0].ptr(), c[1].ptr(), k, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // QueryBBox returns objects within a 2D bounding box.
 func (db *DB) QueryBBox(namespace string, minX, minY, maxX, maxY float64, limit int) ([]Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryBBox(db.handle, nsC.ptr(), minX, minY, maxX, maxY, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC)
-	return finishLocations(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryBBox(h, c[0].ptr(), minX, minY, maxX, maxY, limit, p, n, e)
+	})
+	return locations(buf, err, namespace)
 }
 
 // QueryWithinCylinder returns objects within a vertical cylinder, with distances.
 func (db *DB) QueryWithinCylinder(namespace string, center *geom.Point, minZ, maxZ, radius float64, limit int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
 	x, y, _, err := pointXYZ(center)
 	if err != nil {
 		return nil, err
 	}
-	nsC := newCString(namespace)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryCylinder(db.handle, nsC.ptr(), x, y, minZ, maxZ, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryCylinder(h, c[0].ptr(), x, y, minZ, maxZ, radius, limit, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // QueryWithinBBox3D returns objects within a 3D bounding box.
 func (db *DB) QueryWithinBBox3D(namespace string, minX, minY, minZ, maxX, maxY, maxZ float64, limit int) ([]Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryBBox3D(db.handle, nsC.ptr(), minX, minY, minZ, maxX, maxY, maxZ, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC)
-	return finishLocations(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryBBox3D(h, c[0].ptr(), minX, minY, minZ, maxX, maxY, maxZ, limit, p, n, e)
+	})
+	return locations(buf, err, namespace)
 }
 
 // QueryBBoxNearObject returns objects within a width×height box centered on an object.
 func (db *DB) QueryBBoxNearObject(namespace, objectID string, width, height float64, limit int) ([]Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryBBoxNear(db.handle, nsC.ptr(), idC.ptr(), width, height, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return finishLocations(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryBBoxNear(h, c[0].ptr(), c[1].ptr(), width, height, limit, p, n, e)
+	})
+	return locations(buf, err, namespace)
 }
 
 // QueryCylinderNearObject returns objects within a cylinder centered on an object.
 func (db *DB) QueryCylinderNearObject(namespace, objectID string, minZ, maxZ, radius float64, limit int) ([]Neighbor, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryCylinderNear(db.handle, nsC.ptr(), idC.ptr(), minZ, maxZ, radius, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return finishNeighbors(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryCylinderNear(h, c[0].ptr(), c[1].ptr(), minZ, maxZ, radius, limit, p, n, e)
+	})
+	return neighbors(buf, err, namespace)
 }
 
 // QueryBBox3DNearObject returns objects within a width×height×depth box centered on an object.
 func (db *DB) QueryBBox3DNearObject(namespace, objectID string, width, height, depth float64, limit int) ([]Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryBBox3DNear(db.handle, nsC.ptr(), idC.ptr(), width, height, depth, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	return finishLocations(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryBBox3DNear(h, c[0].ptr(), c[1].ptr(), width, height, depth, limit, p, n, e)
+	})
+	return locations(buf, err, namespace)
 }
 
 // QueryPolygon returns objects whose location falls within polygon.
 func (db *DB) QueryPolygon(namespace string, polygon *geom.Polygon, limit int) ([]Location, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
 	geoJSON, err := polygonToGeoJSON(polygon)
 	if err != nil {
 		return nil, err
 	}
-	nsC := newCString(namespace)
-	polyC := newCString(geoJSON)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryPolygon(db.handle, nsC.ptr(), polyC.ptr(), limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, polyC)
-	return finishLocations(code, ptr, n, errOut, namespace)
+	buf, err := db.query(limit, []string{namespace, geoJSON}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryPolygon(h, c[0].ptr(), c[1].ptr(), limit, p, n, e)
+	})
+	return locations(buf, err, namespace)
 }
 
 // QueryTrajectory returns historical samples for an object between start and end.
 func (db *DB) QueryTrajectory(namespace, objectID string, start, end float64, limit int) ([]TrajectoryPoint, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	var ptr unsafe.Pointer
-	var n uintptr
-	var errOut unsafe.Pointer
-	code := fnQueryTrajectory(db.handle, nsC.ptr(), idC.ptr(), start, end, limit, unsafe.Pointer(&ptr), unsafe.Pointer(&n), unsafe.Pointer(&errOut))
-	keep(nsC, idC)
-	if err := decode(code, errOut); err != nil {
+	buf, err := db.query(limit, []string{namespace, objectID}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnQueryTrajectory(h, c[0].ptr(), c[1].ptr(), start, end, limit, p, n, e)
+	})
+	if err != nil {
 		return nil, err
 	}
-	return decodeTrajectory(takeBuffer(ptr, n)), nil
+	return decodeTrajectory(buf), nil
 }
 
 // DistanceBetween returns the distance (meters) between two objects under
 // metric. It returns ErrObjectNotFound if either object is missing.
 func (db *DB) DistanceBetween(namespace, id1, id2 string, metric DistanceMetric) (float64, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return 0, ErrClosed
-	}
-	nsC := newCString(namespace)
-	a := newCString(id1)
-	b := newCString(id2)
-	m := newCString(string(metric))
 	var dist float64
 	var found bool
-	var errOut unsafe.Pointer
-	code := fnDistanceBetween(db.handle, nsC.ptr(), a.ptr(), b.ptr(), m.ptr(),
-		unsafe.Pointer(&dist), unsafe.Pointer(&found), unsafe.Pointer(&errOut))
-	keep(nsC, a, b, m)
-	if err := decode(code, errOut); err != nil {
+	err := db.call([]string{namespace, id1, id2, string(metric)}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnDistanceBetween(h, c[0].ptr(), c[1].ptr(), c[2].ptr(), c[3].ptr(),
+			unsafe.Pointer(&dist), unsafe.Pointer(&found), errOut)
+	})
+	if err != nil {
 		return 0, err
 	}
 	if !found {
@@ -496,25 +385,17 @@ func (db *DB) DistanceBetween(namespace, id1, id2 string, metric DistanceMetric)
 // DistanceTo returns the distance (meters) from an object to a point under
 // metric. It returns ErrObjectNotFound if the object is missing.
 func (db *DB) DistanceTo(namespace, objectID string, point *geom.Point, metric DistanceMetric) (float64, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return 0, ErrClosed
-	}
 	x, y, _, err := pointXYZ(point)
 	if err != nil {
 		return 0, err
 	}
-	nsC := newCString(namespace)
-	idC := newCString(objectID)
-	m := newCString(string(metric))
 	var dist float64
 	var found bool
-	var errOut unsafe.Pointer
-	code := fnDistanceTo(db.handle, nsC.ptr(), idC.ptr(), x, y, m.ptr(),
-		unsafe.Pointer(&dist), unsafe.Pointer(&found), unsafe.Pointer(&errOut))
-	keep(nsC, idC, m)
-	if err := decode(code, errOut); err != nil {
+	err = db.call([]string{namespace, objectID, string(metric)}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnDistanceTo(h, c[0].ptr(), c[1].ptr(), x, y, c[2].ptr(),
+			unsafe.Pointer(&dist), unsafe.Pointer(&found), errOut)
+	})
+	if err != nil {
 		return 0, err
 	}
 	if !found {
@@ -526,16 +407,11 @@ func (db *DB) DistanceTo(namespace, objectID string, point *geom.Point, metric D
 // ConvexHull returns the convex hull of all objects in a namespace, or nil if
 // there are fewer than three points.
 func (db *DB) ConvexHull(namespace string) (*geom.Polygon, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
-	var outGeo, errOut unsafe.Pointer
-	code := fnConvexHull(db.handle, nsC.ptr(), unsafe.Pointer(&outGeo), unsafe.Pointer(&errOut))
-	keep(nsC)
-	if err := decode(code, errOut); err != nil {
+	var outGeo unsafe.Pointer
+	err := db.call([]string{namespace}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnConvexHull(h, c[0].ptr(), unsafe.Pointer(&outGeo), errOut)
+	})
+	if err != nil {
 		return nil, err
 	}
 	s := consumeString(outGeo)
@@ -548,20 +424,14 @@ func (db *DB) ConvexHull(namespace string) (*geom.Polygon, error) {
 // BoundingBox returns the axis-aligned 2D bounds of all objects in a namespace,
 // or nil for an empty namespace.
 func (db *DB) BoundingBox(namespace string) (*geom.Bounds, error) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-	if db.handle == 0 {
-		return nil, ErrClosed
-	}
-	nsC := newCString(namespace)
 	var minX, minY, maxX, maxY float64
 	var found bool
-	var errOut unsafe.Pointer
-	code := fnBoundingBox(db.handle, nsC.ptr(),
-		unsafe.Pointer(&minX), unsafe.Pointer(&minY), unsafe.Pointer(&maxX), unsafe.Pointer(&maxY),
-		unsafe.Pointer(&found), unsafe.Pointer(&errOut))
-	keep(nsC)
-	if err := decode(code, errOut); err != nil {
+	err := db.call([]string{namespace}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnBoundingBox(h, c[0].ptr(),
+			unsafe.Pointer(&minX), unsafe.Pointer(&minY), unsafe.Pointer(&maxX), unsafe.Pointer(&maxY),
+			unsafe.Pointer(&found), errOut)
+	})
+	if err != nil {
 		return nil, err
 	}
 	if !found {
@@ -570,8 +440,8 @@ func (db *DB) BoundingBox(namespace string) (*geom.Bounds, error) {
 	return geom.NewBounds(geom.XY).Set(minX, minY, maxX, maxY), nil
 }
 
-// metadataJSON marshals optional metadata, returning nil for a nil map.
-func metadataJSON(m map[string]any) (*string, error) {
+// metadataJSON marshals optional metadata, returning nil for nil.
+func metadataJSON(m any) (*string, error) {
 	if m == nil {
 		return nil, nil
 	}

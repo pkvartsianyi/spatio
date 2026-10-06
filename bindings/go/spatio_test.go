@@ -332,3 +332,49 @@ func TestCloseRace(t *testing.T) {
 	go func() { _ = db.Close() }()
 	wg.Wait()
 }
+
+func TestInvalidInputs(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Upsert("ns", "a\x00b", point(1, 1), nil); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("NUL in id: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := db.QueryRadius("ns", point(1, 1), 1000, -1); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("negative limit: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := db.KNN("ns", point(1, 1), -1); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("negative k: err = %v, want ErrInvalidInput", err)
+	}
+	line := geom.NewLineStringFlat(geom.XYZM, []float64{1, 1, 50, 1000})
+	if err := db.InsertTrajectory("ns", "a", line); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("non-zero z trajectory: err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestTrajectoryAltitudeAndMetadataValue(t *testing.T) {
+	db := openTestDB(t)
+	p := geom.NewPointFlat(geom.XYZ, []float64{1, 2, 150})
+	if err := db.Upsert("air", "drone", p, []any{"a", 1.0}, spatio.WithTimestamp(time.Unix(1000, 0))); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	traj, err := db.QueryTrajectory("air", "drone", 0, 2000, 10)
+	if err != nil || len(traj) != 1 {
+		t.Fatalf("query_trajectory = %v, %v", traj, err)
+	}
+	if z := traj[0].Point.Z(); z != 150 {
+		t.Errorf("z = %v, want 150", z)
+	}
+	loc, err := db.Get("air", "drone")
+	if err != nil || loc == nil {
+		t.Fatalf("get = %v, %v", loc, err)
+	}
+	v, err := loc.MetadataValue()
+	if err != nil {
+		t.Fatalf("metadata value: %v", err)
+	}
+	if list, ok := v.([]any); !ok || len(list) != 2 {
+		t.Errorf("metadata = %#v, want [a 1]", v)
+	}
+	if _, err := loc.Metadata(); err == nil {
+		t.Error("Metadata() on a list should fail")
+	}
+}

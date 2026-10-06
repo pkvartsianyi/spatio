@@ -6,23 +6,17 @@
 use crate::compute::validation;
 use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
+use parking_lot::{Mutex, MutexGuard};
+use std::hash::BuildHasher;
 use std::path::Path;
 
 use std::time::SystemTime;
 
 mod cold_state;
 mod hot_state;
-mod namespace;
-
-#[cfg(feature = "sync")]
-mod sync;
 
 pub use cold_state::{ColdState, LocationUpdate};
 pub use hot_state::{CurrentLocation, HotState};
-pub use namespace::{Namespace, NamespaceManager};
-
-#[cfg(feature = "sync")]
-pub use sync::SyncDB;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -61,8 +55,7 @@ pub struct DB {
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
     pub(crate) ops_count: Arc<AtomicU64>,
-    #[allow(dead_code)] // retained for configuration introspection
-    pub(crate) config: Config,
+    key_locks: Arc<[Mutex<()>]>,
 }
 
 impl DB {
@@ -100,38 +93,23 @@ impl DB {
 
         // Recover current locations from cold storage (skip for :memory: mode)
         if path_ref.to_str() != Some(":memory:") {
-            match cold.recover_current_locations() {
-                Ok(recovered) => {
-                    // Persist a fresh checkpoint covering everything recovered so
-                    // the next startup replays only newly appended records. The
-                    // full history log is left intact. Best-effort: a failure here
-                    // only means the next recovery is slower, not incorrect.
-                    if let Err(e) = cold.write_checkpoint(&recovered) {
-                        log::warn!("Failed to write recovery checkpoint: {}", e);
-                    }
+            let recovered = cold.recover_current_locations()?;
+            // Persist a fresh checkpoint covering everything recovered so the
+            // next startup replays only newly appended records. Best-effort: a
+            // failure here only makes the next recovery slower.
+            if let Err(e) = cold.write_checkpoint(&recovered) {
+                log::warn!("Failed to write recovery checkpoint: {}", e);
+            }
 
-                    for (key, update) in recovered {
-                        // Parse namespace and object_id from key "namespace::object_id"
-                        if let Some(separator_idx) = key.find("::") {
-                            let namespace = &key[..separator_idx];
-                            let object_id = &key[separator_idx + 2..];
-
-                            // Update hot state with recovered location
-                            if let Err(e) = hot.update_location(
-                                namespace,
-                                object_id,
-                                update.position,
-                                update.metadata,
-                                update.timestamp,
-                            ) {
-                                log::warn!("Failed to recover location for {}: {}", key, e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to recover current locations: {}", e);
-                    // Continue anyway - partial recovery is acceptable
+            for (key, update) in recovered {
+                if let Some((namespace, object_id)) = key.split_once("::") {
+                    hot.update_location(
+                        namespace,
+                        object_id,
+                        update.position,
+                        update.metadata,
+                        update.timestamp,
+                    )?;
                 }
             }
         }
@@ -141,8 +119,14 @@ impl DB {
             cold,
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
-            config,
+            key_locks: (0..64).map(|_| Mutex::new(())).collect(),
         })
+    }
+
+    /// Serializes writes to one key so the log and hot state agree on order.
+    fn key_lock(&self, namespace: &str, object_id: &str) -> MutexGuard<'_, ()> {
+        let hash = rustc_hash::FxBuildHasher.hash_one((namespace, object_id));
+        self.key_locks[hash as usize % self.key_locks.len()].lock()
     }
 
     /// Create an in-memory database with default configuration.
@@ -172,18 +156,17 @@ impl DB {
         // Reject NaN/Inf/out-of-range coordinates before they poison the index.
         validation::validate_geographic_point_3d(&position)?;
 
-        let ts = opts
-            .as_ref()
-            .and_then(|o| o.timestamp)
-            .unwrap_or_else(SystemTime::now);
+        let ts = cold_state::truncate_to_micros(
+            opts.and_then(|o| o.timestamp)
+                .unwrap_or_else(SystemTime::now),
+        );
 
-        // 1. Update hot state (replaces old position)
-        self.hot
-            .update_location(namespace, object_id, position.clone(), metadata.clone(), ts)?;
-
-        // 2. Append to cold state
+        // Log first: a failed append must leave the hot state untouched.
+        let _guard = self.key_lock(namespace, object_id);
         self.cold
-            .append_update(namespace, object_id, position, metadata, ts)?;
+            .append_update(namespace, object_id, position.clone(), metadata.clone(), ts)?;
+        self.hot
+            .update_location(namespace, object_id, position, metadata, ts)?;
 
         self.ops_count.fetch_add(1, Ordering::Relaxed);
 
@@ -205,30 +188,56 @@ impl DB {
         }
         validate_identifier("namespace", namespace)?;
         validate_identifier("object_id", object_id)?;
+        let _guard = self.key_lock(namespace, object_id);
         self.cold.append_tombstone(namespace, object_id)?;
         self.hot.remove_object(namespace, object_id);
         Ok(())
     }
 
-    /// Insert a trajectory (sequence of points)
+    /// Insert a trajectory (sequence of points). Every point is appended to
+    /// history; the current location becomes the latest point, keeping the
+    /// object's existing metadata.
     pub fn insert_trajectory(
         &self,
         namespace: &str,
         object_id: &str,
         trajectory: &[TemporalPoint],
     ) -> Result<()> {
-        for tp in trajectory {
-            let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
-            self.upsert(
-                namespace,
-                object_id,
-                pos,
-                serde_json::json!({}),
-                Some(SetOptions {
-                    timestamp: Some(tp.timestamp),
-                }),
-            )?;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
         }
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("object_id", object_id)?;
+        let points = trajectory
+            .iter()
+            .map(|tp| {
+                let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
+                validation::validate_geographic_point_3d(&pos)?;
+                Ok((pos, cold_state::truncate_to_micros(tp.timestamp)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let Some((latest_pos, latest_ts)) = points.iter().max_by_key(|(_, ts)| *ts) else {
+            return Ok(());
+        };
+
+        let _guard = self.key_lock(namespace, object_id);
+        let metadata = self
+            .hot
+            .get_current_location(namespace, object_id)
+            .map_or_else(|| serde_json::json!({}), |loc| loc.metadata.clone());
+        for (pos, ts) in &points {
+            self.cold
+                .append_update(namespace, object_id, pos.clone(), metadata.clone(), *ts)?;
+        }
+        self.hot.update_location(
+            namespace,
+            object_id,
+            latest_pos.clone(),
+            metadata,
+            *latest_ts,
+        )?;
+        self.ops_count
+            .fetch_add(points.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 
@@ -482,17 +491,15 @@ impl DB {
 
     /// Get database statistics
     pub fn stats(&self) -> DbStats {
-        let (hot_objects, hot_memory) = self.hot.detailed_stats();
+        let hot_objects = self.hot.object_count();
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0, // TTL/expiry is not implemented; always zero
             operations_count: self.ops_count.load(Ordering::Relaxed),
-            size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,
             cold_state_trajectories: cold_trajectories,
             cold_state_buffer_bytes: cold_buffer_bytes,
-            memory_usage_bytes: hot_memory + cold_buffer_bytes,
+            memory_usage_bytes: hot_objects * 200 + cold_buffer_bytes,
         }
     }
     /// Query objects within a polygon
@@ -995,7 +1002,7 @@ mod tests {
         // Many threads hammer the same object with increasing timestamps while
         // readers query concurrently. No panic; final value is the latest write.
         let db = Arc::new(DB::memory().unwrap());
-        let base = SystemTime::now();
+        let base = cold_state::truncate_to_micros(SystemTime::now());
         let writers = 8u64;
         let per = 200u64;
 
@@ -1037,6 +1044,91 @@ mod tests {
         let loc = db.get("ns", "hot").unwrap().unwrap();
         assert_eq!(loc.timestamp, base + Duration::from_millis(max_ms));
         assert_eq!(loc.metadata, serde_json::json!({ "ms": max_ms }));
+    }
+
+    #[test]
+    fn test_racing_upsert_and_delete_agree_with_log() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let db = Arc::new(DB::memory().unwrap());
+        let pos = Point3d::new(1.0, 2.0, 0.0);
+        for _ in 0..300 {
+            let barrier = Arc::new(Barrier::new(2));
+            let (db1, b1, p) = (db.clone(), barrier.clone(), pos.clone());
+            let up = thread::spawn(move || {
+                b1.wait();
+                db1.upsert("ns", "o", p, serde_json::json!({}), None)
+                    .unwrap();
+            });
+            let (db2, b2) = (db.clone(), barrier);
+            let del = thread::spawn(move || {
+                b2.wait();
+                db2.delete("ns", "o").unwrap();
+            });
+            up.join().unwrap();
+            del.join().unwrap();
+
+            let in_log = db
+                .cold
+                .recover_current_locations()
+                .unwrap()
+                .contains_key("ns::o");
+            let in_hot = db.get("ns", "o").unwrap().is_some();
+            assert_eq!(in_hot, in_log, "hot state and log disagree after race");
+        }
+    }
+
+    #[test]
+    fn test_same_micros_timestamps_agree_with_log() {
+        let db = DB::memory().unwrap();
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        for (x, nanos) in [(1.0, 900), (2.0, 100)] {
+            db.upsert(
+                "ns",
+                "o",
+                Point3d::new(x, 0.0, 0.0),
+                serde_json::json!({}),
+                Some(SetOptions {
+                    timestamp: Some(t + Duration::from_nanos(nanos)),
+                }),
+            )
+            .unwrap();
+        }
+        let recovered = db.cold.recover_current_locations().unwrap();
+        assert_eq!(recovered["ns::o"].position.x(), 2.0);
+        assert_eq!(db.get("ns", "o").unwrap().unwrap().position.x(), 2.0);
+    }
+
+    #[test]
+    fn test_insert_trajectory_keeps_metadata_and_latest_point() {
+        let db = DB::memory().unwrap();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        db.upsert(
+            "ns",
+            "o",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({"kind": "truck"}),
+            Some(SetOptions::with_timestamp(t0)),
+        )
+        .unwrap();
+        let traj: Vec<TemporalPoint> = (1..=3u64)
+            .map(|i| {
+                TemporalPoint::new(
+                    spatio_types::geo::Point::new(i as f64, 0.0),
+                    t0 + Duration::from_secs(i),
+                )
+            })
+            .collect();
+        db.insert_trajectory("ns", "o", &traj).unwrap();
+
+        let loc = db.get("ns", "o").unwrap().unwrap();
+        assert_eq!(loc.position.x(), 3.0);
+        assert_eq!(loc.metadata, serde_json::json!({"kind": "truck"}));
+        let history = db
+            .query_trajectory("ns", "o", t0, t0 + Duration::from_secs(10), 10)
+            .unwrap();
+        assert_eq!(history.len(), 4);
     }
 
     #[test]
@@ -1083,8 +1175,8 @@ mod tests {
                 .is_err()
         );
         assert!(
-            db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(),
-            "min>=max rejected"
+            db.query_bbox("ns", 0.0, 10.0, 5.0, 0.0, 10).is_err(),
+            "min_lat>max_lat rejected"
         );
         assert!(
             db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(),
