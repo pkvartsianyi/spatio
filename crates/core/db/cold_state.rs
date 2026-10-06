@@ -586,6 +586,40 @@ fn scan_file(
     Ok(out)
 }
 
+/// Drop a trailing partial line left by a crash mid-append, so the next record
+/// starts on a fresh line. Returns the resulting file length (0 if absent).
+fn truncate_torn_tail(path: &Path) -> Result<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e.into()),
+    };
+    let len = file.metadata()?.len();
+    let mut end = len;
+    let mut buf = [0u8; 4096];
+    while end > 0 {
+        let start = end.saturating_sub(buf.len() as u64);
+        let chunk = &mut buf[..(end - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(chunk)?;
+        if let Some(i) = chunk.iter().rposition(|&b| b == b'\n') {
+            end = start + i as u64 + 1;
+            break;
+        }
+        end = start;
+    }
+    if end != len {
+        log::warn!(
+            "Truncating torn tail of trajectory log ({} bytes)",
+            len - end
+        );
+        file.set_len(end)?;
+        file.sync_all()?;
+    }
+    Ok(end)
+}
+
 /// A single record in the in-memory trajectory log (memory-mode DBs).
 #[derive(Clone)]
 enum MemRecord {
@@ -632,7 +666,7 @@ struct TrajectoryLog {
 
 impl TrajectoryLog {
     fn open_file(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
-        let existing_len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let existing_len = truncate_torn_tail(path)?;
 
         // Detect the format of an existing log; brand-new logs are V2.
         let version = if existing_len == 0 {
@@ -1698,6 +1732,42 @@ mod tests {
         assert!(
             !recovered.contains_key("ns::bad"),
             "CRC-failed record must be skipped, not silently trusted"
+        );
+    }
+
+    #[test]
+    fn test_append_after_torn_tail_is_recovered() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let open = || {
+            ColdState::new(
+                &log_path,
+                10,
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+            .unwrap()
+        };
+        let pos = Point3d::new(1.0, 2.0, 0.0);
+        {
+            let cold = open();
+            cold.append_update("ns", "a", pos.clone(), serde_json::json!({}), UNIX_EPOCH)
+                .unwrap();
+        }
+        let mut f = OpenOptions::new().append(true).open(&log_path).unwrap();
+        f.write_all(b"deadbeef|123|ns|torn").unwrap();
+        drop(f);
+
+        {
+            let cold = open();
+            cold.append_update("ns", "b", pos, serde_json::json!({}), UNIX_EPOCH)
+                .unwrap();
+        }
+        let recovered = open().recover_current_locations().unwrap();
+        assert!(recovered.contains_key("ns::a"));
+        assert!(
+            recovered.contains_key("ns::b"),
+            "record appended after a torn tail must recover"
         );
     }
 
