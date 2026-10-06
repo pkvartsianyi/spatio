@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::PersistenceConfig;
@@ -50,7 +51,7 @@ pub struct ColdState {
     /// Append-only log file
     trajectory_log: Mutex<TrajectoryLog>,
 
-    /// Recent history buffer for fast access
+    /// Recent history buffer for fast access (file backend only)
     /// Maps "namespace::object_id" -> recent updates
     recent_buffer: DashMap<String, VecDeque<LocationUpdate>>,
 
@@ -60,8 +61,9 @@ pub struct ColdState {
     /// Path of the file-backed log, if any (used for checkpoint/recovery).
     log_path: Option<std::path::PathBuf>,
 
-    /// Log held records at open; buffers then miss earlier history.
-    has_prior_history: bool,
+    /// Buffers may miss older history: the log held records at open, or a
+    /// buffer was dropped on delete.
+    has_prior_history: AtomicBool,
 
     /// Exclusive lock on `<log>.lock`, held for the lifetime of this state.
     _lock: Option<File>,
@@ -93,7 +95,7 @@ impl ColdState {
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
-            has_prior_history,
+            has_prior_history: AtomicBool::new(has_prior_history),
             _lock: Some(lock),
         })
     }
@@ -110,7 +112,7 @@ impl ColdState {
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: None,
-            has_prior_history: false,
+            has_prior_history: AtomicBool::new(false),
             _lock: None,
         }
     }
@@ -144,24 +146,22 @@ impl ColdState {
         metadata: serde_json::Value,
         timestamp: SystemTime,
     ) -> Result<()> {
-        // Truncate timestamp to microseconds to match disk storage precision,
-        // preventing duplicates when merging buffer and disk results.
-        let micros = micros_since_epoch(timestamp);
-        let timestamp_truncated = UNIX_EPOCH + std::time::Duration::from_micros(micros as u64);
-
+        // Truncate to the log's microsecond precision so buffer and disk
+        // results dedupe when merged.
         let update = LocationUpdate {
-            timestamp: timestamp_truncated,
+            timestamp: truncate_to_micros(timestamp),
             position,
             metadata,
         };
 
-        // 1. Write to persistent log (serialized via Mutex)
-        {
-            let mut log = self.trajectory_log.lock();
-            log.append(namespace, object_id, &update)?;
-        }
+        let Some(update) = self
+            .trajectory_log
+            .lock()
+            .append(namespace, object_id, update)?
+        else {
+            return Ok(());
+        };
 
-        // 2. Add to recent buffer (concurrent via DashMap)
         let full_key = Self::make_key(namespace, object_id);
         let mut buffer = self.recent_buffer.entry(full_key).or_default();
 
@@ -182,8 +182,17 @@ impl ColdState {
     /// update revives the object) — unlike updates, which resolve by timestamp.
     pub fn append_tombstone(&self, namespace: &str, object_id: &str) -> Result<()> {
         let micros = micros_since_epoch(SystemTime::now());
-        let mut log = self.trajectory_log.lock();
-        log.append_tombstone(micros, namespace, object_id)
+        self.trajectory_log
+            .lock()
+            .append_tombstone(micros, namespace, object_id)?;
+        if self
+            .recent_buffer
+            .remove(&Self::make_key(namespace, object_id))
+            .is_some()
+        {
+            self.has_prior_history.store(true, Ordering::Relaxed);
+        }
+        Ok(())
     }
 
     /// Force flush of the trajectory log to disk
@@ -209,7 +218,8 @@ impl ColdState {
             // Below capacity the buffer holds this key's complete history; at or
             // above it, some records (including newer ones, under out-of-order
             // timestamps) live only on disk, so fall through to the disk merge.
-            let buffer_is_complete = !self.has_prior_history && buffer.len() < self.buffer_capacity;
+            let buffer_is_complete = !self.has_prior_history.load(Ordering::Relaxed)
+                && buffer.len() < self.buffer_capacity;
 
             from_buffer = buffer
                 .iter()
@@ -396,6 +406,11 @@ fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io
     }
 }
 
+/// Truncate to the microsecond precision stored in the log.
+pub(crate) fn truncate_to_micros(t: SystemTime) -> SystemTime {
+    UNIX_EPOCH + Duration::from_micros(micros_since_epoch(t) as u64)
+}
+
 /// Microseconds since the Unix epoch (saturating at 0 for pre-epoch times).
 fn micros_since_epoch(t: SystemTime) -> u128 {
     t.duration_since(UNIX_EPOCH).unwrap_or_default().as_micros()
@@ -426,9 +441,10 @@ fn format_update_body(
 }
 
 /// Parse an update-record body into `(timestamp, namespace, object_id, position,
-/// metadata)`. Returns `None` for tombstones and malformed bodies (wrong field
-/// count or unparseable numbers) — the single parser shared by every read path.
-fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, serde_json::Value)> {
+/// raw metadata JSON)`. Returns `None` for tombstones and malformed bodies (wrong
+/// field count or unparseable numbers) — the single parser shared by every read
+/// path. Metadata is left raw so callers parse it only for records they keep.
+fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, &str)> {
     // splitn keeps the metadata (last field) intact even if it contains '|'.
     let parts: Vec<&str> = body.splitn(8, '|').collect();
     if parts.len() != 8 {
@@ -439,14 +455,17 @@ fn parse_update_body(body: &str) -> Option<(SystemTime, &str, &str, Point3d, ser
     let lat: f64 = parts[3].parse().ok()?;
     let lon: f64 = parts[4].parse().ok()?;
     let alt: f64 = parts[5].parse().ok()?;
-    let metadata = serde_json::from_str(parts[7]).unwrap_or(serde_json::Value::Null);
     Some((
         timestamp,
         parts[1],
         parts[2],
         Point3d::new(lon, lat, alt),
-        metadata,
+        parts[7],
     ))
+}
+
+fn parse_metadata(raw: &str) -> serde_json::Value {
+    serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
 }
 
 const SNAPSHOT_HEADER_PREFIX: &str = "#spatio-snap v1 ";
@@ -486,7 +505,7 @@ fn read_snapshot(path: &Path) -> Option<(std::collections::HashMap<String, Locat
             LocationUpdate {
                 timestamp,
                 position,
-                metadata,
+                metadata: parse_metadata(metadata),
             },
         );
     }
@@ -585,7 +604,7 @@ fn scan_file(
         out.push(LocationUpdate {
             timestamp,
             position,
-            metadata,
+            metadata: parse_metadata(metadata),
         });
     }
 
@@ -786,7 +805,14 @@ impl TrajectoryLog {
         Ok(())
     }
 
-    fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
+    /// Append an update; returns it back for the file backend so the caller
+    /// can buffer it, or `None` when the memory log took ownership.
+    fn append(
+        &mut self,
+        namespace: &str,
+        object_id: &str,
+        update: LocationUpdate,
+    ) -> Result<Option<LocationUpdate>> {
         match &mut self.backend {
             // Log format (pipe-separated, 8 fields per line):
             //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
@@ -816,12 +842,13 @@ impl TrajectoryLog {
                 records.push(MemRecord::Update {
                     namespace: namespace.to_string(),
                     object_id: object_id.to_string(),
-                    update: update.clone(),
+                    update,
                 });
-                return Ok(());
+                return Ok(None);
             }
         }
-        self.maybe_sync(false)
+        self.maybe_sync(false)?;
+        Ok(Some(update))
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
@@ -932,11 +959,12 @@ impl TrajectoryLog {
         from_offset: u64,
         entries: &mut std::collections::HashMap<String, Option<LocationUpdate>>,
     ) -> Result<()> {
-        // Keep an update if the slot is empty/tombstoned, or strictly newer.
+        // Keep an update if the slot is empty/tombstoned, or not older (ties go
+        // to the later record, matching the hot state).
         fn merge(slot: &mut Option<LocationUpdate>, update: LocationUpdate) {
             match slot {
                 None => *slot = Some(update),
-                Some(existing) if update.timestamp > existing.timestamp => *slot = Some(update),
+                Some(existing) if update.timestamp >= existing.timestamp => *slot = Some(update),
                 _ => {}
             }
         }
@@ -998,7 +1026,7 @@ impl TrajectoryLog {
                         LocationUpdate {
                             timestamp,
                             position,
-                            metadata,
+                            metadata: parse_metadata(metadata),
                         },
                     );
                 }
@@ -1813,6 +1841,80 @@ mod tests {
         assert!(open().is_err(), "second open must fail while locked");
         drop(first);
         assert!(open().is_ok(), "lock is released on drop");
+    }
+
+    #[test]
+    fn test_memory_mode_keeps_no_recent_buffer() {
+        let cold = ColdState::new_memory(10);
+        for i in 0..3 {
+            cold.append_update(
+                "ns",
+                "o",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({}),
+                UNIX_EPOCH + Duration::from_secs(i),
+            )
+            .unwrap();
+        }
+        assert!(cold.recent_buffer.is_empty());
+        let traj = cold
+            .query_trajectory(
+                "ns",
+                "o",
+                UNIX_EPOCH,
+                UNIX_EPOCH + Duration::from_secs(9),
+                10,
+            )
+            .unwrap();
+        assert_eq!(traj.len(), 3);
+    }
+
+    #[test]
+    fn test_tombstone_drops_buffer_but_keeps_history() {
+        let dir = tempdir().unwrap();
+        let cold = ColdState::new(
+            &dir.path().join("traj.log"),
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        let pos = Point3d::new(0.0, 0.0, 0.0);
+        let t = |s| UNIX_EPOCH + Duration::from_secs(s);
+        cold.append_update("ns", "o", pos.clone(), serde_json::json!({}), t(1))
+            .unwrap();
+        cold.append_tombstone("ns", "o").unwrap();
+        assert!(cold.recent_buffer.is_empty(), "delete must drop the buffer");
+
+        cold.append_update("ns", "o", pos, serde_json::json!({}), t(2))
+            .unwrap();
+        let traj = cold.query_trajectory("ns", "o", t(0), t(9), 10).unwrap();
+        assert_eq!(traj.len(), 2, "pre-delete history must stay queryable");
+    }
+
+    #[test]
+    fn test_equal_timestamps_later_record_wins_on_recovery() {
+        let dir = tempdir().unwrap();
+        let cold = ColdState::new(
+            &dir.path().join("traj.log"),
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+        .unwrap();
+        for x in [1.0, 2.0] {
+            cold.append_update(
+                "ns",
+                "o",
+                Point3d::new(x, 0.0, 0.0),
+                serde_json::json!({}),
+                UNIX_EPOCH,
+            )
+            .unwrap();
+        }
+        cold.flush().unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        assert_eq!(recovered["ns::o"].position.x(), 2.0);
     }
 
     /// Legacy V1 logs (no header, no CRC) must still be recoverable.
