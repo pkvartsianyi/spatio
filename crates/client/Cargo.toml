@@ -16,18 +16,6 @@ spatio-server = { workspace = true }
 spatio-types = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
-tokio-stream = { workspace = true }
-futures = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tarpc = { workspace = true }
-tokio-serde = { workspace = true }
-
-# Optional HTTP transport
-reqwest = { version = "0.12", features = ["json"], optional = true }
-
-[features]
-default = []
-http = ["reqwest"]

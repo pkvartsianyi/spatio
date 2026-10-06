@@ -13,6 +13,16 @@ toolchain needed to build your program. Geometry types come from
 go get github.com/pkvartsianyi/spatio/bindings/go
 ```
 
+The module does not ship the native library (`libs/` is empty in the
+published module). Download the asset for your platform from the matching
+`cabi-v*` [GitHub release](https://github.com/pkvartsianyi/spatio/releases)
+(`libspatio_cabi-<goos>_<goarch>.{so,dylib}`) and point `SPATIO_LIB_PATH` at
+it:
+
+```bash
+export SPATIO_LIB_PATH=/path/to/libspatio_cabi-linux_amd64.so
+```
+
 ## Quick start
 
 ```go
@@ -53,16 +63,18 @@ func main() {
 
 Geometries returned by the bindings carry SRID 4326 (WGS84). For
 `InsertTrajectory`, the line's `M` ordinate holds each sample's timestamp as
-unix seconds (use `geom.XYM`).
+unix seconds (use `geom.XYM`); trajectories are stored in 2D, so a non-zero Z is
+rejected.
 
 Errors map to sentinel values (`spatio.ErrObjectNotFound`, `spatio.ErrClosed`,
 …); match them with `errors.Is`.
 
 ## Metadata
 
-`Location` and `TrajectoryPoint` expose metadata lazily via a `Metadata()
-(map[string]any, error)` method rather than an eager field, so queries that only
-need positions/distances never pay to decode it:
+`Upsert` accepts any JSON-encodable metadata. `Location` and `TrajectoryPoint`
+decode it lazily, so queries that only need positions/distances never pay for
+it: `Metadata() (map[string]any, error)` for JSON objects, and
+`MetadataValue() (any, error)` for any value (e.g. lists written from Python):
 
 ```go
 for _, n := range nearby {
@@ -86,8 +98,12 @@ geometry-shaped).
 At first use the bindings load the platform shared library, in order:
 
 1. `SPATIO_LIB_PATH`, if set, points directly at the library file.
-2. Otherwise the library embedded for `GOOS_GOARCH` under `libs/` is extracted
-   to a temp file and loaded.
+2. Otherwise the library embedded for `GOOS_GOARCH` under `libs/` (present only
+   in builds that staged it, e.g. this repo after `just go-build-lib`) is
+   extracted to a temp file, loaded, and the temp file removed.
+
+The library's result-buffer layout version must match the bindings, otherwise
+loading fails with an error.
 
 ## Developing in this repo
 

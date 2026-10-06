@@ -3,6 +3,7 @@ use spatio::Spatio;
 use spatio_server::run_server;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -40,13 +41,17 @@ async fn main() -> anyhow::Result<()> {
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let shutdown = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("Failed to listen for ctrl_c signal");
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let shutdown = async move {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
     };
 
-    run_server(listener, Arc::new(db), Box::pin(shutdown)).await?;
+    let db = Arc::new(db);
+    run_server(listener, db.clone(), Box::pin(shutdown)).await?;
+    db.close()?;
 
     Ok(())
 }

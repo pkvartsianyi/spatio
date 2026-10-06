@@ -64,7 +64,7 @@ async fn test_trajectory_rpc() -> anyhow::Result<()> {
         .unwrap()
         .as_secs_f64();
 
-    let trajectory = vec![(now, Point3d::new(10.0, 10.0, 0.0), serde_json::json!({}))];
+    let trajectory = vec![(now, spatio::Point::new(10.0, 10.0))];
     client
         .insert_trajectory("traj_ns", "truck1", trajectory)
         .await?;

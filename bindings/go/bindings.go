@@ -10,15 +10,16 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
 )
 
-// Prebuilt libraries, one per platform, populated by CI / `just go-build-lib`
-// into libs/<goos>_<goarch>/. Embedding the directory keeps `go get` working
-// without a C toolchain.
+// Prebuilt libraries, one per platform, staged by `just go-build-lib` into
+// libs/<goos>_<goarch>/. They are not committed, so module consumers set
+// SPATIO_LIB_PATH instead.
 //
 //go:embed libs
 var embeddedLibs embed.FS
@@ -36,6 +37,9 @@ const (
 	statusErrNullArg       = 8
 	statusErrUTF8          = 9
 )
+
+// wireVersion must match WIRE_VERSION in crates/cabi/src/wire.rs.
+const wireVersion = 2
 
 // C ABI entry points, bound at load time by registerLibrary.
 var (
@@ -88,9 +92,27 @@ func ensureLoaded() error {
 			loadErr = err
 			return
 		}
+		if loadErr = checkWireVersion(lib); loadErr != nil {
+			return
+		}
 		registerLibrary(lib)
 	})
 	return loadErr
+}
+
+// checkWireVersion rejects a native library whose result layout differs from
+// the one this package decodes.
+func checkWireVersion(lib uintptr) error {
+	sym, err := purego.Dlsym(lib, "spatio_wire_version")
+	if err != nil {
+		return fmt.Errorf("spatio: native library is too old (no wire version): %w", err)
+	}
+	var fn func() uint32
+	purego.RegisterFunc(&fn, sym)
+	if v := fn(); v != wireVersion {
+		return fmt.Errorf("spatio: native library wire version %d, want %d", v, wireVersion)
+	}
+	return nil
 }
 
 // platformLibName returns the shared-library filename for the current OS.
@@ -115,13 +137,15 @@ func loadLibrary() (uintptr, error) {
 	data, err := embeddedLibs.ReadFile(path.Join("libs", platform, name))
 	if err != nil {
 		return 0, fmt.Errorf("spatio: no embedded library for %s/%s and SPATIO_LIB_PATH is unset; "+
-			"build it with `just go-build-lib` or set SPATIO_LIB_PATH: %w", runtime.GOOS, runtime.GOARCH, err)
+			"set SPATIO_LIB_PATH to a downloaded release library: %w", runtime.GOOS, runtime.GOARCH, err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "spatio-lib-")
 	if err != nil {
 		return 0, fmt.Errorf("spatio: creating temp dir for native library: %w", err)
 	}
+	// Once loaded, the mapping outlives the file, so the copy is not kept.
+	defer os.RemoveAll(tmpDir)
 	libPath := filepath.Join(tmpDir, name)
 	if err := os.WriteFile(libPath, data, 0o600); err != nil {
 		return 0, fmt.Errorf("spatio: writing native library: %w", err)
@@ -182,6 +206,19 @@ func Version() (string, error) {
 // uses ptr() returns.
 type cString struct {
 	buf []byte
+}
+
+// cStrings converts caller-supplied strings for C, rejecting any containing a
+// NUL byte, which C would silently truncate at.
+func cStrings(ss ...string) ([]cString, error) {
+	out := make([]cString, len(ss))
+	for i, s := range ss {
+		if strings.IndexByte(s, 0) >= 0 {
+			return nil, fmt.Errorf("%w: string contains a NUL byte", ErrInvalidInput)
+		}
+		out[i] = newCString(s)
+	}
+	return out, nil
 }
 
 func newCString(s string) cString {

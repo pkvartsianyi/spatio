@@ -101,7 +101,6 @@ lint.ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["F811", "PLR2004", "T201"]
 "examples/**/*.py" = ["T201"]
-"src/spatio/types.py" = ["TC004", "F821"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["spatio"]

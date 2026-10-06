@@ -17,7 +17,7 @@
 //! Record shapes:
 //! - **neighbor**   `x y z timestamp distance` (5×f64), `id:str`, `meta:bytes`
 //! - **location**   `x y z timestamp` (4×f64), `id:str`, `meta:bytes`
-//! - **trajectory** `x y timestamp` (3×f64), `meta:bytes`
+//! - **trajectory** `x y z timestamp` (4×f64), `meta:bytes`
 //!
 //! `get` reuses the **location** shape with a count of 0 or 1.
 
@@ -25,19 +25,13 @@ use spatio::db::{CurrentLocation, LocationUpdate};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Layout version, exported as `spatio_wire_version`.
+pub const WIRE_VERSION: u32 = 2;
+
 fn unix_secs(t: SystemTime) -> f64 {
     t.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
-}
-
-/// Metadata as raw bytes; `Null` collapses to an empty blob (decoded as nil).
-fn meta_bytes(v: &serde_json::Value) -> Vec<u8> {
-    if v.is_null() {
-        Vec::new()
-    } else {
-        serde_json::to_vec(v).unwrap_or_default()
-    }
 }
 
 /// Little-endian buffer builder.
@@ -63,6 +57,17 @@ impl Writer {
         self.buf.extend_from_slice(b);
     }
 
+    /// Metadata as JSON written in place; `Null` collapses to an empty blob.
+    fn meta(&mut self, v: &serde_json::Value) {
+        let at = self.buf.len();
+        self.buf.extend_from_slice(&0u32.to_le_bytes());
+        if !v.is_null() && serde_json::to_writer(&mut self.buf, v).is_err() {
+            self.buf.truncate(at + 4);
+        }
+        let len = (self.buf.len() - at - 4) as u32;
+        self.buf[at..at + 4].copy_from_slice(&len.to_le_bytes());
+    }
+
     #[inline]
     fn str(&mut self, s: &str) {
         self.bytes(s.as_bytes());
@@ -80,7 +85,7 @@ fn write_location(w: &mut Writer, loc: &CurrentLocation) {
     w.f64(loc.position.z());
     w.f64(unix_secs(loc.timestamp));
     w.str(&loc.object_id);
-    w.bytes(&meta_bytes(&loc.metadata));
+    w.meta(&loc.metadata);
 }
 
 /// Encode `(location, distance)` results (radius/knn/cylinder queries).
@@ -93,7 +98,7 @@ pub fn encode_neighbors(results: &[(Arc<CurrentLocation>, f64)]) -> Box<[u8]> {
         w.f64(unix_secs(loc.timestamp));
         w.f64(*dist);
         w.str(&loc.object_id);
-        w.bytes(&meta_bytes(&loc.metadata));
+        w.meta(&loc.metadata);
     }
     w.into_box()
 }
@@ -122,8 +127,9 @@ pub fn encode_trajectory(updates: &[LocationUpdate]) -> Box<[u8]> {
     for u in updates {
         w.f64(u.position.x());
         w.f64(u.position.y());
+        w.f64(u.position.z());
         w.f64(unix_secs(u.timestamp));
-        w.bytes(&meta_bytes(&u.metadata));
+        w.meta(&u.metadata);
     }
     w.into_box()
 }

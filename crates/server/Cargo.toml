@@ -22,24 +22,9 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-bytes = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 futures = { workspace = true }
-tokio-stream = { workspace = true }
 tarpc = { workspace = true }
-tokio-serde = { workspace = true }
-
-# Optional HTTP transport
-axum = { version = "0.7", optional = true }
-tower = { version = "0.4", optional = true }
-
-[features]
-default = []
-http = ["axum", "tower"]
-
-[dev-dependencies]
-tokio-test = "0.4"
