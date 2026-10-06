@@ -12,7 +12,7 @@ use spatio_types::point::Point3d;
 pub struct LocationUpdate {
     pub timestamp: f64,
     pub position: Point3d,
-    pub metadata: Vec<u8>,
+    pub metadata: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,7 +25,7 @@ pub struct Stats {
 pub struct CurrentLocation {
     pub object_id: String,
     pub position: Point3d,
-    pub metadata: Vec<u8>,
+    pub metadata: serde_json::Value,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -84,7 +84,7 @@ pub trait SpatioService {
     async fn insert_trajectory(
         namespace: String,
         id: String,
-        trajectory: Vec<(f64, Point3d, serde_json::Value)>,
+        trajectory: Vec<(f64, Point)>,
     ) -> Result<(), String>;
 
     async fn query_bbox_3d(
@@ -131,5 +131,5 @@ pub trait SpatioService {
         namespace: String,
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>, String>;
 
-    async fn stats() -> Stats;
+    async fn stats() -> Result<Stats, String>;
 }

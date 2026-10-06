@@ -1,11 +1,6 @@
 //! Spatio Server
 //!
-//! High-performance server for Spatio spatio-temporal database.
-//!
-//! # Transports
-//!
-//! - **RPC** (default): High-performance tarpc-based transport
-//! - **HTTP** (optional): REST API, enable with `http` feature
+//! High-performance tarpc-based RPC server for Spatio spatio-temporal database.
 //!
 //! # Example
 //!
@@ -18,11 +13,9 @@
 pub mod handler;
 pub mod protocol;
 pub mod reader;
-pub mod transport;
-pub mod writer;
+mod rpc;
 
 // Re-export protocol types for client usage
 pub use protocol::{CurrentLocation, LocationUpdate, SpatioService, SpatioServiceClient, Stats};
 
-// Re-export default transport for convenience
-pub use transport::rpc::run_server;
+pub use rpc::{MAX_FRAME_BYTES, run_server};

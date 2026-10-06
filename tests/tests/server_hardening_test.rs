@@ -80,7 +80,7 @@ async fn test_malformed_trajectory_timestamp_does_not_kill_writer() -> anyhow::R
     let client = SpatioClient::connect(bound_addr).await?;
 
     // A negative timestamp would previously panic the writer thread.
-    let bad = vec![(-1.0_f64, Point3d::new(1.0, 2.0, 0.0), serde_json::json!({}))];
+    let bad = vec![(-1.0_f64, spatio::Point::new(1.0, 2.0))];
     let err = client.insert_trajectory("ns", "obj", bad).await;
     assert!(err.is_err(), "malformed timestamp must be rejected");
 
@@ -95,5 +95,64 @@ async fn test_malformed_trajectory_timestamp_does_not_kill_writer() -> anyhow::R
         .await?;
     assert!(client.get("ns", "obj2").await?.is_some());
 
+    Ok(())
+}
+
+async fn spawn_server() -> anyhow::Result<(std::net::SocketAddr, Arc<Spatio>)> {
+    let db = Arc::new(Spatio::builder().build()?);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let server_db = db.clone();
+    tokio::spawn(async move {
+        let _ = run_server(listener, server_db, futures::future::pending()).await;
+    });
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    Ok((addr, db))
+}
+
+fn grid_point(i: usize) -> spatio::Point3d {
+    spatio::Point3d::new((i % 100) as f64 * 0.001, (i / 100) as f64 * 0.001, 0.0)
+}
+
+#[tokio::test]
+async fn test_large_limit_is_capped_and_fits_in_a_frame() -> anyhow::Result<()> {
+    let (addr, db) = spawn_server().await?;
+    for i in 0..12_000 {
+        db.upsert(
+            "ns",
+            &format!("o{i}"),
+            grid_point(i),
+            serde_json::json!({"i": i}),
+            None,
+        )?;
+    }
+    let client = SpatioClient::connect(addr).await?;
+    let res = client
+        .query_bbox("ns", -1.0, -1.0, 1.0, 1.0, 60_000)
+        .await?;
+    assert_eq!(res.len(), 10_000);
+    assert!(res[0].metadata["i"].is_number());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_client_recovers_after_oversized_reply() -> anyhow::Result<()> {
+    let (addr, db) = spawn_server().await?;
+    let blob = "x".repeat(2048);
+    for i in 0..5_000 {
+        db.upsert(
+            "ns",
+            &format!("o{i}"),
+            grid_point(i),
+            serde_json::json!({"b": blob}),
+            None,
+        )?;
+    }
+    let client = SpatioClient::connect(addr).await?;
+    assert!(client
+        .query_bbox("ns", -1.0, -1.0, 1.0, 1.0, 10_000)
+        .await
+        .is_err());
+    assert!(client.get("ns", "o1").await?.is_some());
     Ok(())
 }

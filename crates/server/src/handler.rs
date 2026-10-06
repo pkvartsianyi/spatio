@@ -2,56 +2,55 @@
 
 use crate::protocol::{CurrentLocation, LocationUpdate, SpatioService, Stats};
 use crate::reader::Reader;
-use crate::writer::WriteOp;
 use spatio::Spatio;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::time::system_time_from_secs;
 use std::sync::Arc;
 use tarpc::context;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::Semaphore;
 
-/// Upper bound on result/neighbour counts accepted from the wire, so a single
-/// request can't drive an unbounded allocation.
-const MAX_QUERY_LIMIT: usize = 100_000;
+/// Upper bound on result/neighbour counts accepted from the wire, so a reply
+/// stays well under the transport frame limit.
+pub const MAX_QUERY_LIMIT: usize = 10_000;
 
 #[derive(Clone)]
 pub struct Handler {
-    write_tx: mpsc::Sender<WriteOp>,
+    db: Arc<Spatio>,
     reader: Reader,
+    permits: Arc<Semaphore>,
 }
 
 impl Handler {
-    pub fn new(db: Arc<Spatio>, write_tx: mpsc::Sender<WriteOp>) -> Self {
-        let reader = Reader::new(db);
-        Self { write_tx, reader }
+    pub fn new(db: Arc<Spatio>, permits: Arc<Semaphore>) -> Self {
+        let reader = Reader::new(db.clone());
+        Self {
+            db,
+            reader,
+            permits,
+        }
     }
 
-    /// Enqueue a write and await its actual completion on the writer thread.
-    async fn submit_write(
-        &self,
-        make_op: impl FnOnce(oneshot::Sender<Result<(), String>>) -> WriteOp,
-    ) -> Result<(), String> {
-        let (ack_tx, ack_rx) = oneshot::channel();
-        self.write_tx
-            .send(make_op(ack_tx))
+    /// Run a blocking DB call on the blocking pool, bounded by the shared
+    /// permit pool so requests can't pile up unbounded blocking work.
+    async fn blocking<T, F>(&self, f: F) -> Result<T, String>
+    where
+        F: FnOnce() -> Result<T, String> + Send + 'static,
+        T: Send + 'static,
+    {
+        let permit = self
+            .permits
+            .clone()
+            .acquire_owned()
             .await
-            .map_err(|_| "Server storage is overwhelmed or shutting down".to_string())?;
-        ack_rx
-            .await
-            .map_err(|_| "Write was dropped before completion".to_string())?
-    }
-}
-
-/// Run a blocking reader call on the blocking pool so it can't stall the async
-/// runtime, mapping a join failure to an error string.
-async fn blocking<T, F>(f: F) -> Result<T, String>
-where
-    F: FnOnce() -> Result<T, String> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
+            .map_err(|_| "Server is shutting down".to_string())?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            f()
+        })
         .await
         .map_err(|e| format!("Internal error: {e}"))?
+    }
 }
 
 impl SpatioService for Handler {
@@ -63,12 +62,10 @@ impl SpatioService for Handler {
         point: Point3d,
         metadata: serde_json::Value,
     ) -> Result<(), String> {
-        self.submit_write(|ack| WriteOp::Upsert {
-            namespace,
-            id,
-            point,
-            metadata,
-            ack,
+        let db = self.db.clone();
+        self.blocking(move || {
+            db.upsert(&namespace, &id, point, metadata, None)
+                .map_err(|e| e.to_string())
         })
         .await
     }
@@ -79,8 +76,8 @@ impl SpatioService for Handler {
         namespace: String,
         id: String,
     ) -> Result<Option<CurrentLocation>, String> {
-        let reader = self.reader;
-        blocking(move || reader.get(&namespace, &id)).await
+        let reader = self.reader.clone();
+        self.blocking(move || reader.get(&namespace, &id)).await
     }
 
     async fn delete(
@@ -89,7 +86,8 @@ impl SpatioService for Handler {
         namespace: String,
         id: String,
     ) -> Result<(), String> {
-        self.submit_write(|ack| WriteOp::Delete { namespace, id, ack })
+        let db = self.db.clone();
+        self.blocking(move || db.delete(&namespace, &id).map_err(|e| e.to_string()))
             .await
     }
 
@@ -101,9 +99,10 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.query_radius(&namespace, &center, radius, limit)).await
+        self.blocking(move || reader.query_radius(&namespace, &center, radius, limit))
+            .await
     }
 
     async fn knn(
@@ -113,9 +112,10 @@ impl SpatioService for Handler {
         center: Point3d,
         k: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let k = k.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.knn(&namespace, &center, k)).await
+        self.blocking(move || reader.knn(&namespace, &center, k))
+            .await
     }
 
     async fn query_bbox(
@@ -128,9 +128,10 @@ impl SpatioService for Handler {
         max_y: f64,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.query_bbox(&namespace, min_x, min_y, max_x, max_y, limit)).await
+        self.blocking(move || reader.query_bbox(&namespace, min_x, min_y, max_x, max_y, limit))
+            .await
     }
 
     async fn query_cylinder(
@@ -143,10 +144,12 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.query_cylinder(&namespace, center, min_z, max_z, radius, limit))
-            .await
+        self.blocking(move || {
+            reader.query_cylinder(&namespace, center, min_z, max_z, radius, limit)
+        })
+        .await
     }
 
     async fn query_trajectory(
@@ -158,9 +161,9 @@ impl SpatioService for Handler {
         end_time: Option<f64>,
         limit: usize,
     ) -> Result<Vec<LocationUpdate>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.query_trajectory(&namespace, &id, start_time, end_time, limit))
+        self.blocking(move || reader.query_trajectory(&namespace, &id, start_time, end_time, limit))
             .await
     }
 
@@ -169,13 +172,16 @@ impl SpatioService for Handler {
         _: context::Context,
         namespace: String,
         id: String,
-        trajectory: Vec<(f64, Point3d, serde_json::Value)>,
+        trajectory: Vec<(f64, Point)>,
     ) -> Result<(), String> {
-        self.submit_write(|ack| WriteOp::InsertTrajectory {
-            namespace,
-            id,
-            trajectory,
-            ack,
+        let db = self.db.clone();
+        self.blocking(move || {
+            let points = trajectory
+                .into_iter()
+                .map(|(ts, p)| Ok(spatio::TemporalPoint::new(p, system_time_from_secs(ts)?)))
+                .collect::<Result<Vec<_>, String>>()?;
+            db.insert_trajectory(&namespace, &id, &points)
+                .map_err(|e| e.to_string())
         })
         .await
     }
@@ -192,9 +198,9 @@ impl SpatioService for Handler {
         max_z: f64,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || {
+        self.blocking(move || {
             reader.query_bbox_3d(&namespace, min_x, min_y, min_z, max_x, max_y, max_z, limit)
         })
         .await
@@ -208,9 +214,10 @@ impl SpatioService for Handler {
         radius: f64,
         limit: usize,
     ) -> Result<Vec<(CurrentLocation, f64)>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.query_near(&namespace, &id, radius, limit)).await
+        self.blocking(move || reader.query_near(&namespace, &id, radius, limit))
+            .await
     }
 
     async fn contains(
@@ -220,9 +227,10 @@ impl SpatioService for Handler {
         polygon: Polygon,
         limit: usize,
     ) -> Result<Vec<CurrentLocation>, String> {
-        let reader = self.reader;
+        let reader = self.reader.clone();
         let limit = limit.min(MAX_QUERY_LIMIT);
-        blocking(move || reader.contains(&namespace, &polygon, limit)).await
+        self.blocking(move || reader.contains(&namespace, &polygon, limit))
+            .await
     }
 
     async fn distance(
@@ -233,8 +241,9 @@ impl SpatioService for Handler {
         id2: String,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>, String> {
-        let reader = self.reader;
-        blocking(move || reader.distance(&namespace, &id1, &id2, metric)).await
+        let reader = self.reader.clone();
+        self.blocking(move || reader.distance(&namespace, &id1, &id2, metric))
+            .await
     }
 
     async fn distance_to(
@@ -245,8 +254,9 @@ impl SpatioService for Handler {
         point: Point,
         metric: Option<DistanceMetric>,
     ) -> Result<Option<f64>, String> {
-        let reader = self.reader;
-        blocking(move || reader.distance_to(&namespace, &id, &point, metric)).await
+        let reader = self.reader.clone();
+        self.blocking(move || reader.distance_to(&namespace, &id, &point, metric))
+            .await
     }
 
     async fn convex_hull(
@@ -254,8 +264,8 @@ impl SpatioService for Handler {
         _: context::Context,
         namespace: String,
     ) -> Result<Option<Polygon>, String> {
-        let reader = self.reader;
-        blocking(move || reader.convex_hull(&namespace)).await
+        let reader = self.reader.clone();
+        self.blocking(move || reader.convex_hull(&namespace)).await
     }
 
     async fn bounding_box(
@@ -263,11 +273,12 @@ impl SpatioService for Handler {
         _: context::Context,
         namespace: String,
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>, String> {
-        let reader = self.reader;
-        blocking(move || reader.bounding_box(&namespace)).await
+        let reader = self.reader.clone();
+        self.blocking(move || reader.bounding_box(&namespace)).await
     }
 
-    async fn stats(self, _: context::Context) -> Stats {
-        self.reader.stats()
+    async fn stats(self, _: context::Context) -> Result<Stats, String> {
+        let reader = self.reader.clone();
+        self.blocking(move || Ok(reader.stats())).await
     }
 }

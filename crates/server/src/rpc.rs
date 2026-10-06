@@ -1,12 +1,14 @@
 //! tarpc transport for the Spatio server.
 
 use futures::prelude::*;
+use futures::stream::FuturesUnordered;
 use spatio::Spatio;
 
 use std::sync::Arc;
 use std::time::Duration;
 use tarpc::server::{self, Channel};
 use tarpc::tokio_serde::formats::Json;
+use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tracing::{error, info};
 
@@ -15,13 +17,19 @@ use crate::protocol::SpatioService;
 
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-/// Maximum accepted frame size (bytes). Bounds per-request allocation from
-/// untrusted clients.
-const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum frame size (bytes) in either direction. Bounds per-request
+/// allocation from untrusted clients; clients must use the same limit.
+pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum concurrently accepted client connections.
 const MAX_CONNECTIONS: usize = 1024;
 /// Maximum in-flight requests handled concurrently on a single connection.
 const MAX_REQUESTS_PER_CONNECTION: usize = 256;
+/// Maximum concurrent blocking DB calls across all connections.
+const MAX_BLOCKING_TASKS: usize = 256;
+/// Server-side cap on a single request, regardless of the client's deadline.
+const MAX_REQUEST_DURATION: Duration = Duration::from_secs(30);
+/// Connections with no in-flight request and no traffic for this long are closed.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Run the tarpc RPC server until `shutdown` resolves.
 pub async fn run_server(
@@ -29,9 +37,8 @@ pub async fn run_server(
     db: Arc<Spatio>,
     mut shutdown: impl Future<Output = ()> + Unpin + Send + 'static,
 ) -> anyhow::Result<()> {
-    let (write_tx, writer_handle) = crate::writer::spawn_background_writer(db.clone(), 10_000);
-
-    let handler = Handler::new(db, write_tx);
+    let permits = Arc::new(Semaphore::new(MAX_BLOCKING_TASKS));
+    let handler = Handler::new(db, permits.clone());
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let mut conns = tokio::task::JoinSet::new();
 
@@ -53,20 +60,7 @@ pub async fn run_server(
                         let server = handler.clone();
                         conns.spawn(async move {
                             let _permit = permit; // held for the connection's lifetime
-                            let codec = LengthDelimitedCodec::builder()
-                                .max_frame_length(MAX_FRAME_BYTES)
-                                .new_codec();
-                            let framed = Framed::new(socket, codec);
-                            let transport = tarpc::serde_transport::new(framed, Json::default());
-
-                            server::BaseChannel::with_defaults(transport)
-                                .execute(server.serve())
-                                // Bound concurrent in-flight requests per connection
-                                // rather than spawning an unbounded task per response.
-                                .for_each_concurrent(MAX_REQUESTS_PER_CONNECTION, |response| async move {
-                                    response.await;
-                                })
-                                .await;
+                            serve_connection(socket, server).await;
                         });
                     }
                     Err(e) => {
@@ -86,24 +80,30 @@ pub async fn run_server(
         }
     }
 
-    // Abort in-flight connections, then close the writer's channel and wait for
-    // it to drain its queue so durability is preserved on shutdown.
+    // Abort in-flight connections, then wait for already-started DB calls to finish.
     conns.shutdown().await;
-    drop(handler);
-    match tokio::task::spawn_blocking(move || writer_handle.join()).await {
-        Ok(Ok(())) => {}
-        // The writer thread panicked: buffered writes may have been lost, so
-        // surface it rather than letting shutdown look clean.
-        Ok(Err(panic)) => {
-            let msg = panic
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("unknown panic");
-            error!("Background writer thread panicked: {msg}");
-        }
-        Err(e) => error!("Failed to join background writer task: {e}"),
-    }
+    let _ = permits.acquire_many(MAX_BLOCKING_TASKS as u32).await;
 
     Ok(())
+}
+
+async fn serve_connection(socket: TcpStream, server: Handler) {
+    let codec = LengthDelimitedCodec::builder()
+        .max_frame_length(MAX_FRAME_BYTES)
+        .new_codec();
+    let transport = tarpc::serde_transport::new(Framed::new(socket, codec), Json::default());
+    let requests = server::BaseChannel::with_defaults(transport).execute(server.serve());
+    let mut requests = std::pin::pin!(requests);
+    let mut in_flight = FuturesUnordered::new();
+
+    loop {
+        tokio::select! {
+            next = requests.next(), if in_flight.len() < MAX_REQUESTS_PER_CONNECTION => match next {
+                Some(response) => in_flight.push(tokio::time::timeout(MAX_REQUEST_DURATION, response)),
+                None => break,
+            },
+            Some(_) = in_flight.next() => {}
+            _ = tokio::time::sleep(IDLE_TIMEOUT), if in_flight.is_empty() => break,
+        }
+    }
 }
