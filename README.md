@@ -170,7 +170,7 @@ Connect using the native Rust client (`spatio-client`):
 ```rust
 use spatio_client::SpatioClient;
 
-let client = SpatioClient::new("127.0.0.1".to_string(), 3000);
+let client = SpatioClient::connect("127.0.0.1:3000".parse()?).await?;
 let stats = client.stats().await?;
 ```
 

@@ -32,7 +32,7 @@ The project is divided into the following crates:
 - **`spatio-client` (`crates/client`)**:
   - Native Rust RPC client for `spatio-server`.
   - Provides a strongly-typed async API to interact with a remote Spatio instance.
-  - Supports TCP transport (and optional HTTP).
+  - Uses a TCP transport.
 
 ### Interface Layer
 
