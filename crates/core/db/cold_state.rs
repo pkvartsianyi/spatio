@@ -62,6 +62,9 @@ pub struct ColdState {
 
     /// Log held records at open; buffers then miss earlier history.
     has_prior_history: bool,
+
+    /// Exclusive lock on `<log>.lock`, held for the lifetime of this state.
+    _lock: Option<File>,
 }
 
 impl ColdState {
@@ -76,6 +79,7 @@ impl ColdState {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let lock = lock_log(log_path)?;
 
         let has_prior_history =
             std::fs::metadata(log_path).is_ok_and(|m| m.len() > LOG_HEADER_V2.len() as u64 + 1);
@@ -90,6 +94,7 @@ impl ColdState {
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
             has_prior_history,
+            _lock: Some(lock),
         })
     }
 
@@ -106,6 +111,7 @@ impl ColdState {
             buffer_capacity,
             log_path: None,
             has_prior_history: false,
+            _lock: None,
         }
     }
 
@@ -584,6 +590,26 @@ fn scan_file(
     }
 
     Ok(out)
+}
+
+/// Take an exclusive advisory lock on a `<log>.lock` sidecar. A sidecar rather
+/// than the log itself, since Windows locks would also block log reads.
+fn lock_log(log_path: &Path) -> Result<File> {
+    let mut lock_path = log_path.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(crate::error::SpatioError::Other(format!(
+            "database {} is already open by another instance",
+            log_path.display()
+        ))),
+        Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+    }
 }
 
 /// Drop a trailing partial line left by a crash mid-append, so the next record
@@ -1769,6 +1795,24 @@ mod tests {
             recovered.contains_key("ns::b"),
             "record appended after a torn tail must recover"
         );
+    }
+
+    #[test]
+    fn test_second_open_of_same_log_is_rejected() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let open = || {
+            ColdState::new(
+                &log_path,
+                10,
+                PersistenceConfig::default(),
+                SyncSettings::default(),
+            )
+        };
+        let first = open().unwrap();
+        assert!(open().is_err(), "second open must fail while locked");
+        drop(first);
+        assert!(open().is_ok(), "lock is released on drop");
     }
 
     /// Legacy V1 logs (no header, no CRC) must still be recoverable.
