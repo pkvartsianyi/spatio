@@ -1002,7 +1002,7 @@ mod tests {
         // Many threads hammer the same object with increasing timestamps while
         // readers query concurrently. No panic; final value is the latest write.
         let db = Arc::new(DB::memory().unwrap());
-        let base = SystemTime::now();
+        let base = cold_state::truncate_to_micros(SystemTime::now());
         let writers = 8u64;
         let per = 200u64;
 
