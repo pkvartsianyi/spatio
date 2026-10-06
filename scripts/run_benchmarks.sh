@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # Detect Platform
 OS="$(uname -s)"
@@ -12,8 +12,7 @@ elif [ "$OS" = "Linux" ]; then
     if [ -f /proc/device-tree/model ] && grep -q "Raspberry Pi 5" /proc/device-tree/model; then
         PLATFORM="rpi5"
     else
-        # Fallback for other Linux/RPi if exact model match fails, assuming user context
-        PLATFORM="rpi5" 
+        PLATFORM="linux"
     fi
 fi
 
@@ -42,7 +41,7 @@ RUST_LOG=error ./target/release/spatio-server --port 3000 > /dev/null 2>&1 &
 SERVER_PID=$!
 
 # Ensure server is killed on script exit
-trap "kill $SERVER_PID" EXIT
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 
 # Give server time to start
 sleep 3
