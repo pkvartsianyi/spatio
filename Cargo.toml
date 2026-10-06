@@ -70,7 +70,6 @@ tempfile = "3.8"
 lto = "thin"
 codegen-units = 1
 opt-level = 3
-panic = "abort"
 strip = "symbols"
 
 [profile.dev]

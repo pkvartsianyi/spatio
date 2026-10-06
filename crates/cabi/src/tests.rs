@@ -221,3 +221,60 @@ fn errors_are_reported() {
     spatio_string_free(err2);
     assert_eq!(spatio_close(handle_ptr, &mut ptr::null_mut()), SPATIO_OK);
 }
+
+#[test]
+fn trajectory_records_carry_altitude() {
+    let mut h: *mut c_void = ptr::null_mut();
+    let mut err: *mut c_char = ptr::null_mut();
+    assert_eq!(spatio_open_memory(ptr::null(), &mut h, &mut err), SPATIO_OK);
+    let ns = CString::new("air").unwrap();
+    let id = CString::new("drone").unwrap();
+    let opts = CString::new(r#"{"timestamp":1000.0}"#).unwrap();
+    assert_eq!(
+        spatio_upsert(
+            h,
+            ns.as_ptr(),
+            id.as_ptr(),
+            1.0,
+            2.0,
+            150.0,
+            ptr::null(),
+            opts.as_ptr(),
+            &mut err
+        ),
+        SPATIO_OK
+    );
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_query_trajectory(
+            h,
+            ns.as_ptr(),
+            id.as_ptr(),
+            0.0,
+            2000.0,
+            10,
+            &mut p,
+            &mut l,
+            &mut err
+        ),
+        SPATIO_OK
+    );
+    let buf = unsafe { take_buffer(p, l) };
+    let mut r = Reader::new(&buf);
+    assert_eq!(r.u32(), 1);
+    assert_eq!(
+        (r.f64(), r.f64(), r.f64(), r.f64()),
+        (1.0, 2.0, 150.0, 1000.0)
+    );
+    assert!(r.bytes().is_empty());
+    assert_eq!(spatio_wire_version(), 2);
+    assert_eq!(spatio_close(h, &mut err), SPATIO_OK);
+}
+
+#[test]
+fn panics_become_error_codes() {
+    let mut err: *mut c_char = ptr::null_mut();
+    assert_eq!(guard(&mut err, || panic!("boom")), SPATIO_ERR_OTHER);
+    assert!(!err.is_null());
+    spatio_string_free(err);
+}
