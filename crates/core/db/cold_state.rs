@@ -60,10 +60,7 @@ pub struct ColdState {
     /// Path of the file-backed log, if any (used for checkpoint/recovery).
     log_path: Option<std::path::PathBuf>,
 
-    /// The log already held records when opened. Buffers start empty on open,
-    /// so in that case they never hold a key's complete history.
-    // ponytail: log-wide flag, so a reopened DB always takes the disk path; track
-    // keys seen on disk if that scan shows up in profiles.
+    /// Log held records at open; buffers then miss earlier history.
     has_prior_history: bool,
 }
 
@@ -80,7 +77,6 @@ impl ColdState {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Anything beyond the version header line means records from a previous session.
         let has_prior_history =
             std::fs::metadata(log_path).is_ok_and(|m| m.len() > LOG_HEADER_V2.len() as u64 + 1);
 
@@ -207,7 +203,6 @@ impl ColdState {
             // Below capacity the buffer holds this key's complete history; at or
             // above it, some records (including newer ones, under out-of-order
             // timestamps) live only on disk, so fall through to the disk merge.
-            // Records from before a reopen are only on disk, too.
             let buffer_is_complete = !self.has_prior_history && buffer.len() < self.buffer_capacity;
 
             from_buffer = buffer
