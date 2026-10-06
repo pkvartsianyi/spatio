@@ -52,7 +52,7 @@ nearby = db.query_radius("cities", nyc, 100000, limit=10)
 ### Rust
 ```toml
 [dependencies]
-spatio = "0.3"
+spatio = "0.4"
 ```
 
 ```rust
