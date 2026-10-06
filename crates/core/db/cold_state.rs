@@ -59,6 +59,12 @@ pub struct ColdState {
 
     /// Path of the file-backed log, if any (used for checkpoint/recovery).
     log_path: Option<std::path::PathBuf>,
+
+    /// The log already held records when opened. Buffers start empty on open,
+    /// so in that case they never hold a key's complete history.
+    // ponytail: log-wide flag, so a reopened DB always takes the disk path; track
+    // keys seen on disk if that scan shows up in profiles.
+    has_prior_history: bool,
 }
 
 impl ColdState {
@@ -74,6 +80,10 @@ impl ColdState {
             std::fs::create_dir_all(parent)?;
         }
 
+        // Anything beyond the version header line means records from a previous session.
+        let has_prior_history =
+            std::fs::metadata(log_path).is_ok_and(|m| m.len() > LOG_HEADER_V2.len() as u64 + 1);
+
         Ok(Self {
             trajectory_log: Mutex::new(TrajectoryLog::open_file(
                 log_path,
@@ -83,6 +93,7 @@ impl ColdState {
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
+            has_prior_history,
         })
     }
 
@@ -98,6 +109,7 @@ impl ColdState {
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: None,
+            has_prior_history: false,
         }
     }
 
@@ -195,7 +207,8 @@ impl ColdState {
             // Below capacity the buffer holds this key's complete history; at or
             // above it, some records (including newer ones, under out-of-order
             // timestamps) live only on disk, so fall through to the disk merge.
-            let buffer_is_complete = buffer.len() < self.buffer_capacity;
+            // Records from before a reopen are only on disk, too.
+            let buffer_is_complete = !self.has_prior_history && buffer.len() < self.buffer_capacity;
 
             from_buffer = buffer
                 .iter()
@@ -1148,6 +1161,54 @@ mod tests {
         assert_eq!(history.len(), 5); // All 5 from disk scan
         assert_eq!(history[0].timestamp, UNIX_EPOCH + Duration::from_secs(4));
         assert_eq!(history[1].timestamp, UNIX_EPOCH + Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_trajectory_includes_history_from_before_reopen() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let open = || {
+            ColdState::new(
+                &log_path,
+                100,
+                PersistenceConfig { buffer_size: 0 },
+                SyncSettings::default(),
+            )
+            .unwrap()
+        };
+        let pos = Point3d::new(0.0, 0.0, 0.0);
+
+        {
+            let cold = open();
+            for i in 0..10 {
+                let t = UNIX_EPOCH + Duration::from_secs(i);
+                cold.append_update("v", "o", pos.clone(), serde_json::json!({}), t)
+                    .unwrap();
+            }
+            cold.flush().unwrap();
+        }
+
+        let cold = open();
+        cold.append_update(
+            "v",
+            "o",
+            pos,
+            serde_json::json!({}),
+            UNIX_EPOCH + Duration::from_secs(10),
+        )
+        .unwrap();
+
+        let history = cold
+            .query_trajectory(
+                "v",
+                "o",
+                UNIX_EPOCH,
+                UNIX_EPOCH + Duration::from_secs(20),
+                100,
+            )
+            .unwrap();
+        assert_eq!(history.len(), 11);
+        assert_eq!(history[0].timestamp, UNIX_EPOCH + Duration::from_secs(10));
     }
 
     #[test]
