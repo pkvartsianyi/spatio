@@ -19,7 +19,7 @@ use std::time::SystemTime;
 ///
 /// // Calculate 3D distance to another point
 /// let other = Point3d::new(-74.0070, 40.7138, 150.0);
-/// let distance = drone_position.distance_3d(&other);
+/// let distance = drone_position.haversine_3d(&other);
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point3d {
@@ -284,46 +284,6 @@ impl TemporalPoint {
     }
 }
 
-/// A geographic point with an associated altitude and timestamp.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TemporalPoint3D {
-    pub point: Point,
-    pub altitude: f64,
-    pub timestamp: SystemTime,
-}
-
-impl TemporalPoint3D {
-    pub fn new(point: Point, altitude: f64, timestamp: SystemTime) -> Self {
-        Self {
-            point,
-            altitude,
-            timestamp,
-        }
-    }
-
-    pub fn point(&self) -> &Point {
-        &self.point
-    }
-
-    pub fn altitude(&self) -> f64 {
-        self.altitude
-    }
-
-    pub fn timestamp(&self) -> &SystemTime {
-        &self.timestamp
-    }
-
-    /// Convert to a 3D point.
-    pub fn to_point_3d(&self) -> Point3d {
-        Point3d::from_point_and_altitude(self.point, self.altitude)
-    }
-
-    /// Calculate 3D haversine distance to another temporal 3D point.
-    pub fn distance_to(&self, other: &TemporalPoint3D) -> f64 {
-        self.to_point_3d().haversine_3d(&other.to_point_3d())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,15 +345,6 @@ mod tests {
         // Verify it matches individual calls
         assert!((h_dist - p1.haversine_2d(&p2)).abs() < 0.1);
         assert!((dist_3d - p1.haversine_3d(&p2)).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_temporal_point3d_to_point3d() {
-        let temporal = TemporalPoint3D::new(Point::new(-74.0, 40.7), 100.0, SystemTime::now());
-        let p3d = temporal.to_point_3d();
-        assert_eq!(p3d.x(), -74.0);
-        assert_eq!(p3d.y(), 40.7);
-        assert_eq!(p3d.altitude(), 100.0);
     }
 
     #[cfg(feature = "geojson")]

@@ -20,8 +20,6 @@
 //! let results = db.query_radius("aircraft", &center, 10000.0, 100).unwrap();
 //! ```
 
-use crate::config::BoundingBox2D;
-use bytes::Bytes;
 use geo::HaversineMeasure;
 use rstar::{AABB, Point as RstarPoint, RTree};
 use rustc_hash::FxHashMap;
@@ -97,25 +95,6 @@ impl RstarPoint for IndexedPoint3D {
     }
 }
 
-/// Indexed Bounding Box for R*-tree.
-#[derive(Debug, Clone, PartialEq)]
-pub struct IndexedBBox {
-    pub min_x: f64,
-    pub min_y: f64,
-    pub max_x: f64,
-    pub max_y: f64,
-    pub key: String,
-    pub data: Bytes, // Stores the serialized BoundingBox2D
-}
-
-impl rstar::RTreeObject for IndexedBBox {
-    type Envelope = AABB<[f64; 2]>;
-
-    fn envelope(&self) -> Self::Envelope {
-        AABB::from_corners([self.min_x, self.min_y], [self.max_x, self.max_y])
-    }
-}
-
 /// Helper struct for heap-based top-k selection (max-heap by distance)
 #[derive(Clone)]
 struct QueryCandidate {
@@ -150,19 +129,13 @@ impl Ord for QueryCandidate {
 /// index implementation to serve all spatial query types.
 pub struct SpatialIndexManager {
     pub(crate) indexes: FxHashMap<String, RTree<IndexedPoint3D>>,
-    pub(crate) bbox_indexes: FxHashMap<String, RTree<IndexedBBox>>,
 }
 
 impl SpatialIndexManager {
     pub fn new() -> Self {
         Self {
             indexes: FxHashMap::default(),
-            bbox_indexes: FxHashMap::default(),
         }
-    }
-
-    pub fn insert_point_2d(&mut self, prefix: &str, x: f64, y: f64, key: String) {
-        self.insert_point(prefix, x, y, 0.0, key);
     }
 
     pub fn insert_point(&mut self, prefix: &str, x: f64, y: f64, z: f64, key: String) {
@@ -177,27 +150,6 @@ impl SpatialIndexManager {
                 .entry(prefix.to_string())
                 .or_default()
                 .insert(point);
-        }
-    }
-
-    pub fn insert_bbox(&mut self, prefix: &str, bbox: &BoundingBox2D, key: String, data: Bytes) {
-        let indexed_bbox = IndexedBBox {
-            min_x: bbox.min_x(),
-            min_y: bbox.min_y(),
-            max_x: bbox.max_x(),
-            max_y: bbox.max_y(),
-            key,
-            data,
-        };
-
-        // Avoid allocating an owned prefix when the namespace already exists.
-        if let Some(tree) = self.bbox_indexes.get_mut(prefix) {
-            tree.insert(indexed_bbox);
-        } else {
-            self.bbox_indexes
-                .entry(prefix.to_string())
-                .or_default()
-                .insert(indexed_bbox);
         }
     }
 
@@ -259,68 +211,6 @@ impl SpatialIndexManager {
         let mut results = Vec::with_capacity(heap.len());
         while let Some(candidate) = heap.pop() {
             results.push((candidate.point.key, candidate.distance));
-        }
-        results.reverse();
-        results
-    }
-
-    /// Query 2D points within a circular radius (internal, assumes validated input).
-    ///
-    /// Returns points sorted by distance (ascending) up to the specified limit.
-    ///
-    /// # Assumptions
-    ///
-    /// This internal function assumes the caller has validated:
-    /// - `center` has valid geographic coordinates (lon: ±180°, lat: ±90°)
-    /// - `radius` is positive and finite
-    /// - Public APIs use `validate_geographic_point()` and `validate_radius()`
-    ///
-    /// # Performance
-    ///
-    /// Uses envelope-based pruning to avoid computing distances for distant points.
-    pub fn query_within_radius_2d(
-        &self,
-        prefix: &str,
-        center: &GeoPoint,
-        radius: f64,
-        limit: usize,
-    ) -> Vec<(f64, f64, String, f64)> {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return Vec::new();
-        };
-
-        let envelope = compute_2d_envelope(center, radius);
-        let mut heap = BinaryHeap::with_capacity(limit);
-
-        for point in tree.locate_in_envelope_intersecting(&envelope) {
-            let p2 = GeoPoint::new(point.x, point.y);
-            let distance = center.haversine_distance(&p2);
-            if distance.is_finite() && distance <= radius {
-                if heap.len() < limit {
-                    heap.push(QueryCandidate {
-                        point: point.clone(),
-                        distance,
-                    });
-                } else if let Some(worst) = heap.peek()
-                    && distance < worst.distance
-                {
-                    heap.pop();
-                    heap.push(QueryCandidate {
-                        point: point.clone(),
-                        distance,
-                    });
-                }
-            }
-        }
-
-        let mut results = Vec::with_capacity(heap.len());
-        while let Some(candidate) = heap.pop() {
-            results.push((
-                candidate.point.x,
-                candidate.point.y,
-                candidate.point.key,
-                candidate.distance,
-            ));
         }
         results.reverse();
         results
@@ -388,132 +278,6 @@ impl SpatialIndexManager {
         tree.locate_in_envelope_intersecting(&envelope)
             .take(limit)
             .map(|point| (point.key.clone(),))
-            .collect()
-    }
-
-    /// Query points within a 2D bounding box.
-    pub fn query_within_bbox_2d(
-        &self,
-        prefix: &str,
-        min_x: f64,
-        min_y: f64,
-        max_x: f64,
-        max_y: f64,
-    ) -> Vec<(String,)> {
-        self.query_within_bbox(
-            prefix,
-            BBoxQuery {
-                min_x,
-                min_y,
-                min_z: f64::NEG_INFINITY,
-                max_x,
-                max_y,
-                max_z: f64::INFINITY,
-            },
-            usize::MAX,
-        )
-    }
-
-    pub fn count_within_radius_2d(&self, prefix: &str, center: &GeoPoint, radius: f64) -> usize {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return 0;
-        };
-
-        let envelope = compute_2d_envelope(center, radius);
-
-        tree.locate_in_envelope_intersecting(&envelope)
-            .filter(|point| {
-                let p2 = GeoPoint::new(point.x, point.y);
-                let distance = center.haversine_distance(&p2);
-                distance <= radius
-            })
-            .count()
-    }
-
-    /// Check if any points exist within a circular radius.
-    ///
-    /// Returns `true` if at least one point in the spatial index falls within
-    /// the specified radius of the center point.
-    pub fn intersects_radius_2d(&self, prefix: &str, center: &GeoPoint, radius: f64) -> bool {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return false;
-        };
-
-        let envelope = compute_2d_envelope(center, radius);
-
-        tree.locate_in_envelope_intersecting(&envelope)
-            .any(|point| {
-                let p2 = GeoPoint::new(point.x, point.y);
-                let distance = center.haversine_distance(&p2);
-                distance <= radius
-            })
-    }
-
-    pub fn knn_2d(
-        &self,
-        prefix: &str,
-        center: &GeoPoint,
-        k: usize,
-    ) -> Vec<(f64, f64, String, f64)> {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return Vec::new();
-        };
-
-        let query_point = IndexedPoint3D::generate(|i| match i {
-            0 => center.x(),
-            1 => center.y(),
-            2 => 0.0,
-            _ => 0.0,
-        });
-
-        tree.nearest_neighbor_iter(&query_point)
-            .take(k)
-            .filter_map(|point| {
-                let p2 = GeoPoint::new(point.x, point.y);
-                let distance = center.haversine_distance(&p2);
-                if distance.is_finite() {
-                    Some((point.x, point.y, point.key.clone(), distance))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Find k nearest neighbors in 2D with optional max distance filter.
-    pub fn knn_2d_with_max_distance(
-        &self,
-        prefix: &str,
-        center: &GeoPoint,
-        k: usize,
-        max_distance: Option<f64>,
-    ) -> Vec<(f64, f64, String, f64)> {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return Vec::new();
-        };
-
-        let query_point = IndexedPoint3D::generate(|i| match i {
-            0 => center.x(),
-            1 => center.y(),
-            2 => 0.0,
-            _ => 0.0,
-        });
-
-        tree.nearest_neighbor_iter(&query_point)
-            .filter_map(|point| {
-                let p2 = GeoPoint::new(point.x, point.y);
-                let distance = center.haversine_distance(&p2);
-                if !distance.is_finite() {
-                    return None;
-                }
-                if let Some(max_dist) = max_distance
-                    && distance > max_dist
-                {
-                    return None;
-                }
-                Some((point.x, point.y, point.key.clone(), distance))
-            })
-            .take(k)
             .collect()
     }
 
@@ -595,29 +359,6 @@ impl SpatialIndexManager {
             .collect()
     }
 
-    /// Check if a point exists within altitude range at given coordinates.
-    pub fn contains_point_in_altitude_range(
-        &self,
-        prefix: &str,
-        center: &GeoPoint,
-        min_z: f64,
-        max_z: f64,
-        tolerance: f64,
-    ) -> bool {
-        let Some(tree) = self.indexes.get(prefix) else {
-            return false;
-        };
-
-        let envelope = compute_cylindrical_envelope(center, min_z, max_z, tolerance);
-
-        tree.locate_in_envelope_intersecting(&envelope)
-            .any(|point| {
-                let p2 = GeoPoint::new(point.x, point.y);
-                let horizontal_distance = center.haversine_distance(&p2);
-                horizontal_distance <= tolerance && point.z >= min_z && point.z <= max_z
-            })
-    }
-
     pub fn remove_entry(
         &mut self,
         prefix: &str,
@@ -639,35 +380,10 @@ impl SpatialIndexManager {
         // Slow path: O(N) scan
         let to_remove: Option<IndexedPoint3D> = tree.iter().find(|p| p.key == key).cloned();
 
-        let removed = if let Some(point) = to_remove {
-            tree.remove(&point).is_some()
-        } else {
-            false
-        };
-
-        // Also remove from bbox index if present
-        if let Some(bbox_tree) = self.bbox_indexes.get_mut(prefix) {
-            let to_remove: Vec<_> = bbox_tree.iter().filter(|b| b.key == key).cloned().collect();
-            for bbox in to_remove {
-                bbox_tree.remove(&bbox);
-            }
+        match to_remove {
+            Some(point) => tree.remove(&point).is_some(),
+            None => false,
         }
-
-        removed
-    }
-
-    /// Find intersecting bounding boxes.
-    pub fn find_intersecting_bboxes(&self, prefix: &str, bbox: &BoundingBox2D) -> Vec<(String,)> {
-        let Some(tree) = self.bbox_indexes.get(prefix) else {
-            return Vec::new();
-        };
-
-        let envelope =
-            AABB::from_corners([bbox.min_x(), bbox.min_y()], [bbox.max_x(), bbox.max_y()]);
-
-        tree.locate_in_envelope_intersecting(&envelope)
-            .map(|entry| (entry.key.clone(),))
-            .collect()
     }
 
     /// Get statistics about the spatial indexes.
@@ -698,12 +414,12 @@ impl SpatialIndexManager {
     }
 
     /// Get all points in a namespace (e.g., for convex hull).
-    pub fn namespace_points(&self, prefix: &str) -> Vec<GeoPoint> {
+    pub fn namespace_points(&self, prefix: &str) -> geo::MultiPoint {
         let Some(tree) = self.indexes.get(prefix) else {
-            return Vec::new();
+            return geo::MultiPoint::new(Vec::new());
         };
 
-        tree.iter().map(|p| GeoPoint::new(p.x, p.y)).collect()
+        tree.iter().map(|p| geo::Point::new(p.x, p.y)).collect()
     }
 
     /// Query points within a polygon (2D).
@@ -747,7 +463,6 @@ impl SpatialIndexManager {
     /// Clear all indexes.
     pub fn clear(&mut self) {
         self.indexes.clear();
-        self.bbox_indexes.clear();
     }
 }
 
@@ -794,21 +509,6 @@ fn compute_lat_lon_degrees(lat: f64, radius: f64) -> (f64, f64) {
     .to_degrees();
 
     (lat_degrees, lon_degrees)
-}
-
-/// Compute AABB envelope for a 2D spherical query (circle).
-#[inline]
-fn compute_2d_envelope(center: &GeoPoint, radius: f64) -> rstar::AABB<IndexedPoint3D> {
-    let (lat_degrees, lon_degrees) = compute_lat_lon_degrees(center.y(), radius);
-
-    let min_x = center.x() - lon_degrees;
-    let max_x = center.x() + lon_degrees;
-    let min_y = center.y() - lat_degrees;
-    let max_y = center.y() + lat_degrees;
-
-    let min_corner = IndexedPoint3D::new(min_x, min_y, f64::NEG_INFINITY, String::new());
-    let max_corner = IndexedPoint3D::new(max_x, max_y, f64::INFINITY, String::new());
-    rstar::AABB::from_corners(min_corner, max_corner)
 }
 
 /// Compute AABB envelope for a spherical query volume.
@@ -953,22 +653,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bbox_indexing() {
-        let mut index = SpatialIndexManager::new();
-        let bbox = BoundingBox2D::new(-74.1, 40.6, -74.0, 40.7);
-        index.insert_bbox("zones", &bbox, "zone1".to_string(), Bytes::from("data"));
-
-        let query = BoundingBox2D::new(-74.05, 40.65, -74.04, 40.66);
-        let results = index.find_intersecting_bboxes("zones", &query);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, "zone1");
-
-        let query_miss = BoundingBox2D::new(-75.0, 41.0, -74.9, 41.1);
-        let results_miss = index.find_intersecting_bboxes("zones", &query_miss);
-        assert_eq!(results_miss.len(), 0);
-    }
-
-    #[test]
     fn test_polar_region_query_doesnt_panic() {
         // Test near North Pole
         let mut index = SpatialIndexManager::new();
@@ -996,20 +680,6 @@ mod tests {
         let center = Point3d::new(0.0, 90.0, 0.0);
         let results = index.query_within_sphere("pole", &center, 1000.0, 10);
 
-        assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn test_high_latitude_2d_query() {
-        let mut index = SpatialIndexManager::new();
-
-        // Insert points at high latitude
-        index.insert_point_2d("scandinavia", 10.0, 70.0, "tromso".to_string());
-
-        let center = GeoPoint::new(10.0, 70.0);
-        let results = index.query_within_radius_2d("scandinavia", &center, 50_000.0, 10);
-
-        // Should work without panic
         assert_eq!(results.len(), 1);
     }
 }
