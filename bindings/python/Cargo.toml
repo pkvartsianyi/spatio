@@ -18,7 +18,7 @@ crate-type = ["cdylib"]
 spatio = { workspace = true }
 spatio-types = { workspace = true }
 serde_json = { workspace = true }
-pythonize = "0.27"
+pythonize = "0.29"
 
 # Python bindings
 pyo3 = { workspace = true }

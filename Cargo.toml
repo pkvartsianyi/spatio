@@ -46,14 +46,14 @@ tracing = "0.1"
 tokio-util = { version = "0.7", features = ["codec"] }
 tokio-stream = "0.1"
 tokio-serde = { version = "0.9.0", features = ["json"] }
-tarpc = { version = "0.34", features = [
+tarpc = { version = "0.38", features = [
     "serde-transport",
     "serde-transport-json",
     "tcp",
 ] }
 
 # Python bindings
-pyo3 = { version = "0.27.1", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # Workspace crates
 spatio = { version = "0.4.0", path = "crates/core" }
