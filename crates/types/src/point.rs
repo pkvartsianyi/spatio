@@ -243,18 +243,14 @@ impl Point3d {
 
         match geom.value {
             Value::Point(coords) => {
-                if coords.len() < 2 {
-                    return Err(crate::geo::GeoJsonError::InvalidCoordinates(
-                        "Point must have at least 2 coordinates".to_string(),
-                    ));
-                }
+                let xy = crate::geo::coord_from_geojson(&coords)?;
                 let z = coords.get(2).copied().unwrap_or(0.0);
-                if !(coords[0].is_finite() && coords[1].is_finite() && z.is_finite()) {
+                if !z.is_finite() {
                     return Err(crate::geo::GeoJsonError::InvalidCoordinates(
-                        "Point coordinates must be finite".to_string(),
+                        "Point altitude must be finite".to_string(),
                     ));
                 }
-                Ok(Point3d::new(coords[0], coords[1], z))
+                Ok(Point3d::new(xy.x, xy.y, z))
             }
             _ => Err(crate::geo::GeoJsonError::InvalidGeometry(
                 "GeoJSON geometry is not a Point".to_string(),
@@ -357,6 +353,13 @@ mod tests {
         assert!((original.x() - parsed.x()).abs() < 1e-10);
         assert!((original.y() - parsed.y()).abs() < 1e-10);
         assert!((original.z() - parsed.z()).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn test_point3d_from_geojson_rejects_out_of_range() {
+        let json = r#"{"type":"Point","coordinates":[200.0,40.0,10.0]}"#;
+        assert!(Point3d::from_geojson(json).is_err());
     }
 
     #[cfg(feature = "geojson")]
