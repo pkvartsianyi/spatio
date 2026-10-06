@@ -20,6 +20,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # ---------------- STAGE 1: WAIT FOR CI ----------------
   wait-for-ci:
@@ -30,7 +34,7 @@ jobs:
         uses: lewagon/wait-on-check-action@v1.3.4
         with:
           ref: ${{ github.sha }}
-          check-name: "Test Suite"
+          running-workflow-name: "Wait for CI Tests"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
 
@@ -40,179 +44,49 @@ jobs:
     runs-on: ubuntu-latest
     needs: wait-for-ci
     outputs:
-      types-changed: ${{ steps.check-types.outputs.changed }}
-      core-changed: ${{ steps.check-core.outputs.changed }}
-      python-changed: ${{ steps.check-python.outputs.changed }}
-      server-changed: ${{ steps.check-server.outputs.changed }}
-      types-version: ${{ steps.check-types.outputs.version }}
-      core-version: ${{ steps.check-core.outputs.version }}
-      python-version: ${{ steps.check-python.outputs.version }}
-      server-version: ${{ steps.check-server.outputs.version }}
-      types-previous: ${{ steps.check-types.outputs.previous }}
-      client-changed: ${{ steps.check-client.outputs.changed }}
-      client-version: ${{ steps.check-client.outputs.version }}
-      client-previous: ${{ steps.check-client.outputs.previous }}
-      core-previous: ${{ steps.check-core.outputs.previous }}
-      python-previous: ${{ steps.check-python.outputs.previous }}
-      server-previous: ${{ steps.check-server.outputs.previous }}
-      cabi-changed: ${{ steps.check-cabi.outputs.changed }}
-      cabi-version: ${{ steps.check-cabi.outputs.version }}
-      cabi-previous: ${{ steps.check-cabi.outputs.previous }}
-      go-changed: ${{ steps.check-go.outputs.changed }}
-      go-version: ${{ steps.check-go.outputs.version }}
-      go-previous: ${{ steps.check-go.outputs.previous }}
+      types-changed: ${{ steps.detect.outputs.types-changed }}
+      types-version: ${{ steps.detect.outputs.types-version }}
+      core-changed: ${{ steps.detect.outputs.core-changed }}
+      core-version: ${{ steps.detect.outputs.core-version }}
+      server-changed: ${{ steps.detect.outputs.server-changed }}
+      server-version: ${{ steps.detect.outputs.server-version }}
+      client-changed: ${{ steps.detect.outputs.client-changed }}
+      client-version: ${{ steps.detect.outputs.client-version }}
+      python-changed: ${{ steps.detect.outputs.python-changed }}
+      python-version: ${{ steps.detect.outputs.python-version }}
+      cabi-changed: ${{ steps.detect.outputs.cabi-changed }}
+      cabi-version: ${{ steps.detect.outputs.cabi-version }}
+      go-changed: ${{ steps.detect.outputs.go-changed }}
+      go-version: ${{ steps.detect.outputs.go-version }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check spatio-types version changes
-        id: check-types
+      - name: Detect version changes
+        id: detect
         run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/types/Cargo.toml)
-          TAG_NAME="types-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/types/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/types/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check spatio-client version changes
-        id: check-client
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/client/Cargo.toml)
-          TAG_NAME="client-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/client/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/client/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check spatio core version changes
-        id: check-core
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/core/Cargo.toml)
-          TAG_NAME="core-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/core/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/core/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check Python version changes
-        id: check-python
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' bindings/python/Cargo.toml)
-          TAG_NAME="python-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 bindings/python/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:bindings/python/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check spatio server version changes
-        id: check-server
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/server/Cargo.toml)
-          TAG_NAME="server-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/server/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/server/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check spatio-cabi version changes
-        id: check-cabi
-        run: |
-          CURRENT_VERSION=$(awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' crates/cabi/Cargo.toml)
-          TAG_NAME="cabi-v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 crates/cabi/Cargo.toml | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:crates/cabi/Cargo.toml | awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check Go bindings version changes
-        id: check-go
-        run: |
-          CURRENT_VERSION=$(tr -d '[:space:]' < bindings/go/VERSION)
-          TAG_NAME="bindings/go/v$CURRENT_VERSION"
-          if git ls-remote --tags origin | grep -q "refs/tags/$TAG_NAME$"; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-          PREVIOUS_COMMIT=$(git log --format=format:%H --follow -2 bindings/go/VERSION | tail -1)
-          if [ -n "$PREVIOUS_COMMIT" ]; then
-            PREVIOUS_VERSION=$(git show $PREVIOUS_COMMIT:bindings/go/VERSION 2>/dev/null | tr -d '[:space:]' || echo "")
-          else
-            PREVIOUS_VERSION=""
-          fi
-          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "previous=$PREVIOUS_VERSION" >> $GITHUB_OUTPUT
-
-      - name: Summary
-        run: |
-          echo "### Version Detection Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Crate | Previous | Current | Changed |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-types | ${{ steps.check-types.outputs.previous }} | ${{ steps.check-types.outputs.version }} | ${{ steps.check-types.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-client | ${{ steps.check-client.outputs.previous }} | ${{ steps.check-client.outputs.version }} | ${{ steps.check-client.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio | ${{ steps.check-core.outputs.previous }} | ${{ steps.check-core.outputs.version }} | ${{ steps.check-core.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-py | ${{ steps.check-python.outputs.previous }} | ${{ steps.check-python.outputs.version }} | ${{ steps.check-python.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-server | ${{ steps.check-server.outputs.previous }} | ${{ steps.check-server.outputs.version }} | ${{ steps.check-server.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| spatio-cabi | ${{ steps.check-cabi.outputs.previous }} | ${{ steps.check-cabi.outputs.version }} | ${{ steps.check-cabi.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| go bindings | ${{ steps.check-go.outputs.previous }} | ${{ steps.check-go.outputs.version }} | ${{ steps.check-go.outputs.changed }} |" >> $GITHUB_STEP_SUMMARY
+          ver() { if [ "$1" = bindings/go/VERSION ]; then tr -d '[:space:]'; else awk -F'[" ]+' '/^version[[:space:]]*=/ {print $3; exit}'; fi; }
+          tags=$(git ls-remote --tags origin)
+          { echo "| Component | Previous | Current | Changed |"; echo "|---|---|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          while read -r key file prefix; do
+            cur=$(ver "$file" < "$file")
+            prev_commit=$(git log --format=%H -2 -- "$file" | tail -1)
+            prev=$(git show "$prev_commit:$file" 2>/dev/null | ver "$file" || true)
+            changed=true
+            grep -q "refs/tags/$prefix$cur$" <<<"$tags" && changed=false
+            { echo "$key-version=$cur"; echo "$key-changed=$changed"; } >> "$GITHUB_OUTPUT"
+            echo "| $key | $prev | $cur | $changed |" >> "$GITHUB_STEP_SUMMARY"
+          done <<'EOF'
+          types crates/types/Cargo.toml types-v
+          core crates/core/Cargo.toml core-v
+          server crates/server/Cargo.toml server-v
+          client crates/client/Cargo.toml client-v
+          python bindings/python/Cargo.toml python-v
+          cabi crates/cabi/Cargo.toml cabi-v
+          go bindings/go/VERSION bindings/go/v
+          EOF
 
   # ---------------- STAGE 3: RELEASE ----------------
   release-types:
@@ -228,21 +102,10 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish spatio-types to crates.io
+      - name: Publish and tag spatio-types
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/types
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
-          TAG="types-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-types $VERSION"
-          git push origin "$TAG"
+        run: ./scripts/release-crate.sh spatio-types types-v "${{ needs.detect-changes.outputs.types-version }}"
 
   release-core:
     name: Release spatio core
@@ -260,53 +123,17 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio-types to be available on crates.io
-        if: needs.release-types.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.types-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio-types v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            if curl -sf "https://crates.io/api/v1/crates/spatio-types" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-types v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          exit 0
-
-      - name: Publish spatio to crates.io
+      - name: Publish and tag spatio
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/core
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
+        run: ./scripts/release-crate.sh spatio core-v "${{ needs.detect-changes.outputs.core-version }}"
 
-      - name: Tag and release
+      - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.detect-changes.outputs.core-version }}
         run: |
-          VERSION="${{ needs.detect-changes.outputs.core-version }}"
           TAG="core-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio $VERSION"
-          git push origin "$TAG"
-
-          # Publish a GitHub Release, using the committed benchmark comparison
-          # as the body when present.
           NOTES="crates/benchmarks/results/core-v$VERSION.md"
           if [ -f "$NOTES" ]; then
             gh release create "$TAG" --title "spatio $VERSION" --notes-file "$NOTES" \
@@ -331,48 +158,10 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio to be available on crates.io
-        if: needs.release-core.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.core-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            if curl -sf "https://crates.io/api/v1/crates/spatio" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          exit 0
-
-      - name: Publish spatio-server to crates.io
+      - name: Publish and tag spatio-server
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/server
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.server-version }}"
-          TAG="server-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-server $VERSION"
-          git push origin "$TAG"
+        run: ./scripts/release-crate.sh spatio-server server-v "${{ needs.detect-changes.outputs.server-version }}"
 
   release-client:
     name: Release spatio-client
@@ -390,48 +179,10 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio-server to be available on crates.io
-        if: needs.release-server.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.server-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-
-          echo "Waiting for spatio-server v$VERSION to be available on crates.io..."
-
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-
-            if curl -sf "https://crates.io/api/v1/crates/spatio-server" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio-server v$VERSION is now available on crates.io"
-              exit 0
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          exit 0
-
-      - name: Publish spatio-client to crates.io
+      - name: Publish and tag spatio-client
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/client
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.client-version }}"
-          TAG="client-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-client $VERSION"
-          git push origin "$TAG"
+        run: ./scripts/release-crate.sh spatio-client client-v "${{ needs.detect-changes.outputs.client-version }}"
 
   release-cabi:
     name: Release spatio-cabi
@@ -449,44 +200,10 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Wait for spatio to be available on crates.io
-        if: needs.release-core.result == 'success'
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.core-version }}"
-          MAX_ATTEMPTS=10
-          ATTEMPT=1
-          SLEEP_TIME=5
-          echo "Waiting for spatio v$VERSION to be available on crates.io..."
-          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS (waiting ${SLEEP_TIME}s)"
-            sleep $SLEEP_TIME
-            if curl -sf "https://crates.io/api/v1/crates/spatio" | grep -q "\"num\":\"$VERSION\""; then
-              echo "✓ spatio v$VERSION is now available on crates.io"
-              exit 0
-            fi
-            ATTEMPT=$((ATTEMPT + 1))
-            SLEEP_TIME=$((SLEEP_TIME * 2))
-            if [ $SLEEP_TIME -gt 60 ]; then
-              SLEEP_TIME=60
-            fi
-          done
-          exit 0
-
-      - name: Publish spatio-cabi to crates.io
+      - name: Publish and tag spatio-cabi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: |
-          cd crates/cabi
-          cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-      - name: Tag and release
-        run: |
-          VERSION="${{ needs.detect-changes.outputs.cabi-version }}"
-          TAG="cabi-v$VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Release spatio-cabi $VERSION"
-          git push origin "$TAG"
+        run: ./scripts/release-crate.sh spatio-cabi cabi-v "${{ needs.detect-changes.outputs.cabi-version }}"
 
   build-go-artifacts:
     name: Build Go native libs (${{ matrix.os }})
@@ -559,8 +276,8 @@ jobs:
   build-and-push-docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.server-changed == 'true'
+    needs: [detect-changes, release-server]
+    if: needs.release-server.result == 'success'
     permissions:
       contents: read
       packages: write
@@ -669,7 +386,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install "packaging>=24.1" twine
           twine check dist/*
-          twine upload dist/*.whl --non-interactive
+          twine upload dist/*.whl --non-interactive --skip-existing
 
       - name: Tag and release
         run: |

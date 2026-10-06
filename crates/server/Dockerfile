@@ -1,11 +1,14 @@
+# syntax=docker/dockerfile:1
 # Builder stage — pinned stable toolchain matching the crate's rust-version.
 FROM rust:1.90-slim-bookworm AS builder
 
 WORKDIR /app
 COPY . .
 
-# Build the server binary against the committed lockfile for reproducibility.
-RUN cargo build --release --locked --bin spatio-server
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --locked --bin spatio-server \
+    && cp target/release/spatio-server /usr/local/bin/spatio-server
 
 # TzData stage
 FROM cgr.dev/chainguard/wolfi-base AS tzdata
@@ -27,7 +30,7 @@ COPY --from=tzdata /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=setup --chown=65532:65532 /data /data
 
 # Copy binary
-COPY --from=builder /app/target/release/spatio-server /usr/local/bin/spatio-server
+COPY --from=builder /usr/local/bin/spatio-server /usr/local/bin/spatio-server
 
 # User nonroot (65532)
 USER 65532:65532

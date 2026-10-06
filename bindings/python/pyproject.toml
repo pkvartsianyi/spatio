@@ -69,7 +69,6 @@ manifest-path = "Cargo.toml"
 
 [tool.ruff]
 line-length = 88
-fix = true
 target-version = "py39"
 
 lint.select = [

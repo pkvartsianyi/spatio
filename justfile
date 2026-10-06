@@ -8,14 +8,14 @@ build:
     cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi --release
 
 test *args:
-    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi -p spatio-integration-tests --all-features -- {{args}}
+    cargo test --workspace --all-features --exclude spatio-py -- {{args}}
 
 test-integration *args:
     cargo test -p spatio-integration-tests --all-features -- {{args}}
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -58,9 +58,6 @@ py-examples:
 
 py-example name:
     cd bindings/python && just example {{name}}
-
-py-wheel:
-    cd bindings/python && just wheel
 
 py-clean:
     cd bindings/python && just clean
@@ -107,149 +104,38 @@ go-fmt:
 go-example: go-build-lib
     cd bindings/go && go run ./examples/basic
 
-# Version management
+# Version management (requires cargo-edit for `cargo set-version`)
 # ==================
 
-check-version:
-    ./scripts/check-version.sh
-
-bump-core VERSION:
-    ./scripts/bump-version.sh core {{VERSION}}
-
-bump-python VERSION:
-    ./scripts/bump-version.sh python {{VERSION}}
-
-bump-types VERSION:
-    ./scripts/bump-version.sh types {{VERSION}}
-
-bump-server VERSION:
-    ./scripts/bump-version.sh server {{VERSION}}
-
-
-bump-client VERSION:
-    ./scripts/bump-version.sh client {{VERSION}}
-
-bump-cabi VERSION:
-    ./scripts/bump-version.sh cabi {{VERSION}}
+# Set a crate's version, e.g. `just bump spatio 0.3.10`. Bumping spatio runs the release benchmark.
+bump CRATE VERSION:
+    cargo set-version -p {{CRATE}} {{VERSION}}
+    if [ "{{CRATE}}" = spatio ]; then ./scripts/bench-release.sh {{VERSION}}; fi
 
 bump-go VERSION:
-    ./scripts/bump-version.sh go {{VERSION}}
+    echo "{{VERSION}}" > bindings/go/VERSION
 
-# Bump patch versions for types, core, server, client, python, cabi, go
-# (dependency order). Runs the core release benchmark and includes its results.
+# Bump the patch version of every crate and the Go bindings, then run the release benchmark.
 patch-all:
     #!/usr/bin/env bash
-    set -e
-
-    # Get current versions
-    TYPES_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-types","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    CORE_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    SERVER_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-server","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    CLIENT_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-client","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    PYTHON_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-py","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    CABI_VERSION=$(cargo metadata --format-version 1 --no-deps 2>/dev/null | grep -o '"name":"spatio-cabi","version":"[^"]*"' | head -1 | cut -d'"' -f8)
-    GO_VERSION=$(tr -d '[:space:]' < bindings/go/VERSION)
-
-    # Function to bump patch version
-    bump_patch() {
-        local version=$1
-        local major=$(echo "$version" | cut -d. -f1)
-        local minor=$(echo "$version" | cut -d. -f2)
-        local patch=$(echo "$version" | cut -d. -f3 | cut -d- -f1)
-        echo "$major.$minor.$((patch + 1))"
-    }
-
-    NEW_TYPES=$(bump_patch "$TYPES_VERSION")
-    NEW_CORE=$(bump_patch "$CORE_VERSION")
-    NEW_SERVER=$(bump_patch "$SERVER_VERSION")
-    NEW_CLIENT=$(bump_patch "$CLIENT_VERSION")
-    NEW_PYTHON=$(bump_patch "$PYTHON_VERSION")
-    NEW_CABI=$(bump_patch "$CABI_VERSION")
-    NEW_GO=$(bump_patch "$GO_VERSION")
-
-    echo "=== Patch Version Bump ==="
-    echo "  types:  $TYPES_VERSION -> $NEW_TYPES"
-    echo "  core:   $CORE_VERSION -> $NEW_CORE"
-    echo "  server: $SERVER_VERSION -> $NEW_SERVER"
-    echo "  client: $CLIENT_VERSION -> $NEW_CLIENT"
-    echo "  python: $PYTHON_VERSION -> $NEW_PYTHON"
-    echo "  cabi:   $CABI_VERSION -> $NEW_CABI"
-    echo "  go:     $GO_VERSION -> $NEW_GO"
-    echo ""
-
-    # Bump in dependency order: types > core > server > client > python.
-    # The core bump also runs the release benchmark (crates/benchmarks/results/).
-    echo "=== Bumping types ==="
-    ./scripts/bump-version.sh types "$NEW_TYPES" --no-commit
-
-    echo ""
-    echo "=== Bumping core ==="
-    ./scripts/bump-version.sh core "$NEW_CORE" --no-commit
-
-    echo ""
-    echo "=== Bumping server ==="
-    ./scripts/bump-version.sh server "$NEW_SERVER" --no-commit
-
-    echo ""
-    echo "=== Bumping client ==="
-    ./scripts/bump-version.sh client "$NEW_CLIENT" --no-commit
-
-    echo ""
-    echo "=== Bumping python ==="
-    ./scripts/bump-version.sh python "$NEW_PYTHON" --no-commit
-
-    echo ""
-    echo "=== Bumping cabi ==="
-    ./scripts/bump-version.sh cabi "$NEW_CABI" --no-commit
-
-    echo ""
-    echo "=== Bumping go ==="
-    ./scripts/bump-version.sh go "$NEW_GO" --no-commit
-
-    echo ""
-    echo "=== Committing changes ==="
-    git add crates/types/Cargo.toml crates/core/Cargo.toml crates/server/Cargo.toml crates/client/Cargo.toml bindings/python/Cargo.toml crates/cabi/Cargo.toml bindings/go/VERSION Cargo.toml Cargo.lock
-    # Include the benchmark results produced by the core bump.
-    if [ -f "crates/benchmarks/results/core-v$NEW_CORE.json" ]; then
-        git add "crates/benchmarks/results/core-v$NEW_CORE.json" "crates/benchmarks/results/core-v$NEW_CORE.md"
-    fi
-    git commit -m "bump: types $NEW_TYPES, core $NEW_CORE, server $NEW_SERVER, client $NEW_CLIENT, python $NEW_PYTHON, cabi $NEW_CABI, go $NEW_GO"
-
-    echo ""
-    echo "=== Done! ==="
-    echo "Push to main to trigger releases."
-    echo "CI will build in order: types > core > server > client; python publishes to PyPI"
-
-bump-core-dry VERSION:
-    ./scripts/bump-version.sh core {{VERSION}} --dry-run
-
-bump-python-dry VERSION:
-    ./scripts/bump-version.sh python {{VERSION}} --dry-run
-
-bump-types-dry VERSION:
-    ./scripts/bump-version.sh types {{VERSION}} --dry-run
-
-bump-server-dry VERSION:
-    ./scripts/bump-version.sh server {{VERSION}} --dry-run
-
-bump-core-no-commit VERSION:
-    ./scripts/bump-version.sh core {{VERSION}} --no-commit
-
-bump-python-no-commit VERSION:
-    ./scripts/bump-version.sh python {{VERSION}} --no-commit
+    set -euo pipefail
+    cargo set-version --bump patch -p spatio-types -p spatio -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi
+    go=$(tr -d '[:space:]' < bindings/go/VERSION)
+    echo "${go%.*}.$((${go##*.} + 1))" > bindings/go/VERSION
+    id=$(cargo pkgid -p spatio)
+    ./scripts/bench-release.sh "${id##*@}"
 
 # CI and Testing
 # ==============
 
 security-audit:
     cargo audit
-    cd bindings/python && bandit -r src/ && safety check
+    cd bindings/python && just security
 
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
 
-# Run the core release benchmark, store results, and compare to the previous
-# version. Runs automatically as part of `just bump-core`.
+# Run the core release benchmark and compare to the previous version.
 bench-release VERSION:
     ./scripts/bench-release.sh {{VERSION}}
 

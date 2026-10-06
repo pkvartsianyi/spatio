@@ -104,26 +104,6 @@ examples: build
 example name: build
     uv run python examples/{{name}}.py
 
-# Build wheel for distribution
-wheel:
-    .venv/bin/maturin build --release
-    @echo "Wheel built in target/wheels/"
-
-# Build source distribution
-sdist:
-    .venv/bin/maturin sdist
-    @echo "Source distribution built in target/wheels/"
-
-# Publish to Test PyPI
-publish-test: wheel
-    @echo "Publishing to Test PyPI: https://test.pypi.org/project/spatio"
-    .venv/bin/twine upload --repository testpypi target/wheels/*
-
-# Publish to PyPI
-publish: wheel
-    @echo "Publishing to PyPI: https://pypi.org/project/spatio"
-    .venv/bin/twine upload target/wheels/*
-
 # Clean up build artifacts and caches
 clean:
     rm -rf .pytest_cache/
@@ -180,18 +160,6 @@ flamegraph script="examples/performance_demo.py": build-release
     .venv/bin/py-spy record --format flamegraph -o flamegraph.svg -- .venv/bin/python {{script}}
     @echo "Flame graph saved to flamegraph.svg"
 
-# Run comprehensive benchmark suite
-benchmark-suite: build-release
-    .venv/bin/python examples/benchmark_suite.py
-
-# Serve documentation locally (if using mkdocs)
-docs-serve:
-    .venv/bin/mkdocs serve
-
-# Build documentation
-docs-build:
-    .venv/bin/mkdocs build
-
 # Run a Python REPL with the package loaded
 repl: build
     .venv/bin/python -c "import spatio; print('Spatio loaded. Try: db = spatio.Spatio.memory()')" -i
@@ -199,7 +167,3 @@ repl: build
 # Run Jupyter notebook (if jupyter is installed)
 notebook: build
     .venv/bin/jupyter notebook
-
-# Quick test - just basic functionality
-quick-test: build
-    .venv/bin/python -c "import spatio; db = spatio.Spatio.memory(); db.insert(b'test', b'value'); assert db.get(b'test') == b'value'; print('Basic functionality works')"

@@ -156,7 +156,7 @@ cargo test test_name
 cargo test -- --nocapture
 
 # Run integration tests
-cargo test --test integration_tests
+cargo test -p spatio-integration-tests
 ```
 
 ### Writing Tests
@@ -332,7 +332,7 @@ cargo build --release
 cargo doc --open
 
 # Run benchmarks
-cargo bench
+just bench-core
 
 # Check test coverage (with tarpaulin)
 cargo tarpaulin --out html
