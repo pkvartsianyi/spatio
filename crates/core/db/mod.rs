@@ -1083,8 +1083,8 @@ mod tests {
                 .is_err()
         );
         assert!(
-            db.query_bbox("ns", 10.0, 0.0, 5.0, 10.0, 10).is_err(),
-            "min>=max rejected"
+            db.query_bbox("ns", 0.0, 10.0, 5.0, 0.0, 10).is_err(),
+            "min_lat>max_lat rejected"
         );
         assert!(
             db.knn("ns", &Point3d::new(0.0, 200.0, 0.0), 5).is_err(),
