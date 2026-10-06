@@ -80,7 +80,7 @@ fn location_list(py: Python<'_>, results: Vec<Arc<CurrentLocation>>) -> PyResult
 }
 
 /// Python wrapper for geographic Point (3D)
-#[pyclass(name = "Point")]
+#[pyclass(name = "Point", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPoint {
     inner: Point3d,
@@ -157,7 +157,7 @@ impl PyPoint {
 }
 
 /// Python wrapper for distance metrics
-#[pyclass(name = "DistanceMetric")]
+#[pyclass(name = "DistanceMetric", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyDistanceMetric {
     inner: RustDistanceMetric,
@@ -196,7 +196,7 @@ impl PyDistanceMetric {
 }
 
 /// Python wrapper for TemporalPoint
-#[pyclass(name = "TemporalPoint")]
+#[pyclass(name = "TemporalPoint", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyTemporalPoint {
     #[pyo3(get, set)]
@@ -221,7 +221,7 @@ impl PyTemporalPoint {
 }
 
 /// Python wrapper for Polygon
-#[pyclass(name = "Polygon")]
+#[pyclass(name = "Polygon", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPolygon {
     inner: RustPolygon,
@@ -275,7 +275,7 @@ impl PyPolygon {
 }
 
 /// Python wrapper for database Config
-#[pyclass(name = "Config")]
+#[pyclass(name = "Config", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyConfig {
     inner: RustConfig,
@@ -753,7 +753,7 @@ impl PySpatio {
 }
 
 /// Options for a write, e.g. an explicit timestamp (seconds since the Unix epoch).
-#[pyclass(name = "SetOptions")]
+#[pyclass(name = "SetOptions", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySetOptions {
     inner: spatio::config::SetOptions,

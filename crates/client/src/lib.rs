@@ -76,13 +76,13 @@ impl SpatioClient {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let mut ctx = context::current();
-        ctx.deadline = std::time::SystemTime::now() + Duration::from_secs(30);
+        ctx.deadline = std::time::Instant::now() + Duration::from_secs(30);
         match f(client, ctx).await {
             Ok(reply) => reply.map_err(ClientError::Server),
             Err(e) => {
                 if matches!(
                     e,
-                    RpcError::Shutdown | RpcError::Send(_) | RpcError::Receive(_)
+                    RpcError::Shutdown | RpcError::Send(_) | RpcError::Channel(_)
                 ) && let Ok(fresh) = dial(self.addr).await
                 {
                     *self.client.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
