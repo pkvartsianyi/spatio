@@ -47,6 +47,21 @@ impl std::fmt::Display for GeoJsonError {
 
 impl std::error::Error for GeoJsonError {}
 
+#[cfg(feature = "geojson")]
+pub(crate) fn coord_from_geojson(coords: &[f64]) -> Result<geo::Coord, GeoJsonError> {
+    match *coords {
+        [x, y, ..] if (-180.0..=180.0).contains(&x) && (-90.0..=90.0).contains(&y) => {
+            Ok(geo::coord! { x: x, y: y })
+        }
+        [_, _, ..] => Err(GeoJsonError::InvalidCoordinates(
+            "Coordinates must be finite with lon in [-180, 180] and lat in [-90, 90]".to_string(),
+        )),
+        _ => Err(GeoJsonError::InvalidCoordinates(
+            "Coordinate must have at least 2 values".to_string(),
+        )),
+    }
+}
+
 /// A geographic point with longitude/latitude coordinates.
 ///
 /// This wraps `geo::Point` and provides additional functionality for
@@ -232,14 +247,7 @@ impl Point {
         })?;
 
         match geom.value {
-            Value::Point(coords) => {
-                if coords.len() < 2 {
-                    return Err(GeoJsonError::InvalidCoordinates(
-                        "Point must have at least 2 coordinates".to_string(),
-                    ));
-                }
-                Ok(Point::new(coords[0], coords[1]))
-            }
+            Value::Point(coords) => Ok(geo::Point::from(coord_from_geojson(&coords)?).into()),
             _ => Err(GeoJsonError::InvalidGeometry(
                 "GeoJSON geometry is not a Point".to_string(),
             )),
@@ -503,45 +511,15 @@ impl Polygon {
                     ));
                 }
 
-                let exterior: Result<Vec<geo::Coord>, GeoJsonError> = rings[0]
-                    .iter()
-                    .map(|coords| {
-                        if coords.len() < 2 {
-                            return Err(GeoJsonError::InvalidCoordinates(
-                                "Coordinate must have at least 2 values".to_string(),
-                            ));
-                        }
-                        Ok(geo::Coord {
-                            x: coords[0],
-                            y: coords[1],
-                        })
-                    })
-                    .collect();
+                let mut lines = rings.iter().map(|ring| {
+                    ring.iter()
+                        .map(|c| coord_from_geojson(c))
+                        .collect::<Result<geo::LineString, _>>()
+                });
+                let exterior = lines.next().expect("rings is non-empty")?;
+                let interiors = lines.collect::<Result<Vec<_>, _>>()?;
 
-                let exterior_coords = exterior?;
-                let exterior_line = geo::LineString::from(exterior_coords);
-
-                let mut interiors = Vec::new();
-                for ring in rings.iter().skip(1) {
-                    let interior: Result<Vec<geo::Coord>, GeoJsonError> = ring
-                        .iter()
-                        .map(|coords| {
-                            if coords.len() < 2 {
-                                return Err(GeoJsonError::InvalidCoordinates(
-                                    "Coordinate must have at least 2 values".to_string(),
-                                ));
-                            }
-                            Ok(geo::Coord {
-                                x: coords[0],
-                                y: coords[1],
-                            })
-                        })
-                        .collect();
-                    let interior_coords = interior?;
-                    interiors.push(geo::LineString::from(interior_coords));
-                }
-
-                Ok(Polygon::new(exterior_line, interiors))
+                Ok(Polygon::new(exterior, interiors))
             }
             _ => Err(GeoJsonError::InvalidGeometry(
                 "GeoJSON geometry is not a Polygon".to_string(),
@@ -652,6 +630,16 @@ mod tests {
 
         assert!((original.x() - parsed.x()).abs() < 1e-10);
         assert!((original.y() - parsed.y()).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn test_geojson_rejects_invalid_coordinates() {
+        let bad_lon = r#"{"type":"Point","coordinates":[200.0,40.0]}"#;
+        assert!(Point::from_geojson(bad_lon).is_err());
+        let bad_lat =
+            r#"{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,95.0],[1.0,0.0],[0.0,0.0]]]}"#;
+        assert!(Polygon::from_geojson(bad_lat).is_err());
     }
 
     #[cfg(feature = "geojson")]

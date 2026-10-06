@@ -2221,7 +2221,6 @@ dependencies = [
  "dashmap",
  "env_logger",
  "geo",
- "geojson",
  "log",
  "parking_lot",
  "rstar 0.12.2",

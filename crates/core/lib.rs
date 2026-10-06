@@ -36,9 +36,7 @@ pub use geo::Rect;
 pub use spatio_types::geo::{Point, Polygon};
 
 pub use config::{
-    BoundingBox2D, BoundingBox3D, Config, DbStats, Point3d, Polygon3D, PolygonDynamic,
-    PolygonDynamic3D, SetOptions, SyncMode, SyncPolicy, TemporalBoundingBox2D,
-    TemporalBoundingBox3D, TemporalPoint, TemporalPoint3D,
+    BoundingBox2D, Config, DbStats, Point3d, SetOptions, SyncMode, SyncPolicy, TemporalPoint,
 };
 
 pub use compute::spatial::DistanceMetric;

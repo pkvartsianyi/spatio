@@ -182,7 +182,8 @@ pub fn validate_polygon(polygon: &spatio_types::geo::Polygon) -> Result<()> {
 
 /// Validates a radius for spatial queries.
 ///
-/// Ensures radius is positive, finite, and not exceeding Earth's circumference.
+/// Ensures radius is positive, finite, and not exceeding half of Earth's
+/// circumference (the largest possible great-circle distance).
 ///
 /// # Examples
 ///
@@ -207,11 +208,11 @@ pub fn validate_radius(radius: f64) -> Result<()> {
             radius
         )));
     }
-    const EARTH_CIRCUMFERENCE: f64 = 40_075_000.0; // meters
-    if radius > EARTH_CIRCUMFERENCE {
+    let max_radius = std::f64::consts::PI * geo::HaversineMeasure::GRS80_MEAN_RADIUS.radius();
+    if radius > max_radius {
         return Err(SpatioError::InvalidInput(format!(
-            "Radius {} exceeds Earth's circumference ({} meters)",
-            radius, EARTH_CIRCUMFERENCE
+            "Radius {} exceeds half of Earth's circumference ({} meters)",
+            radius, max_radius
         )));
     }
     Ok(())
@@ -219,7 +220,8 @@ pub fn validate_radius(radius: f64) -> Result<()> {
 
 /// Validates a bounding box.
 ///
-/// Ensures coordinates are valid and min < max for both dimensions.
+/// Ensures coordinates are valid, `min_lat < max_lat` and `min_lon != max_lon`.
+/// `min_lon > max_lon` denotes a box crossing the antimeridian.
 ///
 /// # Examples
 ///
@@ -227,7 +229,8 @@ pub fn validate_radius(radius: f64) -> Result<()> {
 /// use spatio::compute::validation::validate_bbox;
 ///
 /// assert!(validate_bbox(-10.0, -10.0, 10.0, 10.0).is_ok());
-/// assert!(validate_bbox(10.0, -10.0, -10.0, 10.0).is_err()); // min > max
+/// assert!(validate_bbox(170.0, -10.0, -170.0, 10.0).is_ok()); // crosses antimeridian
+/// assert!(validate_bbox(-10.0, 10.0, 10.0, -10.0).is_err()); // min_lat > max_lat
 /// ```
 pub fn validate_bbox(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> Result<()> {
     // Validate all coordinates
@@ -236,10 +239,9 @@ pub fn validate_bbox(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> 
     validate_geographic_point(&min_point)?;
     validate_geographic_point(&max_point)?;
 
-    // Ensure min < max
-    if min_lon >= max_lon {
+    if min_lon == max_lon {
         return Err(SpatioError::InvalidInput(format!(
-            "min_lon ({}) must be < max_lon ({})",
+            "min_lon ({}) must differ from max_lon ({})",
             min_lon, max_lon
         )));
     }
@@ -253,7 +255,7 @@ pub fn validate_bbox(min_lon: f64, min_lat: f64, max_lon: f64, max_lat: f64) -> 
     Ok(())
 }
 
-/// Validates a 3D bounding box.
+/// Validates a 3D bounding box; longitude follows [`validate_bbox`].
 pub fn validate_bbox_3d(
     min_lon: f64,
     min_lat: f64,
@@ -267,9 +269,9 @@ pub fn validate_bbox_3d(
     validate_geographic_point_3d(&min_point)?;
     validate_geographic_point_3d(&max_point)?;
 
-    if min_lon >= max_lon {
+    if min_lon == max_lon {
         return Err(SpatioError::InvalidInput(format!(
-            "min_lon ({}) must be < max_lon ({})",
+            "min_lon ({}) must differ from max_lon ({})",
             min_lon, max_lon
         )));
     }
@@ -434,7 +436,8 @@ mod tests {
         assert!(validate_radius(-100.0).is_err());
         assert!(validate_radius(f64::NAN).is_err());
         assert!(validate_radius(f64::INFINITY).is_err());
-        assert!(validate_radius(50_000_000.0).is_err()); // > Earth circumference
+        assert!(validate_radius(20_000_000.0).is_ok());
+        assert!(validate_radius(20_100_000.0).is_err()); // > half circumference
     }
 
     #[test]
@@ -442,8 +445,7 @@ mod tests {
         assert!(validate_bbox(-10.0, -10.0, 10.0, 10.0).is_ok());
         assert!(validate_bbox(-180.0, -90.0, 180.0, 90.0).is_ok());
 
-        // min >= max errors
-        assert!(validate_bbox(10.0, -10.0, -10.0, 10.0).is_err());
+        assert!(validate_bbox(170.0, -10.0, -170.0, 10.0).is_ok());
         assert!(validate_bbox(-10.0, 10.0, 10.0, -10.0).is_err());
         assert!(validate_bbox(10.0, 10.0, 10.0, 10.0).is_err());
 
@@ -455,6 +457,7 @@ mod tests {
     #[test]
     fn test_validate_bbox_3d() {
         assert!(validate_bbox_3d(-10.0, -10.0, 0.0, 10.0, 10.0, 1000.0).is_ok());
+        assert!(validate_bbox_3d(170.0, -10.0, 0.0, -170.0, 10.0, 1000.0).is_ok());
 
         // Altitude validation
         assert!(validate_bbox_3d(-10.0, -10.0, 1000.0, 10.0, 10.0, 0.0).is_err());

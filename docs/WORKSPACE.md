@@ -82,8 +82,8 @@ Core spatial and temporal data types used across the Spatio ecosystem.
 
 **Contains:**
 - `Point3d` - 3D point representation
-- `BoundingBox2D` / `BoundingBox3D` - Spatial bounding boxes
-- `TemporalPoint` / `TemporalPoint3D` - Time-stamped points
+- `BoundingBox2D` - Spatial bounding box
+- `TemporalPoint` - Time-stamped point
 - `Trajectory` / `Trajectory3D` - Movement paths over time
 - Other shared type definitions
 

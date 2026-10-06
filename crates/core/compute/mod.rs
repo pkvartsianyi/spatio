@@ -1,5 +1,4 @@
-//! Query processing, spatial algorithms, validation, and GeoJSON conversion.
+//! Spatial algorithms, indexing, and validation.
 
-pub mod geojson;
 pub mod spatial;
 pub mod validation;

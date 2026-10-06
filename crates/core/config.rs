@@ -4,11 +4,8 @@
 //! from the `spatio-types` crate for convenience.
 use serde::de::Error;
 
-pub use spatio_types::bbox::{
-    BoundingBox2D, BoundingBox3D, TemporalBoundingBox2D, TemporalBoundingBox3D,
-};
-pub use spatio_types::point::{Point3d, TemporalPoint, TemporalPoint3D};
-pub use spatio_types::polygon::{Polygon3D, PolygonDynamic, PolygonDynamic3D};
+pub use spatio_types::bbox::BoundingBox2D;
+pub use spatio_types::point::{Point3d, TemporalPoint};
 
 pub use spatio_types::config::{SyncMode, SyncPolicy};
 

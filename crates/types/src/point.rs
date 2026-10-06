@@ -19,7 +19,7 @@ use std::time::SystemTime;
 ///
 /// // Calculate 3D distance to another point
 /// let other = Point3d::new(-74.0070, 40.7138, 150.0);
-/// let distance = drone_position.distance_3d(&other);
+/// let distance = drone_position.haversine_3d(&other);
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Point3d {
@@ -243,18 +243,14 @@ impl Point3d {
 
         match geom.value {
             Value::Point(coords) => {
-                if coords.len() < 2 {
-                    return Err(crate::geo::GeoJsonError::InvalidCoordinates(
-                        "Point must have at least 2 coordinates".to_string(),
-                    ));
-                }
+                let xy = crate::geo::coord_from_geojson(&coords)?;
                 let z = coords.get(2).copied().unwrap_or(0.0);
-                if !(coords[0].is_finite() && coords[1].is_finite() && z.is_finite()) {
+                if !z.is_finite() {
                     return Err(crate::geo::GeoJsonError::InvalidCoordinates(
-                        "Point coordinates must be finite".to_string(),
+                        "Point altitude must be finite".to_string(),
                     ));
                 }
-                Ok(Point3d::new(coords[0], coords[1], z))
+                Ok(Point3d::new(xy.x, xy.y, z))
             }
             _ => Err(crate::geo::GeoJsonError::InvalidGeometry(
                 "GeoJSON geometry is not a Point".to_string(),
@@ -281,46 +277,6 @@ impl TemporalPoint {
 
     pub fn timestamp(&self) -> &SystemTime {
         &self.timestamp
-    }
-}
-
-/// A geographic point with an associated altitude and timestamp.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TemporalPoint3D {
-    pub point: Point,
-    pub altitude: f64,
-    pub timestamp: SystemTime,
-}
-
-impl TemporalPoint3D {
-    pub fn new(point: Point, altitude: f64, timestamp: SystemTime) -> Self {
-        Self {
-            point,
-            altitude,
-            timestamp,
-        }
-    }
-
-    pub fn point(&self) -> &Point {
-        &self.point
-    }
-
-    pub fn altitude(&self) -> f64 {
-        self.altitude
-    }
-
-    pub fn timestamp(&self) -> &SystemTime {
-        &self.timestamp
-    }
-
-    /// Convert to a 3D point.
-    pub fn to_point_3d(&self) -> Point3d {
-        Point3d::from_point_and_altitude(self.point, self.altitude)
-    }
-
-    /// Calculate 3D haversine distance to another temporal 3D point.
-    pub fn distance_to(&self, other: &TemporalPoint3D) -> f64 {
-        self.to_point_3d().haversine_3d(&other.to_point_3d())
     }
 }
 
@@ -387,15 +343,6 @@ mod tests {
         assert!((dist_3d - p1.haversine_3d(&p2)).abs() < 0.1);
     }
 
-    #[test]
-    fn test_temporal_point3d_to_point3d() {
-        let temporal = TemporalPoint3D::new(Point::new(-74.0, 40.7), 100.0, SystemTime::now());
-        let p3d = temporal.to_point_3d();
-        assert_eq!(p3d.x(), -74.0);
-        assert_eq!(p3d.y(), 40.7);
-        assert_eq!(p3d.altitude(), 100.0);
-    }
-
     #[cfg(feature = "geojson")]
     #[test]
     fn test_point3d_geojson_roundtrip() {
@@ -406,6 +353,13 @@ mod tests {
         assert!((original.x() - parsed.x()).abs() < 1e-10);
         assert!((original.y() - parsed.y()).abs() < 1e-10);
         assert!((original.z() - parsed.z()).abs() < 1e-10);
+    }
+
+    #[cfg(feature = "geojson")]
+    #[test]
+    fn test_point3d_from_geojson_rejects_out_of_range() {
+        let json = r#"{"type":"Point","coordinates":[200.0,40.0,10.0]}"#;
+        assert!(Point3d::from_geojson(json).is_err());
     }
 
     #[cfg(feature = "geojson")]
