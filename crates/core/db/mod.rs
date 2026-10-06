@@ -12,17 +12,9 @@ use std::time::SystemTime;
 
 mod cold_state;
 mod hot_state;
-mod namespace;
-
-#[cfg(feature = "sync")]
-mod sync;
 
 pub use cold_state::{ColdState, LocationUpdate};
 pub use hot_state::{CurrentLocation, HotState};
-pub use namespace::{Namespace, NamespaceManager};
-
-#[cfg(feature = "sync")]
-pub use sync::SyncDB;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -61,8 +53,6 @@ pub struct DB {
     pub(crate) cold: Arc<ColdState>,
     pub(crate) closed: Arc<AtomicBool>,
     pub(crate) ops_count: Arc<AtomicU64>,
-    #[allow(dead_code)] // retained for configuration introspection
-    pub(crate) config: Config,
 }
 
 impl DB {
@@ -141,7 +131,6 @@ impl DB {
             cold,
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
-            config,
         })
     }
 
@@ -482,17 +471,15 @@ impl DB {
 
     /// Get database statistics
     pub fn stats(&self) -> DbStats {
-        let (hot_objects, hot_memory) = self.hot.detailed_stats();
+        let hot_objects = self.hot.object_count();
         let (cold_trajectories, cold_buffer_bytes) = self.cold.stats();
 
         DbStats {
-            expired_count: 0, // TTL/expiry is not implemented; always zero
             operations_count: self.ops_count.load(Ordering::Relaxed),
-            size_bytes: hot_memory + cold_buffer_bytes,
             hot_state_objects: hot_objects,
             cold_state_trajectories: cold_trajectories,
             cold_state_buffer_bytes: cold_buffer_bytes,
-            memory_usage_bytes: hot_memory + cold_buffer_bytes,
+            memory_usage_bytes: hot_objects * 200 + cold_buffer_bytes,
         }
     }
     /// Query objects within a polygon

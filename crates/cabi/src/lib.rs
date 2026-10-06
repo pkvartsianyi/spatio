@@ -351,8 +351,9 @@ pub extern "C" fn spatio_get(
 }
 
 /// Database statistics, written as 7 `u64` values into `out` (an array of at
-/// least 7): expired_count, operations_count, size_bytes, hot_state_objects,
-/// cold_state_trajectories, cold_state_buffer_bytes, memory_usage_bytes.
+/// least 7): 0 (reserved), operations_count, memory_usage_bytes,
+/// hot_state_objects, cold_state_trajectories, cold_state_buffer_bytes,
+/// memory_usage_bytes.
 #[unsafe(no_mangle)]
 pub extern "C" fn spatio_stats(
     handle_ptr: *mut c_void,
@@ -366,9 +367,9 @@ pub extern "C" fn spatio_stats(
     let s = db.stats();
     unsafe {
         let a = std::slice::from_raw_parts_mut(out, 7);
-        a[0] = s.expired_count;
+        a[0] = 0;
         a[1] = s.operations_count;
-        a[2] = s.size_bytes as u64;
+        a[2] = s.memory_usage_bytes as u64;
         a[3] = s.hot_state_objects as u64;
         a[4] = s.cold_state_trajectories as u64;
         a[5] = s.cold_state_buffer_bytes as u64;

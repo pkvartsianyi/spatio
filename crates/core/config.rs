@@ -2,9 +2,7 @@
 //!
 //! This module provides configuration types and re-exports spatial types
 //! from the `spatio-types` crate for convenience.
-use bytes::Bytes;
 use serde::de::Error;
-use std::time::SystemTime;
 
 pub use spatio_types::bbox::{
     BoundingBox2D, BoundingBox3D, TemporalBoundingBox2D, TemporalBoundingBox3D,
@@ -26,10 +24,6 @@ pub struct Config {
 
     #[serde(default = "Config::default_sync_batch_size")]
     pub sync_batch_size: usize,
-
-    #[cfg(feature = "time-index")]
-    #[serde(default)]
-    pub history_capacity: Option<usize>,
 
     /// Buffer capacity per object for recent history in ColdState
     #[serde(default = "Config::default_buffer_capacity")]
@@ -88,22 +82,6 @@ impl Config {
         self
     }
 
-    #[cfg(feature = "time-index")]
-    pub fn with_history_capacity(mut self, capacity: usize) -> Self {
-        assert!(capacity > 0, "History capacity must be greater than zero");
-
-        if capacity > 100_000 {
-            log::warn!(
-                "History capacity of {} is very large and may consume significant memory. \
-                Each entry stores key + value + timestamp.",
-                capacity
-            );
-        }
-
-        self.history_capacity = Some(capacity);
-        self
-    }
-
     const fn default_buffer_capacity() -> usize {
         100
     }
@@ -120,15 +98,12 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        #[cfg(feature = "time-index")]
-        if let Some(capacity) = self.history_capacity
-            && capacity == 0
-        {
-            return Err("History capacity must be greater than zero".to_string());
-        }
-
         if self.sync_batch_size == 0 {
             return Err("Sync batch size must be greater than zero".to_string());
+        }
+
+        if self.buffer_capacity == 0 {
+            return Err("Buffer capacity must be greater than zero".to_string());
         }
 
         Ok(())
@@ -167,8 +142,6 @@ impl Default for Config {
             sync_policy: SyncPolicy::default(),
             sync_mode: SyncMode::default(),
             sync_batch_size: Self::default_sync_batch_size(),
-            #[cfg(feature = "time-index")]
-            history_capacity: None,
             buffer_capacity: Self::default_buffer_capacity(),
             persistence: PersistenceConfig::default(),
         }
@@ -176,48 +149,6 @@ impl Default for Config {
 }
 
 pub use spatio_types::config::SetOptions;
-
-/// Internal representation of a database item.
-#[derive(Debug, Clone)]
-pub struct DbItem {
-    /// The value bytes
-    pub value: Bytes,
-    pub created_at: SystemTime,
-}
-
-/// Operation types captured in history tracking.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HistoryEventKind {
-    Set,
-    Delete,
-}
-
-/// Historical record for key mutations.
-#[derive(Debug, Clone)]
-pub struct HistoryEntry {
-    pub timestamp: SystemTime,
-    pub kind: HistoryEventKind,
-    pub value: Option<Bytes>,
-}
-
-impl DbItem {
-    /// Create a new item
-    pub fn new(value: impl Into<Bytes>) -> Self {
-        Self {
-            value: value.into(),
-            created_at: SystemTime::now(),
-        }
-    }
-
-    /// Create from SetOptions (timestamp can override created_at)
-    pub fn from_options(value: impl Into<Bytes>, options: Option<&SetOptions>) -> Self {
-        let value = value.into();
-        let created_at = options
-            .and_then(|o| o.timestamp)
-            .unwrap_or_else(SystemTime::now);
-        Self { value, created_at }
-    }
-}
 
 pub use spatio_types::stats::DbStats;
 
@@ -231,8 +162,6 @@ mod tests {
         assert_eq!(config.sync_policy, SyncPolicy::EverySecond);
         assert_eq!(config.sync_mode, SyncMode::All);
         assert_eq!(config.sync_batch_size, 1);
-        #[cfg(feature = "time-index")]
-        assert!(config.history_capacity.is_none());
     }
 
     #[test]
@@ -250,37 +179,19 @@ mod tests {
         assert_eq!(deserialized.sync_batch_size, 8);
     }
 
-    #[cfg(feature = "time-index")]
-    #[test]
-    fn test_config_history_capacity() {
-        let config = Config::default().with_history_capacity(5);
-        assert_eq!(config.history_capacity, Some(5));
-    }
-
     #[test]
     fn test_set_options() {
-        let opts = SetOptions::with_timestamp(SystemTime::now());
+        let opts = SetOptions::with_timestamp(std::time::SystemTime::now());
         assert!(opts.timestamp.is_some());
-    }
-
-    #[test]
-    fn test_db_item() {
-        let item = DbItem::new("test");
-        assert!(!item.value.is_empty());
-    }
-
-    #[test]
-    fn test_db_stats() {
-        let mut stats = DbStats::new();
-        assert_eq!(stats.operations_count, 0);
-
-        stats.record_operation();
-        assert_eq!(stats.operations_count, 1);
     }
 
     #[test]
     fn test_config_validation() {
         let config = Config::default();
         assert!(config.validate().is_ok());
+        assert!(
+            Config::from_json(r#"{"buffer_capacity": 0}"#).is_err(),
+            "zero buffer capacity must be rejected"
+        );
     }
 }

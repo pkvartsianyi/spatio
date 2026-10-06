@@ -350,30 +350,6 @@ impl HotState {
     pub fn object_count(&self) -> usize {
         self.current_locations.len()
     }
-
-    /// Get number of objects in a specific namespace
-    pub fn namespace_count(&self, namespace: &str) -> usize {
-        let prefix = format!("{}::", namespace);
-        self.current_locations
-            .iter()
-            .filter(|entry| entry.key().starts_with(&prefix))
-            .count()
-    }
-
-    /// Get detailed statistics including per-namespace breakdown
-    pub fn detailed_stats(&self) -> (usize, usize) {
-        let total_objects = self.current_locations.len();
-        // Estimate: ~200 bytes per object (key + Point3d + metadata + overhead)
-        let estimated_memory = total_objects * 200;
-        (total_objects, estimated_memory)
-    }
-
-    /// Clear all objects from hot state
-    pub fn clear(&mut self) {
-        self.current_locations.clear();
-        let mut spatial_idx = self.spatial_index.write();
-        spatial_idx.clear();
-    }
 }
 
 impl Default for HotState {

@@ -10,7 +10,6 @@ use std::path::PathBuf;
 pub struct DBBuilder {
     path: Option<PathBuf>,
     config: Config,
-    in_memory: bool,
 }
 
 impl DBBuilder {
@@ -19,20 +18,17 @@ impl DBBuilder {
         Self {
             path: None,
             config: Config::default(),
-            in_memory: true,
         }
     }
 
     /// Set the path for persistence (Cold State trajectory log).
     pub fn path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.path = Some(path.into());
-        self.in_memory = false;
         self
     }
 
     /// Configure for in-memory storage with no persistence.
     pub fn in_memory(mut self) -> Self {
-        self.in_memory = true;
         self.path = None;
         self
     }
@@ -43,21 +39,11 @@ impl DBBuilder {
         self
     }
 
-    /// Enable history tracking with a fixed per-key capacity.
-    #[cfg(feature = "time-index")]
-    pub fn history_capacity(mut self, capacity: usize) -> Self {
-        self.config = self.config.clone().with_history_capacity(capacity);
-        self
-    }
-
     /// Build the database.
     pub fn build(self) -> Result<DB> {
-        if self.in_memory {
-            DB::memory_with_config(self.config)
-        } else if let Some(path) = self.path {
-            DB::open_with_config(path, self.config)
-        } else {
-            DB::memory_with_config(self.config)
+        match self.path {
+            Some(path) => DB::open_with_config(path, self.config),
+            None => DB::memory_with_config(self.config),
         }
     }
 }
@@ -76,7 +62,7 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = DBBuilder::new();
-        assert!(builder.in_memory);
+        assert!(builder.path.is_none());
     }
 
     #[test]

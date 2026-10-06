@@ -829,9 +829,7 @@ impl PySpatio {
 
         Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("expired_count", stats.expired_count)?;
             dict.set_item("operations_count", stats.operations_count)?;
-            dict.set_item("size_bytes", stats.size_bytes)?;
             dict.set_item("hot_state_objects", stats.hot_state_objects)?;
             dict.set_item("cold_state_trajectories", stats.cold_state_trajectories)?;
             dict.set_item("cold_state_buffer_bytes", stats.cold_state_buffer_bytes)?;
