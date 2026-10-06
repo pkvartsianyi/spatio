@@ -52,9 +52,8 @@ impl HotState {
     ///
     /// Last-writer-wins by timestamp: an update is ignored if its `timestamp`
     /// is strictly older than the stored one (equal timestamps overwrite).
-    /// The location map and the spatial index are updated under separate locks,
-    /// so a concurrent reader may briefly observe the new map entry against the
-    /// old index position (or vice versa); both converge once the call returns.
+    /// The spatial-index write lock is held across the map update, so the map
+    /// and index change atomically with respect to other writers and readers.
     pub fn update_location(
         &self,
         namespace: &str,
@@ -73,62 +72,30 @@ impl HotState {
             timestamp,
         });
 
-        // Extract coordinates before moving new_location
         let pos_x = new_location.position.x();
         let pos_y = new_location.position.y();
         let pos_z = new_location.position.z();
 
-        // Atomic update in main map (DashMap handles concurrency)
-        // Update only if the new timestamp is newer than or equal to existing
-        enum UpdateAction {
-            Updated(Arc<CurrentLocation>),
-            Inserted,
-            Ignored,
-        }
-
-        let action = match self.current_locations.entry(full_key.clone()) {
+        // Lock order: index, then map entry (readers use the same order).
+        let mut spatial_idx = self.spatial_index.write();
+        match self.current_locations.entry(full_key.clone()) {
             dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                if entry.get().timestamp <= timestamp {
-                    let old = entry.insert(new_location);
-                    UpdateAction::Updated(old)
-                } else {
-                    UpdateAction::Ignored
+                if entry.get().timestamp > timestamp {
+                    return Ok(None);
                 }
+                let old = entry.insert(new_location);
+                let (old_x, old_y, old_z) = (old.position.x(), old.position.y(), old.position.z());
+                if old_x != pos_x || old_y != pos_y || old_z != pos_z {
+                    spatial_idx.remove_entry(namespace, &full_key, Some((old_x, old_y, old_z)));
+                    spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
+                }
+                Ok(Some(old))
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
                 entry.insert(new_location);
-                UpdateAction::Inserted
-            }
-        };
-
-        match action {
-            UpdateAction::Updated(old_location) => {
-                let old_x = old_location.position.x();
-                let old_y = old_location.position.y();
-                let old_z = old_location.position.z();
-
-                // Skip the spatial index churn when the object hasn't moved:
-                // the R*-tree entry is already at this exact position, so a
-                // remove+reinsert would only rebuild the tree to an identical
-                // state. Metadata/timestamp updates already landed in the
-                // DashMap above. (Common for stationary objects re-reporting.)
-                if old_x != pos_x || old_y != pos_y || old_z != pos_z {
-                    let mut spatial_idx = self.spatial_index.write();
-                    // Remove old position
-                    spatial_idx.remove_entry(namespace, &full_key, Some((old_x, old_y, old_z)));
-                    // Insert new position
-                    spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
-                }
-
-                Ok(Some(old_location))
-            }
-            UpdateAction::Inserted => {
-                // Insert new position
-                let mut spatial_idx = self.spatial_index.write();
                 spatial_idx.insert_point(namespace, pos_x, pos_y, pos_z, full_key);
                 Ok(None)
             }
-            UpdateAction::Ignored => Ok(None),
         }
     }
 
@@ -187,18 +154,11 @@ impl HotState {
     /// Remove an object
     pub fn remove_object(&self, namespace: &str, object_id: &str) -> Option<Arc<CurrentLocation>> {
         let key = Self::make_key(namespace, object_id);
-
-        // Remove from map
-        let removed = self.current_locations.remove(&key).map(|(_, v)| v);
-
-        // Remove from spatial index
-        if let Some(item) = &removed {
-            let mut spatial_idx = self.spatial_index.write();
-            let pos = item.position.clone();
-            spatial_idx.remove_entry(namespace, &key, Some((pos.x(), pos.y(), pos.z())));
-        }
-
-        removed
+        let mut spatial_idx = self.spatial_index.write();
+        let (_, removed) = self.current_locations.remove(&key)?;
+        let pos = &removed.position;
+        spatial_idx.remove_entry(namespace, &key, Some((pos.x(), pos.y(), pos.z())));
+        Some(removed)
     }
 
     /// Query objects within a cylindrical volume
@@ -487,6 +447,46 @@ mod tests {
                 .get_current_location("vehicles", &format!("truck_{:03}", i))
                 .unwrap();
             assert_eq!(loc.metadata, serde_json::json!({"data": "data_99"}));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_moves_same_object_keep_index_consistent() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let hot = Arc::new(HotState::new());
+        let ts = SystemTime::now();
+        for round in 0..200u64 {
+            let barrier = Arc::new(Barrier::new(8));
+            let handles: Vec<_> = (0..8u64)
+                .map(|t| {
+                    let (hot, barrier) = (hot.clone(), barrier.clone());
+                    thread::spawn(move || {
+                        barrier.wait();
+                        for i in 0..50u64 {
+                            let x = ((round * 8 + t) * 50 + i) as f64 * 0.0001;
+                            hot.update_location(
+                                "ns",
+                                "obj",
+                                Point3d::new(x, 0.0, 0.0),
+                                serde_json::json!({}),
+                                ts,
+                            )
+                            .unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+
+            let all = hot.query_within_bbox("ns", -1.0, -1.0, 10.0, 1.0, 100);
+            assert_eq!(all.len(), 1, "index must hold exactly one entry");
+            let current = hot.get_current_location("ns", "obj").unwrap();
+            let near = hot.query_within_radius("ns", &current.position, 1.0, 10);
+            assert_eq!(near.len(), 1, "index entry must match current position");
         }
     }
 
