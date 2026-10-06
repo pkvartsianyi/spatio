@@ -53,59 +53,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # Rust linting
-      - name: Run clippy (spatio-types)
-        run: cargo clippy -p spatio-types --all-targets -- -D warnings
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Run clippy (spatio)
-        run: cargo clippy -p spatio --all-targets --all-features -- -D warnings
-
-      - name: Run clippy (spatio-py)
-        run: cargo clippy -p spatio-py --all-targets -- -D warnings
-
-      - name: Run clippy (spatio-server)
-        run: cargo clippy -p spatio-server --all-targets --all-features -- -D warnings
-
-      - name: Run clippy (spatio-client)
-        run: cargo clippy -p spatio-client --all-targets --all-features -- -D warnings
-
-      # Rust building
-      - name: Build spatio-types
-        run: cargo build -p spatio-types
-
-      - name: Build spatio (default features)
-        run: cargo build -p spatio
-
-      - name: Build spatio (all features)
-        run: cargo build -p spatio --all-features
-
-      - name: Build spatio-server
-        run: cargo build -p spatio-server --all-features
-
-      - name: Build spatio-client
-        run: cargo build -p spatio-client --all-features
-
-      # Rust testing
-      - name: Run tests (spatio-types)
-        run: cargo test -p spatio-types
+      # spatio-py is excluded: pyo3 extension-module test binaries don't link.
+      - name: Run tests
+        run: cargo test --workspace --all-features --exclude spatio-py
 
       - name: Run tests (spatio - default features)
         run: cargo test -p spatio
-
-      - name: Run tests (spatio - all features)
-        run: cargo test -p spatio --all-features
-
-      - name: Run tests (spatio-server)
-        run: cargo test -p spatio-server --all-features
-
-      - name: Run tests (spatio-client)
-        run: cargo test -p spatio-client --all-features
-
-      - name: Run tests (spatio-integration-tests)
-        run: cargo test -p spatio-integration-tests --all-features
-
-      - name: Run doc tests
-        run: cargo test -p spatio -p spatio-types -p spatio-server --doc
 
       # Python testing
       - name: Install Python dependencies
@@ -148,7 +104,8 @@ jobs:
       - name: Run Python linting
         working-directory: bindings/python
         run: |
-          ruff check src/ tests/ examples/
+          ruff check --no-fix src/ tests/ examples/
+          ruff format --check src/ tests/ examples/
           mypy src/
 
   # Test on multiple platforms
@@ -177,11 +134,8 @@ jobs:
             ~/.cargo/git/db/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build spatio
-        run: cargo build -p spatio --all-features
-
       - name: Run tests
-        run: cargo test -p spatio -p spatio-types -p spatio-server -p spatio-integration-tests --all-features
+        run: cargo test --workspace --all-features --exclude spatio-py
 
   # Check documentation builds
   docs:

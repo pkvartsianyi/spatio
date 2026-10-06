@@ -8,14 +8,14 @@ build:
     cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi --release
 
 test *args:
-    cargo test -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi -p spatio-integration-tests --all-features -- {{args}}
+    cargo test --workspace --all-features --exclude spatio-py -- {{args}}
 
 test-integration *args:
     cargo test -p spatio-integration-tests --all-features -- {{args}}
 
 lint:
     cargo fmt --all
-    cargo clippy -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 ci:
     act -W .github/workflows/ci.yml -j test
@@ -58,9 +58,6 @@ py-examples:
 
 py-example name:
     cd bindings/python && just example {{name}}
-
-py-wheel:
-    cd bindings/python && just wheel
 
 py-clean:
     cd bindings/python && just clean
@@ -243,7 +240,7 @@ bump-python-no-commit VERSION:
 
 security-audit:
     cargo audit
-    cd bindings/python && bandit -r src/ && safety check
+    cd bindings/python && just security
 
 bench-core *args:
     cargo run -p spatio-benchmarks --bin bench_core --release -- {{args}}
