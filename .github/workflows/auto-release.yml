@@ -35,6 +35,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           running-workflow-name: "Wait for CI Tests"
+          check-regexp: '^(Test Suite|Test on .+|Go bindings on .+|Documentation)$'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 10
 
