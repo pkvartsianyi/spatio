@@ -13,11 +13,14 @@ use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::PersistenceConfig;
-use crate::error::Result;
+use crate::error::{Result, SpatioError};
 
 /// Durability settings governing when buffered writes are flushed to the OS
 /// and synced to stable storage.
@@ -49,7 +52,7 @@ pub struct LocationUpdate {
 /// Cold state: historical trajectories
 pub struct ColdState {
     /// Append-only log file
-    trajectory_log: Mutex<TrajectoryLog>,
+    trajectory_log: Arc<Mutex<TrajectoryLog>>,
 
     /// Recent history buffer for fast access (file backend only)
     /// Maps "namespace::object_id" -> recent updates
@@ -65,8 +68,11 @@ pub struct ColdState {
     /// buffer was dropped on delete.
     has_prior_history: AtomicBool,
 
-    /// Exclusive lock on `<log>.lock`, held for the lifetime of this state.
-    _lock: Option<File>,
+    /// Exclusive lock on `<log>.lock`, held until close or drop.
+    lock: Mutex<Option<File>>,
+
+    /// Background `EverySecond` syncer; dropping the sender stops it.
+    syncer: Option<(mpsc::Sender<()>, JoinHandle<()>)>,
 }
 
 impl ColdState {
@@ -86,17 +92,24 @@ impl ColdState {
         let has_prior_history =
             std::fs::metadata(log_path).is_ok_and(|m| m.len() > LOG_HEADER_V2.len() as u64 + 1);
 
+        let trajectory_log = Arc::new(Mutex::new(TrajectoryLog::open_file(
+            log_path,
+            config.buffer_size,
+            sync,
+        )?));
+        let syncer = match sync.policy {
+            SyncPolicy::EverySecond => Some(spawn_syncer(trajectory_log.clone())?),
+            _ => None,
+        };
+
         Ok(Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open_file(
-                log_path,
-                config.buffer_size,
-                sync,
-            )?),
+            trajectory_log,
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
             has_prior_history: AtomicBool::new(has_prior_history),
-            _lock: Some(lock),
+            lock: Mutex::new(Some(lock)),
+            syncer,
         })
     }
 
@@ -108,12 +121,13 @@ impl ColdState {
     /// without paying for text serialization, `BufWriter` flushes, or `fsync`.
     pub fn new_memory(buffer_capacity: usize) -> Self {
         Self {
-            trajectory_log: Mutex::new(TrajectoryLog::open_memory()),
+            trajectory_log: Arc::new(Mutex::new(TrajectoryLog::open_memory())),
             recent_buffer: DashMap::new(),
             buffer_capacity,
             log_path: None,
             has_prior_history: AtomicBool::new(false),
-            _lock: None,
+            lock: Mutex::new(None),
+            syncer: None,
         }
     }
 
@@ -199,6 +213,14 @@ impl ColdState {
     pub fn flush(&self) -> Result<()> {
         let mut log = self.trajectory_log.lock();
         log.flush()
+    }
+
+    /// Flush, reject further appends, and release the file lock so the same
+    /// path can be reopened while this handle is still alive.
+    pub fn close(&self) -> Result<()> {
+        self.trajectory_log.lock().close()?;
+        self.lock.lock().take();
+        Ok(())
     }
 
     /// Query trajectory history
@@ -399,11 +421,14 @@ fn sync_parent_dir(path: &Path) {
 
 /// Write one record body as a newline-terminated log line, prefixing a CRC32
 /// (hex) under V2.
+/// The line is written with a single `write_all`, so a failure never leaves
+/// part of one record buffered ahead of the next.
 fn write_record<W: Write>(w: &mut W, version: LogVersion, body: &str) -> std::io::Result<()> {
-    match version {
-        LogVersion::V2 => writeln!(w, "{:08x}|{}", crc32(body.as_bytes()), body),
-        LogVersion::V1 => writeln!(w, "{}", body),
-    }
+    let line = match version {
+        LogVersion::V2 => format!("{:08x}|{}\n", crc32(body.as_bytes()), body),
+        LogVersion::V1 => format!("{}\n", body),
+    };
+    w.write_all(line.as_bytes())
 }
 
 /// Truncate to the microsecond precision stored in the log.
@@ -704,9 +729,19 @@ enum LogBackend {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogState {
+    Open,
+    Closed,
+    /// A write or sync failed: the file may end in a partial record, so
+    /// nothing more may be appended after it.
+    Failed,
+}
+
 /// Trajectory log: durable file-backed log or an in-memory log.
 struct TrajectoryLog {
     backend: LogBackend,
+    state: LogState,
 }
 
 impl TrajectoryLog {
@@ -749,6 +784,7 @@ impl TrajectoryLog {
                 sync,
                 version,
             },
+            state: LogState::Open,
         })
     }
 
@@ -757,6 +793,46 @@ impl TrajectoryLog {
             backend: LogBackend::Memory {
                 records: Vec::new(),
             },
+            state: LogState::Open,
+        }
+    }
+
+    /// Run a mutating operation, latching the log into `Failed` on error.
+    fn guarded<T>(&mut self, op: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        match self.state {
+            LogState::Open => {}
+            LogState::Closed => return Err(SpatioError::DatabaseClosed),
+            LogState::Failed => {
+                return Err(SpatioError::Other(
+                    "trajectory log is unusable after a failed write; reopen the database".into(),
+                ));
+            }
+        }
+        let result = op(self);
+        if result.is_err() {
+            self.state = LogState::Failed;
+        }
+        result
+    }
+
+    fn close(&mut self) -> Result<()> {
+        if self.state == LogState::Closed {
+            return Ok(());
+        }
+        self.guarded(|log| log.maybe_sync(true))?;
+        self.state = LogState::Closed;
+        Ok(())
+    }
+
+    /// Called periodically by the background syncer.
+    fn sync_idle(&mut self) -> Result<()> {
+        match &self.backend {
+            LogBackend::File {
+                writes_since_sync, ..
+            } if *writes_since_sync > 0 && self.state == LogState::Open => {
+                self.guarded(|log| log.maybe_sync(false))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -813,6 +889,15 @@ impl TrajectoryLog {
         object_id: &str,
         update: LocationUpdate,
     ) -> Result<Option<LocationUpdate>> {
+        self.guarded(|log| log.append_inner(namespace, object_id, update))
+    }
+
+    fn append_inner(
+        &mut self,
+        namespace: &str,
+        object_id: &str,
+        update: LocationUpdate,
+    ) -> Result<Option<LocationUpdate>> {
         match &mut self.backend {
             // Log format (pipe-separated, 8 fields per line):
             //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
@@ -852,6 +937,15 @@ impl TrajectoryLog {
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
+        self.guarded(|log| log.append_tombstone_inner(micros, namespace, object_id))
+    }
+
+    fn append_tombstone_inner(
+        &mut self,
+        micros: u128,
+        namespace: &str,
+        object_id: &str,
+    ) -> Result<()> {
         match &mut self.backend {
             LogBackend::File {
                 writer,
@@ -880,7 +974,7 @@ impl TrajectoryLog {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.maybe_sync(true)
+        self.guarded(|log| log.maybe_sync(true))
     }
 
     /// Prepare a file-backed trajectory scan: flush buffered writes to the OS so
@@ -1061,10 +1155,40 @@ impl TrajectoryLog {
 
 impl Drop for TrajectoryLog {
     fn drop(&mut self) {
+        if self.state == LogState::Closed {
+            return;
+        }
         if let Err(e) = self.maybe_sync(true) {
             log::warn!("Failed to flush trajectory log on drop: {}", e);
         }
     }
+}
+
+impl Drop for ColdState {
+    fn drop(&mut self) {
+        if let Some((stop, handle)) = self.syncer.take() {
+            drop(stop);
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Fsync idle `EverySecond` writes, which would otherwise wait for the next
+/// append to trigger the interval check.
+fn spawn_syncer(log: Arc<Mutex<TrajectoryLog>>) -> Result<(mpsc::Sender<()>, JoinHandle<()>)> {
+    let (stop, stopped) = mpsc::channel::<()>();
+    let handle = std::thread::Builder::new()
+        .name("spatio-sync".into())
+        .spawn(move || {
+            while let Err(mpsc::RecvTimeoutError::Timeout) =
+                stopped.recv_timeout(Duration::from_millis(250))
+            {
+                if let Err(e) = log.lock().sync_idle() {
+                    log::warn!("Background sync of trajectory log failed: {}", e);
+                }
+            }
+        })?;
+    Ok((stop, handle))
 }
 
 #[cfg(test)]
@@ -1073,6 +1197,51 @@ mod tests {
     use crate::config::PersistenceConfig;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    /// Under `EverySecond`, an idle write must reach disk without a later append.
+    #[test]
+    fn test_every_second_syncs_idle_writes() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("traj.log");
+        let cold = ColdState::new(
+            &log_path,
+            10,
+            PersistenceConfig {
+                buffer_size: 10_000,
+            },
+            SyncSettings {
+                policy: SyncPolicy::EverySecond,
+                ..SyncSettings::default()
+            },
+        )
+        .unwrap();
+
+        cold.append_update(
+            "v",
+            "o",
+            Point3d::new(1.0, 2.0, 3.0),
+            serde_json::json!({}),
+            UNIX_EPOCH + Duration::from_secs(1),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(1600));
+
+        let contents = std::fs::read_to_string(&log_path).unwrap();
+        assert!(
+            contents.contains("|v|o|"),
+            "idle write not synced: {contents:?}"
+        );
+    }
+
+    /// After a failed write the log may end mid-record, so appends must stop.
+    #[test]
+    fn test_failed_write_latches_log() {
+        let mut log = TrajectoryLog::open_memory();
+        let failed: Result<()> = log.guarded(|_| Err(SpatioError::Other("disk full".into())));
+        assert!(failed.is_err());
+        assert!(log.append_tombstone(0, "ns", "o").is_err());
+        assert!(log.flush().is_err());
+    }
 
     /// With `SyncPolicy::Always` and a large write buffer, a single append must
     /// already be on disk (flushed past the BufWriter) without any explicit flush.
