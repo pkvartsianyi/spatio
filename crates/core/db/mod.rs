@@ -25,17 +25,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// alias the `namespace::object_id` composite key.
 ///
 /// The log is a pipe-delimited, newline-terminated text format and the in-memory
-/// keys are joined with `::`, so `|`, CR/LF, and `::` are structurally unsafe and
-/// must be rejected at the write boundary rather than silently mangled.
+/// keys are joined with `::`, so `|`, CR/LF, `::`, and a leading/trailing `:`
+/// (which makes the join ambiguous, e.g. `"a:" + "b"` vs `"a" + ":b"`) are
+/// structurally unsafe and must be rejected at the write boundary.
 fn validate_identifier(kind: &str, value: &str) -> Result<()> {
     if value.is_empty() {
         return Err(SpatioError::InvalidInput(format!(
             "{kind} must not be empty"
         )));
     }
-    if value.contains('|') || value.contains('\n') || value.contains('\r') || value.contains("::") {
+    if value.contains('|')
+        || value.contains('\n')
+        || value.contains('\r')
+        || value.contains("::")
+        || value.starts_with(':')
+        || value.ends_with(':')
+    {
         return Err(SpatioError::InvalidInput(format!(
-            "{kind} must not contain '|', a newline, or '::' (got {value:?})"
+            "{kind} must not contain '|', a newline, or '::', nor start or end with ':' (got {value:?})"
         )));
     }
     Ok(())
@@ -483,10 +490,12 @@ impl DB {
             .query_trajectory(namespace, object_id, start_time, end_time, limit)
     }
 
-    /// Close the database, flushing and syncing any buffered writes to disk.
+    /// Close the database: flush buffered writes (syncing them unless the policy
+    /// is `Never`), then release the file lock so the path can be reopened even
+    /// while clones are alive.
     pub fn close(&self) -> Result<()> {
         self.closed.store(true, Ordering::Release);
-        self.cold.flush()
+        self.cold.close()
     }
 
     /// Get database statistics
@@ -1191,7 +1200,7 @@ mod tests {
         let meta = serde_json::json!({});
 
         // Delimiter / ambiguity hazards must be rejected, not silently mangled.
-        for bad in ["a|b", "a\nb", "a\rb", "a::b", ""] {
+        for bad in ["a|b", "a\nb", "a\rb", "a::b", "", ":a", "a:"] {
             assert!(
                 db.upsert(bad, "obj", pos.clone(), meta.clone(), None)
                     .is_err(),
@@ -1208,7 +1217,36 @@ mod tests {
             );
         }
 
-        // A normal key still works.
-        assert!(db.upsert("ns", "ok", pos, meta, None).is_ok());
+        // A normal key still works, including an inner ':'.
+        assert!(
+            db.upsert("ns", "ok", pos.clone(), meta.clone(), None)
+                .is_ok()
+        );
+        assert!(db.upsert("ns", "user:42", pos, meta, None).is_ok());
+    }
+
+    #[test]
+    fn test_close_releases_lock_while_handle_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("db.log");
+        let pos = Point3d::new(1.0, 2.0, 0.0);
+
+        let first = DB::open(&path).unwrap();
+        first
+            .upsert("ns", "a", pos.clone(), serde_json::json!({}), None)
+            .unwrap();
+        first.close().unwrap();
+        first.close().unwrap();
+
+        let second = DB::open(&path).unwrap();
+        assert!(second.get("ns", "a").unwrap().is_some());
+        assert!(matches!(
+            first
+                .cold
+                .append_update("ns", "b", pos, serde_json::json!({}), SystemTime::now()),
+            Err(SpatioError::DatabaseClosed)
+        ));
+        drop(first);
+        assert!(second.get("ns", "b").unwrap().is_none());
     }
 }

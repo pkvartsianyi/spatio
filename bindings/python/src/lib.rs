@@ -742,9 +742,24 @@ impl PySpatio {
         Ok(dict.into_any().unbind())
     }
 
-    /// Close the database, flushing buffered writes to disk.
+    /// Close the database, flushing buffered writes and releasing its file lock.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         handle_error(py.detach(|| self.db.close()))
+    }
+
+    fn __enter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        py: Python<'_>,
+        _exc_type: Option<Bound<'_, PyAny>>,
+        _exc_value: Option<Bound<'_, PyAny>>,
+        _traceback: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        self.close(py)?;
+        Ok(false)
     }
 
     fn __repr__(&self) -> String {

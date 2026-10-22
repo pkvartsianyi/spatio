@@ -180,6 +180,15 @@ class TestSpatio:
         with pytest.raises(RuntimeError, match=r"Database is closed"):
             db.upsert("test", "obj", spatio.Point(0, 0))
 
+    def test_context_manager_releases_lock(self, tmp_path):
+        path = str(tmp_path / "db.log")
+        with spatio.Spatio.open(path) as db:
+            db.upsert("test", "obj", spatio.Point(1, 2))
+        # The handle is still referenced, but the lock must be released.
+        reopened = spatio.Spatio.open(path)
+        assert reopened.get("test", "obj") is not None
+        reopened.close()
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
