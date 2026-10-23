@@ -18,4 +18,8 @@ mod rpc;
 // Re-export protocol types for client usage
 pub use protocol::{CurrentLocation, LocationUpdate, SpatioService, SpatioServiceClient, Stats};
 
-pub use rpc::{MAX_FRAME_BYTES, run_server};
+pub use rpc::{
+    HANDSHAKE_OK, HANDSHAKE_TIMEOUT, MAX_FRAME_BYTES, ServerConfig, framed, run_server,
+    run_server_with,
+};
+pub use tokio_rustls::rustls;
