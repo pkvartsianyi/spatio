@@ -18,3 +18,4 @@ futures = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
 spatio-types = { workspace = true }
+rcgen = { workspace = true }

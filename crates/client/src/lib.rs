@@ -13,7 +13,9 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use spatio_server::SpatioServiceClient;
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
+use spatio_server::{HANDSHAKE_OK, HANDSHAKE_TIMEOUT, SpatioServiceClient};
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
 use std::net::SocketAddr;
@@ -23,14 +25,19 @@ use tarpc::client::{self, RpcError};
 use tarpc::context;
 use tarpc::tokio_serde::formats::Json;
 use thiserror::Error;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::pki_types::ServerName;
 
 pub use spatio_server::{CurrentLocation, LocationUpdate, Stats};
+pub use tokio_rustls::rustls;
 
 #[derive(Error, Debug)]
 pub enum ClientError {
     #[error("Connection error: {0}")]
     Connection(#[from] std::io::Error),
+    #[error("Server rejected the handshake (bad or missing auth token?)")]
+    Handshake,
     #[error("RPC error: {0}")]
     Rpc(#[from] RpcError),
     #[error("Server error: {0}")]
@@ -39,28 +46,68 @@ pub enum ClientError {
 
 pub type Result<T> = std::result::Result<T, ClientError>;
 
+/// Connection options for [`SpatioClient::connect_with`].
+#[derive(Clone, Default)]
+pub struct ClientOptions {
+    pub auth_token: Option<String>,
+    /// TLS config plus the name the server certificate must match.
+    pub tls: Option<(Arc<rustls::ClientConfig>, ServerName<'static>)>,
+}
+
 /// RPC client. If the connection drops, the failing call returns its error and
 /// the client reconnects so the next call can succeed.
 #[derive(Clone)]
 pub struct SpatioClient {
     addr: SocketAddr,
+    options: ClientOptions,
     client: Arc<Mutex<SpatioServiceClient>>,
 }
 
-async fn dial(addr: SocketAddr) -> Result<SpatioServiceClient> {
-    let socket = tokio::net::TcpStream::connect(addr).await?;
-    let codec = LengthDelimitedCodec::builder()
-        .max_frame_length(spatio_server::MAX_FRAME_BYTES)
-        .new_codec();
-    let transport = tarpc::serde_transport::new(Framed::new(socket, codec), Json::default());
+async fn dial(addr: SocketAddr, options: &ClientOptions) -> Result<SpatioServiceClient> {
+    let connect = async {
+        let socket = tokio::net::TcpStream::connect(addr).await?;
+        let token = options.auth_token.as_deref();
+        match &options.tls {
+            Some((config, name)) => {
+                let tls = TlsConnector::from(config.clone())
+                    .connect(name.clone(), socket)
+                    .await?;
+                start(tls, token).await
+            }
+            None => start(socket, token).await,
+        }
+    };
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, connect)
+        .await
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::TimedOut))?
+}
+
+async fn start<S>(io: S, token: Option<&str>) -> Result<SpatioServiceClient>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut framed = spatio_server::framed(io);
+    framed
+        .send(Bytes::copy_from_slice(token.unwrap_or_default().as_bytes()))
+        .await?;
+    match framed.next().await {
+        Some(Ok(reply)) if reply[..] == *HANDSHAKE_OK => {}
+        _ => return Err(ClientError::Handshake),
+    }
+    let transport = tarpc::serde_transport::new(framed, Json::default());
     Ok(SpatioServiceClient::new(client::Config::default(), transport).spawn())
 }
 
 impl SpatioClient {
     pub async fn connect(addr: SocketAddr) -> Result<Self> {
-        let client = dial(addr).await?;
+        Self::connect_with(addr, ClientOptions::default()).await
+    }
+
+    pub async fn connect_with(addr: SocketAddr, options: ClientOptions) -> Result<Self> {
+        let client = dial(addr, &options).await?;
         Ok(Self {
             addr,
+            options,
             client: Arc::new(Mutex::new(client)),
         })
     }
@@ -83,7 +130,7 @@ impl SpatioClient {
                 if matches!(
                     e,
                     RpcError::Shutdown | RpcError::Send(_) | RpcError::Receive(_)
-                ) && let Ok(fresh) = dial(self.addr).await
+                ) && let Ok(fresh) = dial(self.addr, &self.options).await
                 {
                     *self.client.lock().unwrap_or_else(|e| e.into_inner()) = fresh;
                 }

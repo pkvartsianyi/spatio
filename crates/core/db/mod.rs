@@ -232,9 +232,13 @@ impl DB {
             .hot
             .get_current_location(namespace, object_id)
             .map_or_else(|| serde_json::json!({}), |loc| loc.metadata.clone());
+        // Only the latest point carries metadata (replay needs it there); copying
+        // it into every point let one request multiply metadata size by its length.
+        let empty = serde_json::json!({});
         for (pos, ts) in &points {
+            let meta = if ts == latest_ts { &metadata } else { &empty };
             self.cold
-                .append_update(namespace, object_id, pos.clone(), metadata.clone(), *ts)?;
+                .append_update(namespace, object_id, pos.clone(), meta.clone(), *ts)?;
         }
         self.hot.update_location(
             namespace,
@@ -1138,6 +1142,8 @@ mod tests {
             .query_trajectory("ns", "o", t0, t0 + Duration::from_secs(10), 10)
             .unwrap();
         assert_eq!(history.len(), 4);
+        assert_eq!(history[0].metadata, serde_json::json!({"kind": "truck"}));
+        assert_eq!(history[1].metadata, serde_json::json!({}));
     }
 
     #[test]

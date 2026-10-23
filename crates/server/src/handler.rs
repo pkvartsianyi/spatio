@@ -13,6 +13,19 @@ use tokio::sync::Semaphore;
 /// Upper bound on result/neighbour counts accepted from the wire, so a reply
 /// stays well under the transport frame limit.
 pub const MAX_QUERY_LIMIT: usize = 10_000;
+/// Write limits, so a single request can't put unbounded data on disk.
+pub const MAX_TRAJECTORY_POINTS: usize = 10_000;
+pub const MAX_METADATA_BYTES: usize = 64 * 1024;
+pub const MAX_ID_BYTES: usize = 256;
+
+fn check_ids(namespace: &str, id: &str) -> Result<(), String> {
+    if namespace.len() > MAX_ID_BYTES || id.len() > MAX_ID_BYTES {
+        return Err(format!(
+            "namespace and id must be at most {MAX_ID_BYTES} bytes"
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 pub struct Handler {
@@ -62,8 +75,15 @@ impl SpatioService for Handler {
         point: Point3d,
         metadata: serde_json::Value,
     ) -> Result<(), String> {
+        check_ids(&namespace, &id)?;
         let db = self.db.clone();
         self.blocking(move || {
+            let size = serde_json::to_vec(&metadata).map_or(0, |v| v.len());
+            if size > MAX_METADATA_BYTES {
+                return Err(format!(
+                    "metadata is {size} bytes; the limit is {MAX_METADATA_BYTES}"
+                ));
+            }
             db.upsert(&namespace, &id, point, metadata, None)
                 .map_err(|e| e.to_string())
         })
@@ -174,6 +194,13 @@ impl SpatioService for Handler {
         id: String,
         trajectory: Vec<(f64, Point)>,
     ) -> Result<(), String> {
+        check_ids(&namespace, &id)?;
+        if trajectory.len() > MAX_TRAJECTORY_POINTS {
+            return Err(format!(
+                "trajectory has {} points; the limit is {MAX_TRAJECTORY_POINTS}",
+                trajectory.len()
+            ));
+        }
         let db = self.db.clone();
         self.blocking(move || {
             let points = trajectory
