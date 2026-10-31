@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Spatio</title>
+<meta name="description" content="Spatio is an embedded spatio-temporal database in Rust for tracking moving objects in real time, with Python and Go bindings.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7-12-7V9z' fill='%232f9a6a'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a survey sheet. One live map up top, then quiet ruled sections on a coordinate grid. */
+:root {
+  --paper: #f3f7f4;
+  --surface: #ffffff;
+  --ink: #0f1f19;
+  --muted: #52665c;
+  --line: #d3dfd8;
+  --hex: #2f9a6a;
+  --deep: #1d7a4f;
+  --tide: #2f6178;
+  --hex-soft: rgba(47, 154, 106, 0.12);
+  --code-bg: #0f1f19;
+  --code-fg: #d9e8e0;
+  --code-dim: #7d9a8c;
+  --code-str: #8fd6b2;
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --wrap: 1160px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0b1411; --surface: #101c18; --ink: #e2eee8; --muted: #8ea69a; --line: #1f302a;
+    --hex: #4bbf89; --deep: #84d9b0; --tide: #6ea8c6; --hex-soft: rgba(75, 191, 137, 0.14);
+    --code-bg: #07100d; --code-fg: #d9e8e0; --code-dim: #6d8a7c; --code-str: #8fd6b2;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0b1411; --surface: #101c18; --ink: #e2eee8; --muted: #8ea69a; --line: #1f302a;
+  --hex: #4bbf89; --deep: #84d9b0; --tide: #6ea8c6; --hex-soft: rgba(75, 191, 137, 0.14);
+  --code-bg: #07100d; --code-fg: #d9e8e0; --code-dim: #6d8a7c; --code-str: #8fd6b2;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 17px/1.6 var(--f-body);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+img, canvas, svg { max-width: 100%; display: block; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--hex); outline-offset: 3px; border-radius: 4px; }
+code, pre, .mono { font-family: var(--f-mono); }
+
+.wrap {
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+
+.eyebrow {
+  font: 500 12px/1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--deep);
+}
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h2 { font-size: clamp(30px, 4vw, 44px); line-height: 1.05; font-weight: 700; letter-spacing: -0.02em; }
+h3 { font-size: 20px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 60ch; }
+
+/* nav */
+header.top { border-bottom: 1px solid var(--line); }
+.nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 18px; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 700 22px/1 var(--f-display); letter-spacing: -0.02em; }
+.brand svg { width: 30px; height: 30px; }
+.nav ul { list-style: none; display: flex; gap: 26px; margin: 0; padding: 0; font-size: 15px; }
+.nav ul a { text-decoration: none; color: var(--muted); }
+.nav ul a:hover { color: var(--ink); }
+.nav .gh { color: var(--ink); font-weight: 500; }
+@media (max-width: 720px) { .nav ul li.opt { display: none; } .nav ul { gap: 18px; } }
+
+/* hero */
+.hero { padding-block: 64px 72px; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 56px; align-items: center; }
+@media (max-width: 960px) { .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 40px; } .hero { padding-block: 40px 56px; } }
+.hero h1 {
+  font-size: clamp(44px, 6.4vw, 80px);
+  line-height: 0.95;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  margin-block: 18px 22px;
+}
+.hero h1 em { font-style: normal; color: var(--hex); }
+.hero .lede { font-size: 19px; }
+.install { margin-top: 32px; max-width: 520px; }
+.tabs { display: flex; gap: 4px; margin-bottom: -1px; position: relative; }
+.tabs button {
+  font: 500 13px/1 var(--f-mono); color: var(--muted); background: none;
+  border: 1px solid transparent; border-bottom: 0; padding: 10px 14px; cursor: pointer;
+  border-radius: 8px 8px 0 0;
+}
+.tabs button[aria-selected="true"] { color: var(--ink); background: var(--surface); border-color: var(--line); }
+.cmd {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 0 10px 10px 10px;
+  padding: 14px 14px 14px 18px; font: 400 15px/1.4 var(--f-mono);
+}
+.cmd code { overflow-x: auto; white-space: nowrap; min-width: 0; }
+.cmd code::before { content: "$ "; color: var(--muted); }
+.copy {
+  flex: none; font: 500 12px/1 var(--f-mono); padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer;
+}
+.copy:hover { border-color: var(--hex); }
+.hero-links { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 22px; font-size: 15px; }
+.hero-links a { color: var(--deep); text-underline-offset: 3px; }
+
+/* live map */
+.map {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.map-head, .map-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; font: 400 12.5px/1.4 var(--f-mono); color: var(--muted);
+}
+.map-head { border-bottom: 1px solid var(--line); }
+.map-foot { border-top: 1px solid var(--line); }
+.live { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--hex); box-shadow: 0 0 0 4px var(--hex-soft); }
+.canvas-box { position: relative; aspect-ratio: 16 / 11; max-width: 100%; touch-action: pan-y; cursor: crosshair; }
+.canvas-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.readout {
+  padding: 14px 16px; border-top: 1px solid var(--line); font: 400 13px/1.6 var(--f-mono);
+  background: var(--code-bg); color: var(--code-fg); min-height: 132px;
+}
+.readout .c { color: var(--code-dim); }
+.readout .s { color: var(--code-str); }
+.readout .n { color: #f0c987; }
+.readout .row { display: flex; justify-content: space-between; gap: 16px; white-space: nowrap; overflow: hidden; }
+.radius { display: flex; align-items: center; gap: 10px; }
+.radius input { width: 130px; accent-color: var(--hex); }
+.radius output { min-width: 56px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* sections */
+section.band { border-top: 1px solid var(--line); padding-block: 88px; }
+@media (max-width: 720px) { section.band { padding-block: 60px; } }
+.sec-head { display: grid; gap: 14px; margin-bottom: 44px; max-width: 760px; }
+
+/* architecture */
+.arch { display: grid; grid-template-columns: minmax(0, 1fr) 120px minmax(0, 1fr); align-items: stretch; }
+@media (max-width: 860px) { .arch { grid-template-columns: minmax(0, 1fr); } .arch .flow { min-height: 90px; } .arch .flow svg { transform: rotate(90deg); } }
+.state { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 28px; display: grid; gap: 16px; align-content: start; }
+.state .tag { font: 500 12px/1 var(--f-mono); letter-spacing: 0.1em; text-transform: uppercase; display: inline-flex; gap: 8px; align-items: center; }
+.state.hot .tag { color: var(--hex); }
+.state.cold .tag { color: var(--tide); }
+.state .tag i { width: 10px; height: 11px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: currentColor; }
+.state ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; color: var(--muted); font-size: 15.5px; }
+.state li { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+.state li b { font: 500 13px/1.6 var(--f-mono); color: var(--ink); }
+.flow { display: grid; place-items: center; color: var(--muted); }
+.flow svg { width: 100px; height: 80px; }
+.flow text { font: 500 10px var(--f-mono); fill: var(--muted); letter-spacing: 0.06em; }
+.recovery { margin-top: 22px; color: var(--muted); font-size: 15.5px; max-width: 72ch; }
+.recovery b { color: var(--ink); font-weight: 600; }
+
+/* queries */
+.queries { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+@media (max-width: 900px) { .queries { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .queries { grid-template-columns: minmax(0, 1fr); } }
+.q { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 26px 24px 28px; display: grid; gap: 12px; align-content: start; }
+.q svg { width: 64px; height: 64px; }
+.q svg .g { stroke: var(--line); fill: none; }
+.q svg .a { stroke: var(--hex); fill: var(--hex-soft); stroke-width: 1.5; }
+.q svg .p { fill: var(--muted); }
+.q svg .h { fill: var(--hex); }
+.q svg .t { stroke: var(--tide); fill: none; stroke-width: 1.5; }
+.q p { color: var(--muted); font-size: 15px; }
+.q code { font-size: 12.5px; color: var(--deep); overflow-wrap: anywhere; }
+.big-o { font: 500 12px/1 var(--f-mono); color: var(--muted); }
+
+/* code */
+.code-grid { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 56px; align-items: start; }
+@media (max-width: 960px) { .code-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; } }
+.points { display: grid; gap: 22px; margin-top: 32px; }
+.points div { display: grid; gap: 4px; }
+.points b { font-weight: 600; }
+.points span { color: var(--muted); font-size: 15.5px; }
+.editor { background: var(--code-bg); border-radius: 14px; overflow: hidden; min-width: 0; }
+.editor .tabs { padding: 10px 10px 0; gap: 2px; margin: 0; }
+.editor .tabs button { color: var(--code-dim); border: 0; }
+.editor .tabs button[aria-selected="true"] { color: var(--code-fg); background: rgba(255,255,255,0.06); }
+.editor pre { margin: 0; padding: 22px 24px 26px; overflow-x: auto; font-size: 14px; line-height: 1.65; color: var(--code-fg); background: rgba(255,255,255,0.06); }
+.editor .c { color: var(--code-dim); }
+.editor .s { color: var(--code-str); }
+.editor .k { color: #9ec3e6; }
+
+/* bench */
+.bench { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
+@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); gap: 36px; } }
+.op h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.op h3 small { font: 400 12px var(--f-mono); color: var(--muted); }
+.bar { display: grid; grid-template-columns: 104px minmax(0, 1fr) 64px; align-items: center; gap: 12px; font-size: 14px; margin-bottom: 10px; }
+.bar .label { color: var(--muted); }
+.bar.me .label { color: var(--ink); font-weight: 600; }
+.bar .track { height: 10px; background: var(--hex-soft); border-radius: 2px; }
+.bar .fill { height: 100%; background: var(--muted); opacity: 0.55; border-radius: 2px; }
+.bar.me .fill { background: var(--hex); opacity: 1; }
+.bar .val { font: 400 13px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.caveat { margin-top: 36px; padding: 18px 20px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 14.5px; max-width: 86ch; }
+.caveat b { color: var(--ink); font-weight: 600; }
+
+/* complexity */
+.table-box { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 15px; }
+th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td code { font-size: 13.5px; }
+td.cx code { color: var(--deep); white-space: nowrap; }
+td:last-child { color: var(--muted); }
+.tier { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.t1 { background: var(--hex); } .t2 { background: #c9a43a; } .t4 { background: #c55a4a; }
+
+/* ecosystem */
+.pkgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+.pkg { display: grid; gap: 6px; padding: 22px 4px 22px 0; border-bottom: 1px solid var(--line); text-decoration: none; }
+.pkg-top { display: flex; justify-content: space-between; gap: 12px; padding-right: 20px; }
+.pkg b { font: 500 15px var(--f-mono); }
+.pkg .v { font: 400 13px var(--f-mono); color: var(--muted); }
+.pkg span { color: var(--muted); font-size: 14.5px; padding-right: 20px; }
+a.pkg:hover b { color: var(--deep); }
+
+footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--muted); font-size: 14px; }
+.foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px 32px; align-items: center; }
+.foot nav { display: flex; gap: 22px; flex-wrap: wrap; }
+.foot a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap nav">
+    <a class="brand" href="#" aria-label="Spatio home"><svg class="logo" viewBox="0 0 100 100" aria-hidden="true"></svg>Spatio</a>
+    <ul>
+      <li class="opt"><a href="#architecture">Architecture</a></li>
+      <li class="opt"><a href="#queries">Queries</a></li>
+      <li class="opt"><a href="#benchmarks">Benchmarks</a></li>
+      <li><a href="https://docs.rs/spatio">Docs</a></li>
+      <li><a class="gh" href="https://github.com/pkvartsianyi/spatio">GitHub</a></li>
+    </ul>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow">Embedded spatio-temporal database · Rust</span>
+        <h1>Know where everything is, <em>and where it’s been.</em></h1>
+        <p class="lede">Spatio tracks millions of moving objects inside your process. Current positions live in an in-memory R*-tree for fast spatial queries. Every move is appended to a durable log on disk, so you can replay any object’s path.</p>
+
+        <div class="install">
+          <div class="tabs" role="tablist" aria-label="Install command">
+            <button role="tab" id="i-py" aria-selected="true" data-cmd="pip install spatio">Python</button>
+            <button role="tab" id="i-rs" aria-selected="false" data-cmd="cargo add spatio">Rust</button>
+            <button role="tab" id="i-go" aria-selected="false" data-cmd="go get github.com/pkvartsianyi/spatio/bindings/go">Go</button>
+          </div>
+          <div class="cmd"><code id="cmd">pip install spatio</code><button class="copy" id="copy" type="button">Copy</button></div>
+        </div>
+        <div class="hero-links">
+          <a href="#quickstart">Read the quickstart</a>
+          <a href="https://docs.rs/spatio">API reference on docs.rs</a>
+        </div>
+      </div>
+
+      <figure class="map" style="margin:0">
+        <div class="map-head">
+          <span class="live"><i></i>namespace “fleet” · <span id="count-total">0</span> objects</span>
+          <span>WGS84 · Lower Manhattan</span>
+        </div>
+        <div class="canvas-box" id="box"><canvas id="map" aria-label="Simulated vehicles moving across a hex grid, with a radius query highlighting the ones nearby"></canvas></div>
+        <div class="map-foot">
+          <span>Simulated, at 5× speed. Point at the map to move the query.</span>
+          <label class="radius" for="r">radius <input id="r" type="range" min="200" max="1400" step="50" value="650"><output id="r-out" for="r">650 m</output></label>
+        </div>
+        <div class="readout" id="readout" aria-live="off"></div>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="architecture">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Architecture</span>
+        <h2>Hot state for now. Cold state for history.</h2>
+        <p class="lede">Most location data is asked two questions: where is it now, and where has it been. Spatio keeps those apart so neither slows the other down.</p>
+      </div>
+      <div class="arch">
+        <div class="state hot">
+          <span class="tag"><i></i>Hot state · memory</span>
+          <h3>The latest position of every object</h3>
+          <ul>
+            <li><b>DashMap</b><span>Lock-free map from object ID to its current location. Lookups are O(1).</span></li>
+            <li><b>R*-tree</b>Spatial index over current positions, for radius, bbox, cylinder, polygon and KNN queries.</li>
+            <li><b>Recent buffer</b>A bounded per-object window of recent points, so short trajectory reads skip the disk.</li>
+          </ul>
+        </div>
+        <div class="flow" aria-hidden="true">
+          <svg viewBox="0 0 100 80"><text x="50" y="22" text-anchor="middle">APPEND</text><path d="M8 34 H88 M80 28 L88 34 L80 40" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M92 54 H12 M20 48 L12 54 L20 60" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 3"/><text x="50" y="74" text-anchor="middle">REPLAY</text></svg>
+        </div>
+        <div class="state cold">
+          <span class="tag"><i></i>Cold state · disk</span>
+          <h3>Every movement, in order</h3>
+          <ul>
+            <li><b>Trajectory log</b>Append-only and CRC-checked. Each upsert becomes one record.</li>
+            <li><b>Sync policy</b>Choose how often records are flushed and fsynced, trading latency for durability.</li>
+            <li><b>Checkpoints</b>Snapshots of live objects bound recovery to the records written since the last one.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="recovery"><b>On restart</b>, Spatio loads the latest checkpoint and replays the log tail to rebuild the hot state. There is no server to run and nothing to configure: open a path and start writing.</p>
+    </div>
+  </section>
+
+  <section class="band" id="queries">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Queries</span>
+        <h2>Ask around a coordinate, or around an object.</h2>
+        <p class="lede">Every spatial query also has an object-relative form. <code>query_near("drones", "drone_alpha", 500)</code> finds what is close to a drone without you looking up its position first.</p>
+      </div>
+      <div class="queries">
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="a" cx="32" cy="32" r="20"/><circle class="h" cx="26" cy="26" r="3"/><circle class="h" cx="40" cy="36" r="3"/><circle class="p" cx="56" cy="12" r="3"/><circle class="p" cx="8" cy="54" r="3"/><circle class="p" cx="32" cy="32" r="1.5"/></svg>
+          <h3>Radius</h3>
+          <p>Everything within a distance in meters, sorted nearest first.</p>
+          <code>query_radius(ns, center, radius, limit)</code>
+          <span class="big-o">O(log N + K)</span>
+        </div>
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><rect class="a" x="12" y="14" width="40" height="30"/><circle class="h" cx="22" cy="24" r="3"/><circle class="h" cx="42" cy="34" r="3"/><circle class="p" cx="54" cy="54" r="3"/><circle class="p" cx="6" cy="6" r="3"/></svg>
+          <h3>Bounding box</h3>
+          <p>Objects inside a rectangle, in 2D, or a box in 3D when altitude matters.</p>
+          <code>query_bbox · query_within_bbox_3d</code>
+          <span class="big-o">O(log N + K)</span>
+        </div>
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><ellipse class="a" cx="32" cy="14" rx="18" ry="6"/><path class="a" d="M14 14 V48 A18 6 0 0 0 50 48 V14" style="fill:none"/><circle class="h" cx="28" cy="30" r="3"/><circle class="p" cx="58" cy="30" r="3"/></svg>
+          <h3>Cylinder</h3>
+          <p>A radius plus an altitude band. Built for drones and airspace.</p>
+          <code>query_within_cylinder(ns, c, min_z, max_z, r, n)</code>
+          <span class="big-o">O(log N + K)</span>
+        </div>
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><circle class="p" cx="32" cy="32" r="3"/><path class="t" d="M32 32 L18 20 M32 32 L46 26 M32 32 L28 50"/><circle class="h" cx="18" cy="20" r="3"/><circle class="h" cx="46" cy="26" r="3"/><circle class="h" cx="28" cy="50" r="3"/><circle class="p" cx="58" cy="58" r="3"/><circle class="p" cx="6" cy="40" r="3"/></svg>
+          <h3>K nearest</h3>
+          <p>The k closest objects, with no radius to guess.</p>
+          <code>knn(ns, center, k) · knn_near_object</code>
+          <span class="big-o">O(k log N)</span>
+        </div>
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path class="a" d="M10 20 L30 8 L54 22 L46 52 L20 48 Z"/><circle class="h" cx="30" cy="28" r="3"/><circle class="h" cx="36" cy="40" r="3"/><circle class="p" cx="58" cy="50" r="3"/></svg>
+          <h3>Polygon</h3>
+          <p>Point-in-polygon over a geofence, with holes. Polygons round-trip as GeoJSON.</p>
+          <code>query_polygon(ns, polygon, limit)</code>
+          <span class="big-o">O(log N + K·V)</span>
+        </div>
+        <div class="q">
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path class="t" d="M8 52 C18 50 20 34 30 34 S42 44 48 28 S54 12 58 10" stroke-dasharray="2 4"/><circle class="h" cx="58" cy="10" r="3.5"/><circle class="p" cx="8" cy="52" r="2"/><circle class="p" cx="30" cy="34" r="2"/><circle class="p" cx="48" cy="28" r="2"/></svg>
+          <h3>Trajectory</h3>
+          <p>An object’s path between two timestamps, read from the recent buffer or the log.</p>
+          <code>query_trajectory(ns, id, start, end, limit)</code>
+          <span class="big-o">O(B log B) buffered</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="quickstart">
+    <div class="wrap code-grid">
+      <div>
+        <div class="sec-head" style="margin-bottom:0">
+          <span class="eyebrow">Quickstart</span>
+          <h2>A database you import.</h2>
+          <p class="lede">Spatio runs in your process, like SQLite. The Python and Go bindings call the same Rust core directly, with no network hop.</p>
+        </div>
+        <div class="points">
+          <div><b>Python</b><span>Native bindings built with PyO3. <code>pip install spatio</code>.</span></div>
+          <div><b>Go</b><span>Loads the C ABI through purego, so your build needs no cgo or C toolchain.</span></div>
+          <div><b>Server mode</b><span>When several processes need one database, <code>spatio-server</code> exposes the same API over TCP, with auth and TLS.</span></div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="tabs" role="tablist" aria-label="Quickstart language">
+          <button role="tab" id="q-py" aria-selected="true" data-pane="p-py">python</button>
+          <button role="tab" id="q-rs" aria-selected="false" data-pane="p-rs">rust</button>
+          <button role="tab" id="q-go" aria-selected="false" data-pane="p-go">go</button>
+        </div>
+<pre id="p-py"><span class="k">import</span> spatio
+
+db = spatio.Spatio.open(<span class="s">"fleet.db"</span>)
+
+<span class="c"># Longitude, latitude. Metadata is any JSON-able dict.</span>
+nyc = spatio.Point(-<span class="s">74.0060</span>, <span class="s">40.7128</span>)
+db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, {<span class="s">"population"</span>: <span class="s">8_000_000</span>})
+
+<span class="c"># Everything within 100 km, nearest first</span>
+nearby = db.query_radius(<span class="s">"cities"</span>, nyc, <span class="s">100_000</span>, limit=<span class="s">10</span>)
+<span class="k">for</span> object_id, point, meta, dist <span class="k">in</span> nearby:
+    print(object_id, <span class="k">round</span>(dist))</pre>
+<pre id="p-rs" hidden><span class="k">use</span> spatio::prelude::*;
+
+<span class="k">fn</span> main() -> Result&lt;()&gt; {
+    <span class="k">let</span> db = Spatio::open(<span class="s">"fleet.db"</span>)?;
+
+    <span class="c">// Track a drone with altitude</span>
+    <span class="k">let</span> pos = Point3d::new(-<span class="s">74.006</span>, <span class="s">40.712</span>, <span class="s">100.0</span>);
+    db.upsert(<span class="s">"drones"</span>, <span class="s">"drone_1"</span>, pos, json!({}), None)?;
+
+    <span class="c">// Other drones within 500 m of drone_1</span>
+    <span class="k">let</span> near = db.query_near(<span class="s">"drones"</span>, <span class="s">"drone_1"</span>, <span class="s">500.0</span>, <span class="s">5</span>)?;
+    println!(<span class="s">"{} nearby"</span>, near.len());
+    Ok(())
+}</pre>
+<pre id="p-go" hidden>db, err := spatio.OpenMemory()
+<span class="k">if</span> err != nil {
+    panic(err)
+}
+<span class="k">defer</span> db.Close()
+
+nyc := geom.NewPointFlat(geom.XY, []float64{-<span class="s">74.0060</span>, <span class="s">40.7128</span>})
+_ = db.Upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, map[string]any{<span class="s">"population"</span>: <span class="s">8_000_000</span>})
+
+nearby, _ := db.QueryRadius(<span class="s">"cities"</span>, nyc, <span class="s">100_000</span>, <span class="s">10</span>)
+<span class="k">for</span> _, n := <span class="k">range</span> nearby {
+    fmt.Printf(<span class="s">"%s at %.0fm\n"</span>, n.ObjectID, n.Distance)
+}</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="benchmarks">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Benchmarks</span>
+        <h2>Throughput on 10,000 points.</h2>
+        <p class="lede">Operations per second, mean of 5 runs, from the reproducible suite in <code>test-benchmarks/</code>. Longer bars are better.</p>
+      </div>
+      <div class="bench" id="bench"></div>
+      <p class="caveat"><b>Read these as a ceiling, not a head-to-head.</b> Spatio was measured in memory with no fsync. SpatiaLite ran file-backed and PostGIS over a network socket, so the setups differ. Spatio Server includes a TCP round trip, which makes it the closer comparison to PostGIS.</p>
+    </div>
+  </section>
+
+  <section class="band" id="complexity">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Costs</span>
+        <h2>What each call costs, written down.</h2>
+        <p class="lede">N is objects in the namespace, K the objects a query’s envelope matches, L the records in the log. The full table, including the slow paths, is in <a href="https://github.com/pkvartsianyi/spatio/blob/main/docs/COMPLEXITY.md">COMPLEXITY.md</a>.</p>
+      </div>
+      <div class="table-box">
+        <table>
+          <thead><tr><th>Operation</th><th>Complexity</th><th>How</th></tr></thead>
+          <tbody>
+            <tr><td><code>get</code></td><td class="cx"><span class="tier t1"></span><code>O(1)</code></td><td>DashMap lookup.</td></tr>
+            <tr><td><code>upsert</code></td><td class="cx"><span class="tier t1"></span><code>O(log N)</code></td><td>R*-tree remove and reinsert. Skips the index when the object hasn’t moved.</td></tr>
+            <tr><td><code>query_radius</code></td><td class="cx"><span class="tier t2"></span><code>O(log N + K)</code></td><td>Envelope prune, haversine per candidate, top-k heap.</td></tr>
+            <tr><td><code>knn</code></td><td class="cx"><span class="tier t2"></span><code>O(k log N)</code></td><td>R*-tree nearest-neighbor iterator.</td></tr>
+            <tr><td><code>query_polygon</code></td><td class="cx"><span class="tier t2"></span><code>O(log N + K·V)</code></td><td>Bounding-box broad phase, then point-in-polygon over V vertices.</td></tr>
+            <tr><td><code>query_trajectory</code></td><td class="cx"><span class="tier t4"></span><code>O(L)</code></td><td>Falls back to a log scan once the recent buffer has filled. Size the buffer for your read window.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="packages">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">Packages</span>
+        <h2>One core, several ways in.</h2>
+      </div>
+      <div class="pkgs">
+        <a class="pkg" href="https://crates.io/crates/spatio"><div class="pkg-top"><b>spatio</b><span class="v">0.4</span></div><span>The embedded engine.</span></a>
+        <a class="pkg" href="https://pypi.org/project/spatio"><div class="pkg-top"><b>spatio (PyPI)</b><span class="v">0.3</span></div><span>Python bindings via PyO3.</span></a>
+        <a class="pkg" href="https://github.com/pkvartsianyi/spatio/tree/main/bindings/go"><div class="pkg-top"><b>bindings/go</b><span class="v">0.2</span></div><span>Go bindings over the C ABI, no cgo.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-server"><div class="pkg-top"><b>spatio-server</b><span class="v">0.3</span></div><span>TCP server with auth and TLS.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-client"><div class="pkg-top"><b>spatio-client</b><span class="v">0.3</span></div><span>Async Rust client for the server.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-types"><div class="pkg-top"><b>spatio-types</b><span class="v">0.3</span></div><span>Point3d, BoundingBox, Polygon and GeoJSON.</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="#" style="font-size:18px"><svg class="logo" viewBox="0 0 100 100" aria-hidden="true" style="width:24px;height:24px"></svg>Spatio</a>
+    <nav>
+      <a href="https://github.com/pkvartsianyi/spatio">GitHub</a>
+      <a href="https://docs.rs/spatio">docs.rs</a>
+      <a href="https://github.com/pkvartsianyi/spatio/blob/main/docs/ARCHITECTURE.md">Architecture</a>
+      <a href="https://github.com/pkvartsianyi/spatio/blob/main/LICENSE">MIT License</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var NS = "http://www.w3.org/2000/svg";
+  function hexPts(cx, cy, r) {
+    var p = [];
+    for (var i = 0; i < 6; i++) { var a = Math.PI / 180 * (60 * i - 90); p.push((cx + r * Math.cos(a)).toFixed(2) + "," + (cy + r * Math.sin(a)).toFixed(2)); }
+    return p.join(" ");
+  }
+  var rows = [[2, 0.5], [3, 0], [4, -0.5], [3, 0]];
+  var shades = ["#7cc9a0", "#56b98a", "#5fbf92", "#3fa874", "#35a06c", "#2f9a6a", "#4aab7f", "#0f8a48", "#2d9466", "#2a8f60", "#3a9a70", "#237a55", "#2f6178"];
+  document.querySelectorAll("svg.logo").forEach(function (svg) {
+    var r = 13, w = r * Math.sqrt(3), k = 0;
+    rows.forEach(function (row, ri) {
+      for (var i = 0; i < row[0]; i++) {
+        var cx = 50 + (i - (row[0] - 1) / 2) * w, cy = 16 + ri * r * 1.5 + 6;
+        var poly = document.createElementNS(NS, "polygon");
+        poly.setAttribute("points", hexPts(cx, cy, r - 0.8));
+        poly.setAttribute("fill", shades[k++ % shades.length]);
+        svg.appendChild(poly);
+      }
+    });
+  });
+
+  function bindTabs(list, onSelect) {
+    var btns = list.querySelectorAll("button");
+    btns.forEach(function (b) {
+      b.addEventListener("click", function () {
+        btns.forEach(function (o) { o.setAttribute("aria-selected", o === b ? "true" : "false"); });
+        onSelect(b);
+      });
+    });
+  }
+  var cmd = document.getElementById("cmd");
+  bindTabs(document.querySelector(".install .tabs"), function (b) { cmd.textContent = b.dataset.cmd; });
+  bindTabs(document.querySelector(".editor .tabs"), function (b) {
+    ["p-py", "p-rs", "p-go"].forEach(function (id) { document.getElementById(id).hidden = id !== b.dataset.pane; });
+  });
+  var copyBtn = document.getElementById("copy");
+  copyBtn.addEventListener("click", function () {
+    var done = function () { copyBtn.textContent = "Copied"; setTimeout(function () { copyBtn.textContent = "Copy"; }, 1400); };
+    var fallback = function () { var s = window.getSelection(), rg = document.createRange(); rg.selectNodeContents(cmd); s.removeAllRanges(); s.addRange(rg); };
+    try { navigator.clipboard.writeText(cmd.textContent).then(done, fallback); } catch (e) { fallback(); }
+  });
+
+  var bench = [
+    { op: "Insert", rows: [["Spatio", 6519.26], ["Spatio Server", 3834.14], ["PostGIS", 1908.14], ["SpatiaLite", 1815.75]] },
+    { op: "Read", rows: [["Spatio", 38358.88], ["SpatiaLite", 12118.59], ["Spatio Server", 3746.96], ["PostGIS", 1886.46]] },
+    { op: "Distance", rows: [["Spatio", 19867.94], ["SpatiaLite", 2004.50], ["Spatio Server", 1927.42], ["PostGIS", 1029.16]] }
+  ];
+  var fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+  document.getElementById("bench").innerHTML = bench.map(function (g) {
+    var max = g.rows[0][1];
+    return '<div class="op"><h3>' + g.op + '<small>ops/s</small></h3>' + g.rows.map(function (r) {
+      return '<div class="bar' + (r[0] === "Spatio" ? " me" : "") + '"><span class="label">' + r[0] + '</span><span class="track"><span class="fill" style="display:block;width:' + (r[1] / max * 100).toFixed(1) + '%"></span></span><span class="val">' + fmt.format(r[1]) + '</span></div>';
+    }).join("") + '</div>';
+  }).join("");
+
+  var canvas = document.getElementById("map"), box = document.getElementById("box"), ctx = canvas.getContext("2d");
+  var radiusInput = document.getElementById("r"), radiusOut = document.getElementById("r-out"), readout = document.getElementById("readout");
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  var W = 0, H = 0, DPR = 1, WIDTH_M = 4200, mpp = 1, colors = {};
+  var ORIGIN = { lon: -74.0205, lat: 40.7265 };
+  var M_PER_DEG_LAT = 111320, M_PER_DEG_LON = 111320 * Math.cos(ORIGIN.lat * Math.PI / 180);
+
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    ["--surface", "--ink", "--muted", "--line", "--hex", "--deep", "--tide", "--hex-soft"].forEach(function (k) { colors[k] = cs.getPropertyValue(k).trim(); });
+  }
+  readColors();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { readColors(); if (reduce.matches) draw(); });
+  new MutationObserver(function () { readColors(); if (reduce.matches) draw(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  var kinds = [["truck", 8, 9], ["courier", 12, 6], ["drone", 7, 16], ["scooter", 9, 7]];
+  var rand = (function (s) { return function () { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; }; })(42);
+  var objs = [];
+  kinds.forEach(function (k) {
+    for (var i = 0; i < k[1]; i++) {
+      objs.push({ id: k[0] + "_" + String(Math.floor(rand() * 900) + 100), x: rand(), y: rand(), h: rand() * Math.PI * 2, v: k[2] * 5 * (0.7 + rand() * 0.6), turn: 0, tick: 0, trail: [], drone: k[0] === "drone" });
+    }
+  });
+  document.getElementById("count-total").textContent = objs.length;
+
+  var q = { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 }, pointer = null, t0 = performance.now();
+  function resize() {
+    var r = box.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    mpp = WIDTH_M / W;
+    if (reduce.matches) draw();
+  }
+  new ResizeObserver(resize).observe(box);
+
+  box.addEventListener("pointermove", function (e) { var r = box.getBoundingClientRect(); pointer = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; if (reduce.matches) { q.x = pointer.x; q.y = pointer.y; draw(); } });
+  box.addEventListener("pointerleave", function () { pointer = null; });
+  radiusInput.addEventListener("input", function () { radiusOut.textContent = radiusInput.value + " m"; if (reduce.matches) draw(); });
+
+  function step(dt) {
+    if (!W) return;
+    var aspect = H / W;
+    objs.forEach(function (o) {
+      o.turn += (rand() - 0.5) * 0.6 * dt;
+      o.turn *= 0.96;
+      o.h += o.turn * dt;
+      var speed = o.v / WIDTH_M;
+      o.x += Math.cos(o.h) * speed * dt;
+      o.y += Math.sin(o.h) * speed * dt / aspect;
+      if (o.x < 0.02 || o.x > 0.98) { o.h = Math.PI - o.h; o.x = Math.min(0.98, Math.max(0.02, o.x)); }
+      if (o.y < 0.03 || o.y > 0.97) { o.h = -o.h; o.y = Math.min(0.97, Math.max(0.03, o.y)); }
+      if (o.tick++ % 4 === 0) {
+        o.trail.push(o.x, o.y);
+        if (o.trail.length > 100) o.trail.splice(0, 2);
+      }
+    });
+    var t = (performance.now() - t0) / 1000;
+    if (pointer) { q.tx = pointer.x; q.ty = pointer.y; }
+    else { q.tx = 0.5 + 0.28 * Math.sin(t * 0.17); q.ty = 0.5 + 0.26 * Math.sin(t * 0.23 + 1); }
+    q.x += (q.tx - q.x) * 0.08; q.y += (q.ty - q.y) * 0.08;
+  }
+
+  function toLonLat(nx, ny) {
+    var mx = nx * W * mpp, my = ny * H * mpp;
+    return { lon: ORIGIN.lon + mx / M_PER_DEG_LON, lat: ORIGIN.lat - my / M_PER_DEG_LAT };
+  }
+
+  function hexPath(cx, cy, r) {
+    ctx.moveTo(cx + r * Math.cos(-Math.PI / 2), cy + r * Math.sin(-Math.PI / 2));
+    for (var i = 1; i < 6; i++) { var a = Math.PI / 3 * i - Math.PI / 2; ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); }
+    ctx.closePath();
+  }
+
+  function draw() {
+    if (!W) return;
+    var radiusM = +radiusInput.value, rPx = radiusM / mpp;
+    var qx = q.x * W, qy = q.y * H;
+    ctx.clearRect(0, 0, W, H);
+
+    var hr = Math.max(14, W / 30), hw = hr * Math.sqrt(3), hh = hr * 1.5;
+    var hits = [];
+    objs.forEach(function (o) {
+      var dx = (o.x * W - qx) * mpp, dy = (o.y * H - qy) * mpp, d = Math.sqrt(dx * dx + dy * dy);
+      o.d = d; o.hit = d <= radiusM;
+      if (o.hit) hits.push(o);
+    });
+    var hot = {};
+    hits.forEach(function (o) {
+      var row = Math.round(o.y * H / hh), col = Math.round((o.x * W - (row % 2 ? hw / 2 : 0)) / hw);
+      hot[row + ":" + col] = true;
+    });
+
+    ctx.lineWidth = 1;
+    for (var row = -1; row * hh < H + hr; row++) {
+      for (var col = -1; col * hw < W + hw; col++) {
+        var cx = col * hw + (row % 2 ? hw / 2 : 0), cy = row * hh;
+        ctx.beginPath(); hexPath(cx, cy, hr - 1);
+        if (hot[row + ":" + col]) { ctx.fillStyle = colors["--hex-soft"]; ctx.fill(); ctx.strokeStyle = colors["--hex"]; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1; }
+        else { ctx.strokeStyle = colors["--line"]; ctx.stroke(); }
+      }
+    }
+
+    ctx.font = "10px " + getComputedStyle(document.body).getPropertyValue("--f-mono");
+    ctx.fillStyle = colors["--muted"];
+    for (var i = 1; i < 4; i++) {
+      var ll = toLonLat(i / 4, 0);
+      ctx.fillText(Math.abs(ll.lon).toFixed(3) + "°W", i / 4 * W + 4, 13);
+      var ll2 = toLonLat(0, i / 4);
+      ctx.fillText(ll2.lat.toFixed(3) + "°N", 6, i / 4 * H - 4);
+    }
+
+    objs.forEach(function (o) {
+      var tr = o.trail;
+      if (tr.length < 4) return;
+      ctx.beginPath(); ctx.moveTo(tr[0] * W, tr[1] * H);
+      for (var j = 2; j < tr.length; j += 2) ctx.lineTo(tr[j] * W, tr[j + 1] * H);
+      ctx.strokeStyle = o.hit ? colors["--hex"] : colors["--tide"];
+      ctx.globalAlpha = o.hit ? 0.55 : 0.22; ctx.lineWidth = 1.5; ctx.setLineDash(o.drone ? [2, 4] : []);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+    ctx.beginPath(); ctx.arc(qx, qy, rPx, 0, Math.PI * 2);
+    ctx.fillStyle = colors["--hex-soft"]; ctx.fill();
+    ctx.strokeStyle = colors["--hex"]; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(qx - 6, qy); ctx.lineTo(qx + 6, qy); ctx.moveTo(qx, qy - 6); ctx.lineTo(qx, qy + 6);
+    ctx.strokeStyle = colors["--ink"]; ctx.lineWidth = 1; ctx.stroke();
+
+    objs.forEach(function (o) {
+      var x = o.x * W, y = o.y * H;
+      ctx.beginPath();
+      if (o.drone) { ctx.moveTo(x, y - 4.5); ctx.lineTo(x + 4.5, y); ctx.lineTo(x, y + 4.5); ctx.lineTo(x - 4.5, y); ctx.closePath(); }
+      else ctx.arc(x, y, o.hit ? 4.5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = o.hit ? colors["--hex"] : colors["--muted"];
+      ctx.fill();
+      if (o.hit) { ctx.strokeStyle = colors["--surface"]; ctx.lineWidth = 1.5; ctx.stroke(); }
+    });
+
+    hits.sort(function (a, b) { return a.d - b.d; });
+    var c = toLonLat(q.x, q.y);
+    var html = '<div class="row"><span><span class="c">&gt;&gt;&gt;</span> db.query_radius(<span class="s">"fleet"</span>, Point(<span class="n">' + c.lon.toFixed(4) + '</span>, <span class="n">' + c.lat.toFixed(4) + '</span>), <span class="n">' + radiusM + '</span>)</span></div>';
+    html += '<div class="c">' + hits.length + (hits.length === 1 ? " object" : " objects") + ' within ' + radiusM + ' m, nearest first</div>';
+    hits.slice(0, 3).forEach(function (o) {
+      var p = toLonLat(o.x, o.y);
+      html += '<div class="row"><span>(<span class="s">"' + o.id + '"</span>, Point(' + p.lon.toFixed(4) + ', ' + p.lat.toFixed(4) + '))</span><span class="n">' + Math.round(o.d) + ' m</span></div>';
+    });
+    if (hits.length > 3) html += '<div class="c">… ' + (hits.length - 3) + ' more</div>';
+    readout.innerHTML = html;
+  }
+
+  var last = performance.now();
+  function loop(now) {
+    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (!reduce.matches) { step(dt); draw(); }
+    requestAnimationFrame(loop);
+  }
+  resize();
+  for (var w = 0; w < 240; w++) step(1 / 30);
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
