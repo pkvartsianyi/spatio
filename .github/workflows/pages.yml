@@ -1,0 +1,41 @@
+name: Deploy Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "crates/core/**"
+      - "crates/types/**"
+      - "crates/client/**"
+      - "crates/server/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and Deploy Site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc -p spatio -p spatio-types -p spatio-client -p spatio-server --no-deps --all-features
+      - run: cp -R site/. target/doc/
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+      - id: deployment
+        uses: actions/deploy-pages@v4
