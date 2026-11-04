@@ -22,7 +22,8 @@ pub struct Config {
     #[serde(default = "Config::default_sync_batch_size")]
     pub sync_batch_size: usize,
 
-    /// Buffer capacity per object for recent history in ColdState
+    /// Updates kept per object in memory. File databases use this as a cache
+    /// over the log; for `:memory:` databases it is all the history they keep.
     #[serde(default = "Config::default_buffer_capacity")]
     pub buffer_capacity: usize,
 

@@ -758,9 +758,6 @@ mod tests {
 
     #[test]
     fn test_memory_db_serves_trajectory_history_in_memory() {
-        // A :memory: DB must not touch the filesystem yet still answer
-        // trajectory queries (history kept in the in-memory log) beyond the
-        // recent buffer window.
         let db = DB::memory().unwrap();
 
         let t0 = SystemTime::now();
@@ -781,9 +778,8 @@ mod tests {
         let current = db.get("ns", "obj").unwrap().unwrap();
         assert_eq!(current.position.x(), 4.0);
 
-        // Full trajectory is queryable from the in-memory log. Use a window that
-        // safely brackets all records: stored timestamps are truncated to micros,
-        // so a raw-now() lower bound could exclude the boundary record.
+        // Stored timestamps are truncated to micros, so a raw-now() lower bound
+        // could exclude the boundary record.
         let traj = db
             .query_trajectory(
                 "ns",
@@ -793,7 +789,38 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert_eq!(traj.len(), 5, "all in-memory history must be queryable");
+        assert_eq!(traj.len(), 5, "history within capacity must be queryable");
+    }
+
+    #[test]
+    fn test_memory_db_history_follows_buffer_capacity() {
+        let db = DB::memory_with_config(Config::default().with_buffer_capacity(4)).unwrap();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        for i in 0..50u64 {
+            db.upsert(
+                "ns",
+                "o",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({ "i": i }),
+                Some(SetOptions::with_timestamp(t0 + Duration::from_secs(i))),
+            )
+            .unwrap();
+        }
+
+        let traj = db
+            .query_trajectory(
+                "ns",
+                "o",
+                SystemTime::UNIX_EPOCH,
+                t0 + Duration::from_secs(99),
+                100,
+            )
+            .unwrap();
+        assert_eq!(traj.len(), 4);
+        assert_eq!(traj[0].metadata["i"], 49);
+
+        db.delete("ns", "o").unwrap();
+        assert_eq!(db.cold.stats(), (0, 0), "delete must free history");
     }
 
     #[test]
@@ -1064,7 +1091,8 @@ mod tests {
         use std::sync::Barrier;
         use std::thread;
 
-        let db = Arc::new(DB::memory().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(DB::open(dir.path().join("race.log")).unwrap());
         let pos = Point3d::new(1.0, 2.0, 0.0);
         for _ in 0..300 {
             let barrier = Arc::new(Barrier::new(2));
@@ -1082,6 +1110,7 @@ mod tests {
             up.join().unwrap();
             del.join().unwrap();
 
+            db.cold.flush().unwrap();
             let in_log = db
                 .cold
                 .recover_current_locations()
@@ -1094,7 +1123,8 @@ mod tests {
 
     #[test]
     fn test_same_micros_timestamps_agree_with_log() {
-        let db = DB::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = DB::open(dir.path().join("micros.log")).unwrap();
         let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         for (x, nanos) in [(1.0, 900), (2.0, 100)] {
             db.upsert(
@@ -1108,6 +1138,7 @@ mod tests {
             )
             .unwrap();
         }
+        db.cold.flush().unwrap();
         let recovered = db.cold.recover_current_locations().unwrap();
         assert_eq!(recovered["ns::o"].position.x(), 2.0);
         assert_eq!(db.get("ns", "o").unwrap().unwrap().position.x(), 2.0);

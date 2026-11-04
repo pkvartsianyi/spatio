@@ -97,7 +97,7 @@ fn main() -> Result<()> {
 
 Spatio follows a specialized architecture for tracking moving objects:
 - **Hot State**: Current locations are kept in-memory using a sharded concurrent `DashMap` and a high-performance R*-tree spatial index.
-- **Cold State**: Historical movement (trajectories) is persisted to an append-only log on disk.
+- **Cold State**: Historical movement (trajectories) is persisted to an append-only log on disk. `:memory:` databases have no log: they keep the last `buffer_capacity` updates per object (default 100), and `delete` removes them.
 - **Recovery**: At startup, the Hot State is automatically rebuilt by scanning the latest entries in the Trajectory Log.
 
 ## Features
@@ -138,7 +138,8 @@ Spatio exposes a `Config` builder for tuning performance and persistence.
 use spatio::config::{Config, PersistenceConfig};
 
 let config = Config::default()
-    // Per-object in-memory history kept for fast recent-trajectory reads
+    // Updates kept in memory per object: a read cache for file databases,
+    // and the entire history of a `:memory:` database
     .with_buffer_capacity(100)
     .with_persistence(PersistenceConfig {
         // Records buffered before the log is flushed to the OS

@@ -101,7 +101,7 @@ graph TD
 
 ### Read Path (Trajectory Query)
 1. **Buffer Check**: The in-memory buffer in `ColdState` is checked for recent history.
-2. **Disk Scan**: If more history is needed, the append-only log is scanned efficiently (or via index if available).
+2. **Disk Scan**: If more history is needed, the append-only log is scanned efficiently (or via index if available). `:memory:` databases have no log, so the buffer is their whole history: the last `buffer_capacity` updates per object, removed on `delete`.
 
 ## Threading Model
 

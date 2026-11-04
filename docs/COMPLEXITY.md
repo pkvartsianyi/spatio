@@ -57,7 +57,7 @@ algorithmic complexity.
 | `convex_hull` | `O(N log N)` | 🟠 T3 | materializes all namespace points, then hull. |
 | `stats` | `O(P)` | 🟠 T3 | hot part `O(1)`; cold part iterates recent buffers. |
 | **Trajectory (cold)** | | | |
-| `query_trajectory` (buffer hit) | `O(B log B)` | 🟢/🟡 | Taken when `buffer.len() < capacity`: the buffer hasn't filled, so nothing has been evicted to the log and it provably holds the object's complete history — any window is answerable from memory. Once at capacity, older records may have spilled to disk, so it falls through to the scan below. |
+| `query_trajectory` (buffer hit) | `O(B log B)` | 🟢/🟡 | Always taken for `:memory:` databases, which keep only the buffer. Otherwise taken when `buffer.len() < capacity`: the buffer hasn't filled, so nothing has been evicted to the log and it provably holds the object's complete history — any window is answerable from memory. Once at capacity, older records may have spilled to disk, so it falls through to the scan below. |
 | `query_trajectory` (log fallback) | `O(L)` | 🔴 T4 | full scan of the stable log prefix; **grows unbounded with history**. |
 | **Lifecycle** | | | |
 | `open` / recovery | `O(live + tail)` | 🟡/🟠 | load the checkpoint snapshot (`live` objects) + replay the post-snapshot `tail`. Without a checkpoint this degrades to a full `O(L)` replay. |

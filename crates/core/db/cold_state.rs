@@ -54,8 +54,8 @@ pub struct ColdState {
     /// Append-only log file
     trajectory_log: Arc<Mutex<TrajectoryLog>>,
 
-    /// Recent history buffer for fast access (file backend only)
-    /// Maps "namespace::object_id" -> recent updates
+    /// Recent updates per "namespace::object_id". A cache over the log for
+    /// file databases, and the only history `:memory:` databases keep.
     recent_buffer: DashMap<String, VecDeque<LocationUpdate>>,
 
     /// Buffer size per object (e.g., last 100 updates)
@@ -120,9 +120,8 @@ impl ColdState {
     /// Create a purely in-memory cold state.
     ///
     /// Used by `:memory:` databases: no file is created and no temp directory
-    /// is touched. Trajectory history lives in an in-memory append log, so
-    /// `query_trajectory` returns the same results a file-backed DB would,
-    /// without paying for text serialization, `BufWriter` flushes, or `fsync`.
+    /// is touched. History is bounded: each object keeps its last
+    /// `buffer_capacity` updates, and `delete` drops them.
     pub fn new_memory(buffer_capacity: usize) -> Self {
         Self {
             trajectory_log: Arc::new(Mutex::new(TrajectoryLog::open_memory())),
@@ -173,13 +172,9 @@ impl ColdState {
             metadata,
         };
 
-        let Some(update) = self
-            .trajectory_log
+        self.trajectory_log
             .lock()
-            .append(namespace, object_id, update)?
-        else {
-            return Ok(());
-        };
+            .append(namespace, object_id, &update)?;
 
         let full_key = Self::make_key(namespace, object_id);
         let mut buffer = self.recent_buffer.entry(full_key).or_default();
@@ -245,8 +240,10 @@ impl ColdState {
             // Below capacity the buffer holds this key's complete history; at or
             // above it, some records (including newer ones, under out-of-order
             // timestamps) live only on disk, so fall through to the disk merge.
-            let buffer_is_complete = !self.has_prior_history.load(Ordering::Relaxed)
-                && buffer.len() < self.buffer_capacity;
+            // Memory databases have nothing else to merge.
+            let buffer_is_complete = self.log_path.is_none()
+                || (!self.has_prior_history.load(Ordering::Relaxed)
+                    && buffer.len() < self.buffer_capacity);
 
             from_buffer = buffer
                 .iter()
@@ -263,8 +260,7 @@ impl ColdState {
             }
         }
 
-        // Fallback to the append log (slow path): scan the durable file log
-        // or the in-memory log, depending on backend.
+        // Fallback to the append log (slow path).
         let buffer_timestamps: std::collections::HashSet<SystemTime> =
             from_buffer.iter().map(|u| u.timestamp).collect();
 
@@ -284,14 +280,7 @@ impl ColdState {
                         &buffer_timestamps,
                     )?
                 }
-                // Memory backend: scan in place (fast, no I/O).
-                None => log.scan_memory(
-                    namespace,
-                    object_id,
-                    start_time,
-                    end_time,
-                    &buffer_timestamps,
-                ),
+                None => Vec::new(),
             }
         };
 
@@ -755,25 +744,10 @@ fn unrecognized_log(path: &Path) -> SpatioError {
     ))
 }
 
-/// A single record in the in-memory trajectory log (memory-mode DBs).
-#[derive(Clone)]
-enum MemRecord {
-    Update {
-        namespace: String,
-        object_id: String,
-        update: LocationUpdate,
-    },
-    Tombstone {
-        namespace: String,
-        object_id: String,
-    },
-}
-
 /// Storage backend for the trajectory log.
 ///
 /// File-backed databases serialize records to a durable append-only text log;
-/// `:memory:` databases keep parsed records in memory and never touch the
-/// filesystem.
+/// `:memory:` databases store nothing here and never touch the filesystem.
 enum LogBackend {
     File {
         writer: BufWriter<File>,
@@ -789,9 +763,7 @@ enum LogBackend {
         /// On-disk format of this log (V2 for new files, V1 for legacy logs).
         version: LogVersion,
     },
-    Memory {
-        records: Vec<MemRecord>,
-    },
+    Memory,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -843,9 +815,7 @@ impl TrajectoryLog {
 
     fn open_memory() -> Self {
         Self {
-            backend: LogBackend::Memory {
-                records: Vec::new(),
-            },
+            backend: LogBackend::Memory,
             state: LogState::Open,
         }
     }
@@ -934,14 +904,7 @@ impl TrajectoryLog {
         Ok(())
     }
 
-    /// Append an update; returns it back for the file backend so the caller
-    /// can buffer it, or `None` when the memory log took ownership.
-    fn append(
-        &mut self,
-        namespace: &str,
-        object_id: &str,
-        update: LocationUpdate,
-    ) -> Result<Option<LocationUpdate>> {
+    fn append(&mut self, namespace: &str, object_id: &str, update: &LocationUpdate) -> Result<()> {
         self.guarded(|log| log.append_inner(namespace, object_id, update))
     }
 
@@ -949,8 +912,8 @@ impl TrajectoryLog {
         &mut self,
         namespace: &str,
         object_id: &str,
-        update: LocationUpdate,
-    ) -> Result<Option<LocationUpdate>> {
+        update: &LocationUpdate,
+    ) -> Result<()> {
         match &mut self.backend {
             // Log format (pipe-separated, 8 fields per line):
             //   timestamp_micros|namespace|object_id|lat|lon|alt|json_len|json_metadata
@@ -976,17 +939,9 @@ impl TrajectoryLog {
                 *pending_writes += 1;
                 *writes_since_sync += 1;
             }
-            LogBackend::Memory { records } => {
-                records.push(MemRecord::Update {
-                    namespace: namespace.to_string(),
-                    object_id: object_id.to_string(),
-                    update,
-                });
-                return Ok(None);
-            }
+            LogBackend::Memory => return Ok(()),
         }
-        self.maybe_sync(false)?;
-        Ok(Some(update))
+        self.maybe_sync(false)
     }
 
     fn append_tombstone(&mut self, micros: u128, namespace: &str, object_id: &str) -> Result<()> {
@@ -1012,16 +967,7 @@ impl TrajectoryLog {
                 *pending_writes += 1;
                 *writes_since_sync += 1;
             }
-            LogBackend::Memory { records } => {
-                // The tombstone's own timestamp is irrelevant to recovery, which
-                // resolves the latest state by append order, so we don't store it.
-                let _ = micros;
-                records.push(MemRecord::Tombstone {
-                    namespace: namespace.to_string(),
-                    object_id: object_id.to_string(),
-                });
-                return Ok(());
-            }
+            LogBackend::Memory => return Ok(()),
         }
         self.maybe_sync(false)
     }
@@ -1036,8 +982,7 @@ impl TrajectoryLog {
     /// length captured *under the lock*. The caller scans only this stable prefix
     /// (without holding the lock), so concurrent appends past the boundary can't
     /// present a torn final line — which would otherwise trip a spurious CRC
-    /// warning and drop a record. Returns `None` for memory logs, which must be
-    /// scanned in place via [`Self::scan_memory`].
+    /// warning and drop a record. Returns `None` for memory logs.
     fn flush_and_file_target(&mut self) -> Result<Option<FileScanTarget>> {
         match &mut self.backend {
             LogBackend::File {
@@ -1058,49 +1003,13 @@ impl TrajectoryLog {
                     len,
                 }))
             }
-            LogBackend::Memory { .. } => Ok(None),
+            LogBackend::Memory => Ok(None),
         }
     }
 
-    /// Scan the in-memory log (memory backend) for an object's updates in range.
-    fn scan_memory(
-        &self,
-        namespace: &str,
-        object_id: &str,
-        start_time: SystemTime,
-        end_time: SystemTime,
-        exclude: &std::collections::HashSet<SystemTime>,
-    ) -> Vec<LocationUpdate> {
-        let LogBackend::Memory { records } = &self.backend else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        for rec in records {
-            let MemRecord::Update {
-                namespace: ns,
-                object_id: id,
-                update,
-            } = rec
-            else {
-                continue;
-            };
-            if ns != namespace || id != object_id {
-                continue;
-            }
-            if exclude.contains(&update.timestamp) {
-                continue;
-            }
-            if update.timestamp < start_time || update.timestamp > end_time {
-                continue;
-            }
-            out.push(update.clone());
-        }
-        out
-    }
-
-    /// Apply log records — starting at byte `from_offset` for file logs, or all
-    /// records for memory logs — into `entries`, resolving the latest surviving
-    /// update per key (tombstones clear an object; a later update revives it).
+    /// Apply file log records from byte `from_offset` into `entries`, resolving
+    /// the latest surviving update per key (tombstones clear an object; a later
+    /// update revives it).
     fn replay(
         &self,
         from_offset: u64,
@@ -1185,28 +1094,7 @@ impl TrajectoryLog {
                     );
                 }
             }
-            LogBackend::Memory { records } => {
-                for rec in records {
-                    match rec {
-                        MemRecord::Update {
-                            namespace,
-                            object_id,
-                            update,
-                        } => {
-                            let slot = entries
-                                .entry(format!("{}::{}", namespace, object_id))
-                                .or_insert(None);
-                            merge(slot, update.clone());
-                        }
-                        MemRecord::Tombstone {
-                            namespace,
-                            object_id,
-                        } => {
-                            entries.insert(format!("{}::{}", namespace, object_id), None);
-                        }
-                    }
-                }
-            }
+            LogBackend::Memory => {}
         }
 
         Ok(skipped)
@@ -2073,29 +1961,79 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_mode_keeps_no_recent_buffer() {
-        let cold = ColdState::new_memory(10);
-        for i in 0..3 {
+    fn test_memory_mode_keeps_last_updates_per_object() {
+        let cold = ColdState::new_memory(3);
+        let t = |s| UNIX_EPOCH + Duration::from_secs(s);
+        for i in 0..10 {
+            cold.append_update(
+                "ns",
+                "o",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({ "i": i }),
+                t(i),
+            )
+            .unwrap();
+        }
+        let traj = cold.query_trajectory("ns", "o", t(0), t(99), 100).unwrap();
+        let kept: Vec<_> = traj.iter().map(|u| u.metadata["i"].as_u64()).collect();
+        assert_eq!(kept, [Some(9), Some(8), Some(7)]);
+    }
+
+    #[test]
+    fn test_memory_mode_delete_frees_history() {
+        let cold = ColdState::new_memory(3);
+        let t = |s| UNIX_EPOCH + Duration::from_secs(s);
+        let pos = Point3d::new(0.0, 0.0, 0.0);
+        cold.append_update("ns", "o", pos.clone(), serde_json::json!({}), t(1))
+            .unwrap();
+        cold.append_tombstone("ns", "o").unwrap();
+        assert!(cold.recent_buffer.is_empty());
+        assert!(
+            cold.query_trajectory("ns", "o", t(0), t(9), 10)
+                .unwrap()
+                .is_empty()
+        );
+
+        cold.append_update("ns", "o", pos, serde_json::json!({}), t(2))
+            .unwrap();
+        let traj = cold.query_trajectory("ns", "o", t(0), t(9), 10).unwrap();
+        assert_eq!(traj.len(), 1);
+    }
+
+    #[test]
+    fn test_memory_mode_keeps_records_with_equal_timestamps() {
+        let cold = ColdState::new_memory(3);
+        let t = UNIX_EPOCH + Duration::from_secs(1);
+        for _ in 0..5 {
             cold.append_update(
                 "ns",
                 "o",
                 Point3d::new(0.0, 0.0, 0.0),
                 serde_json::json!({}),
-                UNIX_EPOCH + Duration::from_secs(i),
+                t,
             )
             .unwrap();
         }
-        assert!(cold.recent_buffer.is_empty());
-        let traj = cold
-            .query_trajectory(
-                "ns",
-                "o",
-                UNIX_EPOCH,
-                UNIX_EPOCH + Duration::from_secs(9),
-                10,
-            )
-            .unwrap();
+        let traj = cold.query_trajectory("ns", "o", UNIX_EPOCH, t, 10).unwrap();
         assert_eq!(traj.len(), 3);
+    }
+
+    #[test]
+    fn test_memory_mode_rejects_writes_after_close() {
+        let cold = ColdState::new_memory(3);
+        cold.close().unwrap();
+        let result = cold.append_update(
+            "ns",
+            "o",
+            Point3d::new(0.0, 0.0, 0.0),
+            serde_json::json!({}),
+            UNIX_EPOCH,
+        );
+        assert!(matches!(result, Err(SpatioError::DatabaseClosed)));
+        assert!(matches!(
+            cold.append_tombstone("ns", "o"),
+            Err(SpatioError::DatabaseClosed)
+        ));
     }
 
     #[test]
