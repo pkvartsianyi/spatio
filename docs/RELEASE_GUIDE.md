@@ -37,8 +37,10 @@ The Python package version comes from `bindings/python/Cargo.toml`
 
 The npm version comes from `bindings/typescript/Cargo.toml` too: `package.json`
 stays at `0.0.0` and `scripts/publish-npm.sh` stamps it at release time. Each
-platform ships as its own package (`spatio-db-linux-x64-gnu`, ...), published
-before `spatio-db` itself, and versions already on npm are skipped.
+platform ships as its own scoped package (`@pkvartsianyi/spatio-db-linux-x64-gnu`,
+...), published before `spatio-db` itself. Versions already on npm are skipped
+only if they came from the same commit; otherwise the release stops, and the fix
+is to bump the version in `bindings/typescript/Cargo.toml`.
 
 ## Core Release Benchmarks
 

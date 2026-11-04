@@ -89,7 +89,7 @@ graph TD
 
 ### Write Path (Upsert)
 1. **Request**: A location update is received (via embedded call, Python call, or RPC).
-2. **Hot State Update**: The current position is updated in the in-memory `DashMap` and Spatial Index. This is lock-free or uses fine-grained locking for high currency.
+2. **Hot State Update**: The current position is updated in the in-memory `DashMap` and Spatial Index. `DashMap` uses sharded locks; the spatial index sits behind a single `RwLock`, so index writes are serialized.
 3. **Cold State Append**: The update is buffered in an in-memory write buffer.
    - **Buffering**: Writes are not immediately flushed to disk. They are stored in a count-based buffer (default: 512 records).
    - **Flushing**: When the buffer is full (`pending_writes >= buffer_size`), the data is explicitly flushed to the log file.
@@ -105,5 +105,5 @@ graph TD
 
 ## Threading Model
 
-- **Core**: Thread-safe, mostly lock-free reading. Writing generally involves locking for coordination but is optimized for high throughput.
+- **Core**: Thread-safe. Reads and writes take sharded `DashMap` locks, and spatial queries and index updates share one `RwLock`.
 - **Server**: Async-first (Tokio). Blocking database operations (disk I/O, heavy spatial calcs) are offloaded to `spawn_blocking` to keep the event loop responsive.

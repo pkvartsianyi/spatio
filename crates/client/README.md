@@ -9,7 +9,7 @@ A lightweight, native Rust RPC client for connecting to remote Spatio database s
 ## Features
 
 - **Async/Await**: Built on `tokio` for non-blocking I/O
-- **Full API Coverage**: Supports all Spatio database operations
+- **Core Operations**: Writes, reads and spatial queries; see [API](#api) for the methods
 
 ## Usage
 
@@ -24,10 +24,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Perform operations
     let nyc = Point3d::new(-74.0060, 40.7128, 0.0);
-    client.upsert("cities", "nyc", nyc, serde_json::json!({"pop": 8000000}), None).await?;
+    client.upsert("cities", "nyc", nyc.clone(), serde_json::json!({"pop": 8000000})).await?;
 
     // Query
-    let nearby = client.query_radius("cities", &nyc, 100_000.0, 10).await?;
+    let nearby = client.query_radius("cities", nyc, 100_000.0, 10).await?;
     println!("Found {} nearby cities", nearby.len());
 
     Ok(())
@@ -36,9 +36,9 @@ async fn main() -> anyhow::Result<()> {
 
 ## API
 
-The client mirrors the embedded database API:
+The client covers most of the embedded database API:
 
-- `upsert(namespace, object_id, position, metadata, options)`
+- `upsert(namespace, object_id, position, metadata)`
 - `get(namespace, object_id)`
 - `delete(namespace, object_id)`
 - `query_radius(namespace, center, radius, limit)`

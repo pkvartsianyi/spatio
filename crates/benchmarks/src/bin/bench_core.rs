@@ -274,7 +274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let cx = (i % side_len) as f64 * 0.01;
                 let cy = (i / side_len % side_len) as f64 * 0.01;
                 let center = Point3d::new(cx, cy, 0.0);
-                let _ = db.query_radius("bench", &center, 0.05, 100);
+                let _ = db.query_radius("bench", &center, 5_000.0, 100);
             }
         });
 

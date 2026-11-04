@@ -4,7 +4,7 @@ A lightweight TCP server for remote access to the Spatio spatio-temporal databas
 
 ## Overview
 
-The Spatio Server provides a TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It exposes the full Spatio API as JSON-RPC (via `tarpc`) over TCP.
+The Spatio Server provides a TCP interface for interacting with a Spatio database instance from multiple processes or remote machines. It exposes most of the Spatio API as JSON-RPC (via `tarpc`) over TCP.
 
 ## Running the Server
 

@@ -329,17 +329,6 @@ section.band { border-top: 1px solid var(--line); padding-block: 88px; }
 .editor .k { color: #9ec3e6; }
 
 /* bench */
-.bench { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
-@media (max-width: 900px) { .bench { grid-template-columns: minmax(0, 1fr); gap: 36px; } }
-.op h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
-.op h3 small { font: 400 12px var(--f-mono); color: var(--muted); }
-.bar { display: grid; grid-template-columns: 104px minmax(0, 1fr) 64px; align-items: center; gap: 12px; font-size: 14px; margin-bottom: 10px; }
-.bar .label { color: var(--muted); }
-.bar.me .label { color: var(--ink); font-weight: 600; }
-.bar .track { height: 10px; background: var(--hex-soft); border-radius: 2px; }
-.bar .fill { height: 100%; background: var(--muted); opacity: 0.55; border-radius: 2px; }
-.bar.me .fill { background: var(--hex); opacity: 1; }
-.bar .val { font: 400 13px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .caveat { margin-top: 36px; padding: 18px 20px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 14.5px; max-width: 86ch; }
 .caveat b { color: var(--ink); font-weight: 600; }
 
@@ -397,7 +386,7 @@ footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--mu
       <div>
         <span class="eyebrow">Embedded spatio-temporal database · Rust</span>
         <h1>Know where everything is, <em>and where it’s been.</em></h1>
-        <p class="lede">Spatio is an embedded spatio-temporal database that tracks millions of moving objects inside your process. Current positions live in an in-memory R*-tree for fast spatial queries. Every move is appended to a durable log on disk, so you can replay any object’s path.</p>
+        <p class="lede">Spatio is an embedded spatio-temporal database that tracks moving objects inside your process. Current positions live in an in-memory R*-tree for fast spatial queries. Every move is appended to a durable log on disk, so you can replay any object’s path.</p>
 
         <div class="install">
           <div class="tabs" role="tablist" aria-label="Install command">
@@ -441,7 +430,7 @@ footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--mu
           <span class="tag"><i></i>Hot state · memory</span>
           <h3>The latest position of every object</h3>
           <ul>
-            <li><b>DashMap</b><span>Lock-free map from object ID to its current location. Lookups are O(1).</span></li>
+            <li><b>DashMap</b><span>Sharded concurrent map from object ID to its current location. Lookups are O(1).</span></li>
             <li><b>R*-tree</b>Spatial index over current positions, for radius, bbox, cylinder, polygon and KNN queries.</li>
             <li><b>Recent buffer</b>A bounded per-object window of recent points, so short trajectory reads skip the disk.</li>
           </ul>
@@ -551,7 +540,8 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, {<
 nearby = db.query_radius(<span class="s">"cities"</span>, nyc, <span class="s">100_000</span>, limit=<span class="s">10</span>)
 <span class="k">for</span> object_id, point, meta, dist <span class="k">in</span> nearby:
     print(object_id, <span class="k">round</span>(dist))</pre>
-<pre id="p-rs" hidden><span class="k">use</span> spatio::prelude::*;
+<pre id="p-rs" hidden><span class="k">use</span> serde_json::json;
+<span class="k">use</span> spatio::{prelude::*, Point3d};
 
 <span class="k">fn</span> main() -> Result&lt;()&gt; {
     <span class="k">let</span> db = Spatio::open(<span class="s">"fleet.db"</span>)?;
@@ -599,30 +589,22 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
     <div class="wrap">
       <div class="sec-head">
         <span class="eyebrow">Benchmarks</span>
-        <h2>Throughput on 10,000 points.</h2>
-        <p class="lede">Operations per second, mean of 5 runs, from the reproducible suite in <code>test-benchmarks/</code>. Longer bars are better.</p>
+        <h2>Core operations, in memory.</h2>
+        <p class="lede">Spatio only, from the <a href="https://github.com/pkvartsianyi/spatio/blob/main/crates/benchmarks/results/core-v0.4.0.md">v0.4.0 release benchmark</a>: 100,000 objects on a uniform grid, one thread, one namespace, on aarch64.</p>
       </div>
-      <div class="bench">
-        <div class="op"><h3>Insert<small>ops/s</small></h3>
-          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">6,519</span></div>
-          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:58.8%"></span></span><span class="val">3,834</span></div>
-          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:29.3%"></span></span><span class="val">1,908</span></div>
-          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:27.9%"></span></span><span class="val">1,816</span></div>
-        </div>
-        <div class="op"><h3>Read<small>ops/s</small></h3>
-          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">38,359</span></div>
-          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:31.6%"></span></span><span class="val">12,119</span></div>
-          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:9.8%"></span></span><span class="val">3,747</span></div>
-          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:4.9%"></span></span><span class="val">1,886</span></div>
-        </div>
-        <div class="op"><h3>Distance<small>ops/s</small></h3>
-          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">19,868</span></div>
-          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:10.1%"></span></span><span class="val">2,004</span></div>
-          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:9.7%"></span></span><span class="val">1,927</span></div>
-          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:5.2%"></span></span><span class="val">1,029</span></div>
-        </div>
+      <div class="table-box">
+        <table>
+          <thead><tr><th>Operation</th><th>Ops/s</th><th>Latency</th></tr></thead>
+          <tbody>
+            <tr><td><code>upsert</code>, new object</td><td>185,324</td><td>6.1 µs</td></tr>
+            <tr><td><code>upsert</code>, moving object</td><td>72,730</td><td>13.8 µs</td></tr>
+            <tr><td><code>get</code></td><td>6,788,256</td><td>0.15 µs</td></tr>
+            <tr><td><code>knn</code>, k = 10</td><td>143,810</td><td>7.0 µs</td></tr>
+            <tr><td><code>distance_between</code></td><td>4,514,527</td><td>0.22 µs</td></tr>
+          </tbody>
+        </table>
       </div>
-      <p class="caveat"><b>Read these as a ceiling, not a head-to-head.</b> Spatio was measured in memory with no fsync. SpatiaLite ran file-backed and PostGIS over a network socket, so the setups differ. Spatio Server includes a TCP round trip, which makes it the closer comparison to PostGIS.</p>
+      <p class="caveat"><b>These are best-case figures.</b> They use an in-memory database with no disk, fsync, network or concurrent writers, so durable writes and server calls are slower. There is no comparison with other databases here because we don’t yet have one that measures them the same way. Every release’s results are in <a href="https://github.com/pkvartsianyi/spatio/tree/main/crates/benchmarks/results">the repository</a>, including changes from the previous release.</p>
     </div>
   </section>
 

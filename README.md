@@ -78,16 +78,17 @@ const nearby = db.queryRadius('cities', nyc, 100000, 10)
 ```toml
 [dependencies]
 spatio = "0.4"
+serde_json = "1"
 ```
 
 ```rust
-use spatio::prelude::*;
+use spatio::{prelude::*, Point3d};
 
 fn main() -> Result<()> {
     let db = Spatio::memory()?;
 
     let nyc = Point3d::new(-74.0060, 40.7128, 0.0);
-    db.upsert("cities", "nyc", nyc, serde_json::json!({}), None)?;
+    db.upsert("cities", "nyc", nyc.clone(), serde_json::json!({}), None)?;
 
     let nearby = db.query_radius("cities", &nyc, 100_000.0, 10)?;
     println!("Found {} cities", nearby.len());
@@ -98,8 +99,8 @@ fn main() -> Result<()> {
 
 ## Architecture: Hot/Cold State
 
-Spatio follows a specialized architecture for tracking millions of moving objects:
-- **Hot State**: Current locations are kept in-memory using a lock-free `DashMap` and a high-performance R*-tree spatial index.
+Spatio follows a specialized architecture for tracking moving objects:
+- **Hot State**: Current locations are kept in-memory using a sharded concurrent `DashMap` and a high-performance R*-tree spatial index.
 - **Cold State**: Historical movement (trajectories) is persisted to an append-only log on disk.
 - **Recovery**: At startup, the Hot State is automatically rebuilt by scanning the latest entries in the Trajectory Log.
 
@@ -137,7 +138,7 @@ Choose PostGIS or SpatiaLite for general GIS work, such as joins, arbitrary geom
 
 Spatio exposes a `Config` builder for tuning performance and persistence.
 
-```rust
+```rust,ignore
 use spatio::config::{Config, PersistenceConfig};
 
 let config = Config::default()
@@ -154,7 +155,7 @@ let db = Spatio::open_with_config("path/to/db", config)?;
 ## Examples
 
 ### Tracking Moving Objects
-```rust
+```rust,ignore
 // Update location (upsert)
 db.upsert("delivery", "truck_001", position, metadata, None)?;
 
@@ -166,7 +167,7 @@ let near_neighbors = db.query_near("drones", "drone_alpha", 500.0, 5)?;
 ```
 
 ### 3D Spatial
-```rust
+```rust,ignore
 // Track drones with altitude
 let drone_pos = Point3d::new(-74.006, 40.712, 100.0);
 db.upsert("drones", "drone_1", drone_pos, json!({}), None)?;
@@ -176,7 +177,7 @@ let in_airspace = db.query_within_bbox_3d("drones", min_x, min_y, min_z, max_x, 
 ```
 
 ### Historical Trajectories
-```rust
+```rust,ignore
 // Query movement history for a specific vehicle
 let start = SystemTime::now() - Duration::from_secs(3600);
 let history = db.query_trajectory("logistics", "truck_001", start, SystemTime::now(), 500)?;
@@ -212,7 +213,7 @@ cargo run -p spatio-server
 ```
 
 Connect using the native Rust client (`spatio-client`):
-```rust
+```rust,ignore
 use spatio_client::SpatioClient;
 
 let client = SpatioClient::connect("127.0.0.1:3000".parse()?).await?;
