@@ -16,10 +16,7 @@
   <a href="https://pypi.org/project/spatio">
     <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
   </a>
-  <a href="https://www.npmjs.com/package/spatio-db">
-    <img src="https://img.shields.io/npm/v/spatio-db.svg" alt="npm">
-  </a>
-  <a href="https://pkvartsianyi.github.io/spatio/">
+  <a href="https://spatiodb.com/">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
   </a>
   <a href="https://docs.rs/spatio">
@@ -30,7 +27,7 @@
 **Spatio** is a high-performance, **embedded spatio-temporal database** written in Rust.
 It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python, TypeScript and Go bindings**.
 
-[Website](https://pkvartsianyi.github.io/spatio/) · [API docs](https://docs.rs/spatio) · [llms.txt](https://pkvartsianyi.github.io/spatio/llms.txt)
+[Website](https://spatiodb.com/) · [API docs](https://docs.rs/spatio) · [llms.txt](https://spatiodb.com/llms.txt)
 
 ## Quick Start
 
@@ -55,9 +52,8 @@ nearby = db.query_radius("cities", nyc, 100000, limit=10)
 ```
 
 ### TypeScript
-```bash
-npm install spatio-db
-```
+
+The `spatio-db` package is not on npm yet. Build it from [`bindings/typescript`](bindings/typescript/README.md) for now.
 
 ```ts
 import { Point, Spatio } from 'spatio-db'

@@ -46,7 +46,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://pkvartsianyi.github.io/spatio/"
+Homepage = "https://spatiodb.com/"
 Documentation = "https://github.com/pkvartsianyi/spatio#readme"
 Repository = "https://github.com/pkvartsianyi/spatio"
 "PyPI" = "https://pypi.org/project/spatio"

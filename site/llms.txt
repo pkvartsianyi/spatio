@@ -17,7 +17,7 @@ Key facts:
 - [README and quickstart](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/README.md): install, examples and API overview
 - [Architecture](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/docs/ARCHITECTURE.md): crates and hot/cold state design
 - [Operation complexity](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/docs/COMPLEXITY.md): cost of each call, including slow paths
-- [Full documentation in one file](https://pkvartsianyi.github.io/spatio/llms-full.txt): all of the above plus binding and server docs
+- [Full documentation in one file](https://spatiodb.com/llms-full.txt): all of the above plus binding and server docs
 
 ## API reference
 
@@ -30,6 +30,6 @@ Key facts:
 
 ## Optional
 
-- [Website](https://pkvartsianyi.github.io/spatio/)
+- [Website](https://spatiodb.com/)
 - [Source code](https://github.com/pkvartsianyi/spatio)
 - [Releases](https://github.com/pkvartsianyi/spatio/releases)

@@ -6,14 +6,14 @@
 <title>Spatio: Embedded Spatio-Temporal Database in Rust</title>
 <meta name="description" content="Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.">
 <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
-<link rel="canonical" href="https://pkvartsianyi.github.io/spatio/">
-<link rel="alternate" type="text/plain" href="https://pkvartsianyi.github.io/spatio/llms.txt" title="llms.txt">
+<link rel="canonical" href="https://spatiodb.com/">
+<link rel="alternate" type="text/plain" href="https://spatiodb.com/llms.txt" title="llms.txt">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Spatio">
 <meta property="og:title" content="Spatio: Embedded Spatio-Temporal Database in Rust">
 <meta property="og:description" content="Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.">
-<meta property="og:url" content="https://pkvartsianyi.github.io/spatio/">
-<meta property="og:image" content="https://pkvartsianyi.github.io/spatio/og.png">
+<meta property="og:url" content="https://spatiodb.com/">
+<meta property="og:image" content="https://spatiodb.com/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Spatio, the embedded spatio-temporal database">
@@ -27,18 +27,18 @@
  "@graph": [
   {
    "@type": "WebSite",
-   "@id": "https://pkvartsianyi.github.io/spatio/#website",
-   "url": "https://pkvartsianyi.github.io/spatio/",
+   "@id": "https://spatiodb.com/#website",
+   "url": "https://spatiodb.com/",
    "name": "Spatio",
    "description": "Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.",
    "inLanguage": "en"
   },
   {
    "@type": "SoftwareSourceCode",
-   "@id": "https://pkvartsianyi.github.io/spatio/#software",
+   "@id": "https://spatiodb.com/#software",
    "name": "Spatio",
    "description": "Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.",
-   "url": "https://pkvartsianyi.github.io/spatio/",
+   "url": "https://spatiodb.com/",
    "codeRepository": "https://github.com/pkvartsianyi/spatio",
    "programmingLanguage": "Rust",
    "license": "https://opensource.org/licenses/MIT",
@@ -56,7 +56,7 @@
   },
   {
    "@type": "FAQPage",
-   "@id": "https://pkvartsianyi.github.io/spatio/#faq",
+   "@id": "https://spatiodb.com/#faq",
    "mainEntity": [
     {
      "@type": "Question",
@@ -393,7 +393,6 @@ footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--mu
             <button role="tab" id="i-py" aria-selected="true" data-cmd="pip install spatio">Python</button>
             <button role="tab" id="i-rs" aria-selected="false" data-cmd="cargo add spatio">Rust</button>
             <button role="tab" id="i-go" aria-selected="false" data-cmd="go get github.com/pkvartsianyi/spatio/bindings/go">Go</button>
-            <button role="tab" id="i-ts" aria-selected="false" data-cmd="npm install spatio-db">TypeScript</button>
           </div>
           <div class="cmd"><code id="cmd">pip install spatio</code><button class="copy" id="copy" type="button">Copy</button></div>
         </div>
@@ -516,7 +515,7 @@ footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--mu
         </div>
         <div class="points">
           <div><b>Python</b><span>Native bindings built with PyO3. <code>pip install spatio</code>.</span></div>
-          <div><b>TypeScript</b><span>Native Node.js addon built with napi-rs, types included. <code>npm install spatio-db</code>.</span></div>
+          <div><b>TypeScript</b><span>Native Node.js addon built with napi-rs, types included. Not on npm yet; build it from <code>bindings/typescript</code>.</span></div>
           <div><b>Go</b><span>Loads the C ABI through purego, so your build needs no cgo or C toolchain.</span></div>
           <div><b>Server mode</b><span>When several processes need one database, <code>spatio-server</code> exposes the same API over TCP, with auth and TLS.</span></div>
         </div>
@@ -640,7 +639,7 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
       <div class="pkgs">
         <a class="pkg" href="https://crates.io/crates/spatio"><div class="pkg-top"><b>spatio</b><span class="v">0.4</span></div><span>The embedded engine.</span></a>
         <a class="pkg" href="https://pypi.org/project/spatio"><div class="pkg-top"><b>spatio (PyPI)</b><span class="v">0.3</span></div><span>Python bindings via PyO3.</span></a>
-        <a class="pkg" href="https://www.npmjs.com/package/spatio-db"><div class="pkg-top"><b>spatio-db (npm)</b><span class="v">0.1</span></div><span>Node.js and TypeScript bindings via napi-rs.</span></a>
+        <a class="pkg" href="https://github.com/pkvartsianyi/spatio/tree/main/bindings/typescript"><div class="pkg-top"><b>bindings/typescript</b></div><span>Node.js and TypeScript bindings via napi-rs.</span></a>
         <a class="pkg" href="https://github.com/pkvartsianyi/spatio/tree/main/bindings/go"><div class="pkg-top"><b>bindings/go</b><span class="v">0.2</span></div><span>Go bindings over the C ABI, no cgo.</span></a>
         <a class="pkg" href="https://crates.io/crates/spatio-server"><div class="pkg-top"><b>spatio-server</b><span class="v">0.3</span></div><span>TCP server with auth and TLS.</span></a>
         <a class="pkg" href="https://crates.io/crates/spatio-client"><div class="pkg-top"><b>spatio-client</b><span class="v">0.3</span></div><span>Async Rust client for the server.</span></a>

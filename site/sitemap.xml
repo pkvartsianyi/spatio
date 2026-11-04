@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://pkvartsianyi.github.io/spatio/</loc></url>
-  <url><loc>https://pkvartsianyi.github.io/spatio/spatio/</loc></url>
-  <url><loc>https://pkvartsianyi.github.io/spatio/spatio_types/</loc></url>
-  <url><loc>https://pkvartsianyi.github.io/spatio/spatio_client/</loc></url>
-  <url><loc>https://pkvartsianyi.github.io/spatio/spatio_server/</loc></url>
+  <url><loc>https://spatiodb.com/</loc></url>
+  <url><loc>https://spatiodb.com/spatio/</loc></url>
+  <url><loc>https://spatiodb.com/spatio_types/</loc></url>
+  <url><loc>https://spatiodb.com/spatio_client/</loc></url>
+  <url><loc>https://spatiodb.com/spatio_server/</loc></url>
 </urlset>
