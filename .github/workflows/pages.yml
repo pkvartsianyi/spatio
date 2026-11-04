@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "README.md"
+      - "docs/*.md"
+      - "bindings/*/README.md"
       - "crates/core/**"
       - "crates/types/**"
       - "crates/client/**"
@@ -33,6 +36,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo doc -p spatio -p spatio-types -p spatio-client -p spatio-server --no-deps --all-features
       - run: cp -R site/. target/doc/
+      - name: Build llms-full.txt
+        run: |
+          for f in README.md docs/ARCHITECTURE.md docs/COMPLEXITY.md bindings/python/README.md \
+            bindings/typescript/README.md bindings/go/README.md crates/server/README.md crates/client/README.md; do
+            printf '\n\n<!-- Source: %s -->\n\n' "$f"
+            cat "$f"
+          done > target/doc/llms-full.txt
       - uses: actions/configure-pages@v4
       - uses: actions/upload-pages-artifact@v3
         with:

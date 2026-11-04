@@ -5,10 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "A high-performance, embedded spatio-temporal database for modern applications"
-homepage = "https://github.com/pkvartsianyi/spatio"
+description = "Embedded spatio-temporal database for real-time tracking of moving objects, with spatial queries and trajectory history"
+homepage = "https://pkvartsianyi.github.io/spatio/"
 documentation = "https://docs.rs/spatio"
-keywords = ["spatial", "database", "geospatial", "embedded", "temporal"]
+keywords = ["spatio-temporal", "geospatial", "database", "embedded", "tracking"]
 categories = ["database-implementations", "science::geo"]
 readme = "../../README.md"
 

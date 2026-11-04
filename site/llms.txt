@@ -1,0 +1,35 @@
+# Spatio
+
+> Spatio is an open-source (MIT) embedded spatio-temporal database written in Rust. It tracks moving objects inside your process: current positions live in an in-memory R*-tree, and every move is appended to a durable trajectory log on disk. Bindings exist for Python, Node.js/TypeScript and Go.
+
+Use Spatio for fleet and delivery tracking, drones and airspace, geofencing, and any workload with frequent position updates plus "where is it now" and "where has it been" queries. It is not a general GIS database: it has no SQL or joins, and it stores points with metadata rather than arbitrary geometries. For those needs, use PostGIS or SpatiaLite.
+
+Key facts:
+
+- Coordinates are (longitude, latitude), with optional altitude. Distances are in meters.
+- Objects are addressed by namespace and object ID: `upsert(namespace, object_id, position, metadata, options)`.
+- Queries: radius, 2D and 3D bounding box, cylinder (radius plus altitude band), K nearest neighbors, polygon, and trajectory between two timestamps. Most have an object-relative form, such as `query_near(namespace, object_id, radius, limit)`.
+- Python: `pip install spatio`. Rust: `cargo add spatio`. Go: `go get github.com/pkvartsianyi/spatio/bindings/go`. TypeScript: the `spatio-db` npm package is not published yet, so build it from `bindings/typescript`.
+- For multi-process or remote access, `spatio-server` exposes the same API over TCP with token auth and TLS.
+
+## Docs
+
+- [README and quickstart](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/README.md): install, examples and API overview
+- [Architecture](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/docs/ARCHITECTURE.md): crates and hot/cold state design
+- [Operation complexity](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/docs/COMPLEXITY.md): cost of each call, including slow paths
+- [Full documentation in one file](https://pkvartsianyi.github.io/spatio/llms-full.txt): all of the above plus binding and server docs
+
+## API reference
+
+- [Rust API on docs.rs](https://docs.rs/spatio)
+- [Python bindings](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/bindings/python/README.md)
+- [TypeScript bindings](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/bindings/typescript/README.md)
+- [Go bindings](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/bindings/go/README.md)
+- [Server](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/crates/server/README.md)
+- [Rust client](https://raw.githubusercontent.com/pkvartsianyi/spatio/main/crates/client/README.md)
+
+## Optional
+
+- [Website](https://pkvartsianyi.github.io/spatio/)
+- [Source code](https://github.com/pkvartsianyi/spatio)
+- [Releases](https://github.com/pkvartsianyi/spatio/releases)

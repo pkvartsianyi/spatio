@@ -28,7 +28,9 @@
 </p>
 
 **Spatio** is a high-performance, **embedded spatio-temporal database** written in Rust.
-It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python and TypeScript bindings**.
+It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python, TypeScript and Go bindings**.
+
+[Website](https://pkvartsianyi.github.io/spatio/) · [API docs](https://docs.rs/spatio) · [llms.txt](https://pkvartsianyi.github.io/spatio/llms.txt)
 
 ## Quick Start
 
@@ -110,6 +112,26 @@ Spatio follows a specialized architecture for tracking millions of moving object
 - **Lightweight:** No external services, no SQL overhead, and a zero-setup embedded engine.
 - **Cross-language:** Native high-performance Python bindings via PyO3, and Node.js/TypeScript bindings via napi-rs.
 - **Server Mode:** Includes an optional lightweight TCP server for remote access.
+
+## Use Cases
+
+Spatio fits applications that track things that move and ask where they are now and where they have been:
+
+- Delivery and logistics fleet tracking
+- Drones and airspace monitoring, using 3D and altitude-band queries
+- Geofencing with polygon queries
+- Nearby search around a moving object
+
+## How Spatio Compares
+
+| | Spatio | PostGIS | SpatiaLite | Redis GEO | Tile38 |
+|---|---|---|---|---|---|
+| Deployment | In-process library, optional server | Server | In-process library | Server | Server |
+| Query language | Native API | SQL | SQL | Commands | Commands |
+| Movement history | Built in | Model it yourself | Model it yourself | Model it yourself | Model it yourself |
+| Stored geometry | Points with metadata | Full geometry | Full geometry | Points | Full geometry |
+
+Choose PostGIS or SpatiaLite for general GIS work, such as joins, arbitrary geometries and hundreds of spatial functions.
 
 ## Configuration
 
