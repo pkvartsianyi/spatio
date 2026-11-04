@@ -14,7 +14,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -68,6 +68,9 @@ pub struct ColdState {
     /// buffer was dropped on delete.
     has_prior_history: AtomicBool,
 
+    /// Records the last recovery could not read. Non-zero blocks checkpoints.
+    replay_skipped: AtomicU64,
+
     /// Exclusive lock on `<log>.lock`, held until close or drop.
     lock: Mutex<Option<File>>,
 
@@ -108,6 +111,7 @@ impl ColdState {
             buffer_capacity,
             log_path: Some(log_path.to_path_buf()),
             has_prior_history: AtomicBool::new(has_prior_history),
+            replay_skipped: AtomicU64::new(0),
             lock: Mutex::new(Some(lock)),
             syncer,
         })
@@ -126,6 +130,7 @@ impl ColdState {
             buffer_capacity,
             log_path: None,
             has_prior_history: AtomicBool::new(false),
+            replay_skipped: AtomicU64::new(0),
             lock: Mutex::new(None),
             syncer: None,
         }
@@ -328,7 +333,8 @@ impl ColdState {
 
         {
             let log = self.trajectory_log.lock();
-            log.replay(from_offset, &mut entries)?;
+            let skipped = log.replay(from_offset, &mut entries)?;
+            self.replay_skipped.store(skipped, Ordering::Relaxed);
         }
 
         Ok(entries
@@ -348,6 +354,13 @@ impl ColdState {
         let Some(log_path) = &self.log_path else {
             return Ok(());
         };
+        // A checkpoint would mark the skipped records as covered, so a repaired
+        // log could never bring them back.
+        let skipped = self.replay_skipped.load(Ordering::Relaxed);
+        if skipped > 0 {
+            log::warn!("Skipping recovery checkpoint: replay skipped {skipped} log records");
+            return Ok(());
+        }
         // The snapshot covers exactly the bytes recovery read. write_checkpoint
         // runs at open with no concurrent writers, so the current on-disk length
         // is that boundary — no flush needed (which keeps buffered writes
@@ -690,6 +703,58 @@ fn truncate_torn_tail(path: &Path) -> Result<u64> {
     Ok(end)
 }
 
+/// Detect the format of an existing log; new or empty logs are V2.
+///
+/// A file that is neither V2 nor a real V1 log is an error, not an empty log:
+/// its records would all be skipped and the database would open with no data.
+fn detect_log_version(path: &Path) -> Result<LogVersion> {
+    use std::io::BufRead;
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(LogVersion::V2),
+        Err(e) => return Err(e.into()),
+    };
+    let mut first_line = Vec::new();
+    std::io::BufReader::new(file).read_until(b'\n', &mut first_line)?;
+
+    match first_line.strip_suffix(b"\n") {
+        // A crash while writing the header leaves a prefix of it.
+        None if LOG_HEADER_V2.as_bytes().starts_with(&first_line) => Ok(LogVersion::V2),
+        None => Err(unrecognized_log(path)),
+        Some(line) => {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line == LOG_HEADER_V2.as_bytes() {
+                Ok(LogVersion::V2)
+            } else if std::str::from_utf8(line).is_ok_and(is_v1_record) {
+                Ok(LogVersion::V1)
+            } else {
+                Err(unrecognized_log(path))
+            }
+        }
+    }
+}
+
+fn is_v1_record(line: &str) -> bool {
+    if line.starts_with("TOMBSTONE|") {
+        return line.split('|').count() >= 4;
+    }
+    // The length field rejects a V2 record that lost its header: its seventh
+    // field is an altitude.
+    parse_update_body(line).is_some()
+        && line
+            .split('|')
+            .nth(6)
+            .is_some_and(|len| len.parse::<usize>().is_ok())
+}
+
+fn unrecognized_log(path: &Path) -> SpatioError {
+    SpatioError::Other(format!(
+        "unrecognized trajectory log {}: its first line is neither a Spatio header nor a \
+         record, so it is corrupt or from a newer version; the file was not modified",
+        path.display()
+    ))
+}
+
 /// A single record in the in-memory trajectory log (memory-mode DBs).
 #[derive(Clone)]
 enum MemRecord {
@@ -746,21 +811,9 @@ struct TrajectoryLog {
 
 impl TrajectoryLog {
     fn open_file(path: &Path, buffer_limit: usize, sync: SyncSettings) -> Result<Self> {
+        // Before truncate_torn_tail, so a rejected file is left untouched.
+        let version = detect_log_version(path)?;
         let existing_len = truncate_torn_tail(path)?;
-
-        // Detect the format of an existing log; brand-new logs are V2.
-        let version = if existing_len == 0 {
-            LogVersion::V2
-        } else {
-            let mut first_line = String::new();
-            let probe = File::open(path)?;
-            std::io::BufRead::read_line(&mut std::io::BufReader::new(probe), &mut first_line)?;
-            if first_line.trim_end_matches(['\n', '\r']) == LOG_HEADER_V2 {
-                LogVersion::V2
-            } else {
-                LogVersion::V1
-            }
-        };
 
         let file = OpenOptions::new().create(true).append(true).open(path)?;
         if existing_len == 0 {
@@ -1052,7 +1105,8 @@ impl TrajectoryLog {
         &self,
         from_offset: u64,
         entries: &mut std::collections::HashMap<String, Option<LocationUpdate>>,
-    ) -> Result<()> {
+    ) -> Result<u64> {
+        let mut skipped = 0u64;
         // Keep an update if the slot is empty/tombstoned, or not older (ties go
         // to the later record, matching the hot state).
         fn merge(slot: &mut Option<LocationUpdate>, update: LocationUpdate) {
@@ -1068,7 +1122,7 @@ impl TrajectoryLog {
                 use std::io::{BufRead, BufReader, Seek, SeekFrom};
                 let version = *version;
                 if !path.exists() {
-                    return Ok(());
+                    return Ok(0);
                 }
                 let mut file = std::fs::File::open(path)?;
                 if from_offset > 0 {
@@ -1085,12 +1139,16 @@ impl TrajectoryLog {
                                 line_num + 1,
                                 e
                             );
+                            skipped += 1;
                             continue;
                         }
                     };
 
                     // Strip header + verify CRC (V2); skip corrupt/torn lines.
                     let Some(body) = record_body(&line, version) else {
+                        if !line.is_empty() && !line.starts_with('#') {
+                            skipped += 1;
+                        }
                         continue;
                     };
 
@@ -1099,6 +1157,7 @@ impl TrajectoryLog {
                         let parts: Vec<&str> = body.splitn(4, '|').collect();
                         if parts.len() != 4 {
                             log::warn!("Malformed tombstone on line {}", line_num + 1);
+                            skipped += 1;
                             continue;
                         }
                         entries.insert(format!("{}::{}", parts[2], parts[3]), None);
@@ -1109,6 +1168,7 @@ impl TrajectoryLog {
                         parse_update_body(body)
                     else {
                         log::warn!("Malformed log line {}", line_num + 1);
+                        skipped += 1;
                         continue;
                     };
 
@@ -1149,7 +1209,7 @@ impl TrajectoryLog {
             }
         }
 
-        Ok(())
+        Ok(skipped)
     }
 }
 
@@ -2111,5 +2171,122 @@ mod tests {
             .expect("legacy V1 record must recover");
         assert_eq!(loc.position.x(), 1.0);
         assert_eq!(loc.position.y(), 2.0);
+    }
+
+    fn open_cold(path: &Path) -> Result<ColdState> {
+        ColdState::new(
+            path,
+            10,
+            PersistenceConfig::default(),
+            SyncSettings::default(),
+        )
+    }
+
+    fn write_log(path: &Path) -> Vec<u8> {
+        let cold = open_cold(path).unwrap();
+        let update = LocationUpdate {
+            timestamp: UNIX_EPOCH + Duration::from_secs(1),
+            position: Point3d::new(1.0, 2.0, 0.0),
+            metadata: serde_json::Value::Null,
+        };
+        cold.append_update(
+            "ns",
+            "o",
+            update.position,
+            update.metadata,
+            update.timestamp,
+        )
+        .unwrap();
+        cold.close().unwrap();
+        drop(cold);
+        std::fs::read(path).unwrap()
+    }
+
+    /// Opening must fail, leaving the file as found, rather than come up empty.
+    #[test]
+    fn test_corrupt_header_is_refused_and_file_untouched() {
+        for corrupt in [
+            b"#spatio-lof v2".to_vec(),
+            b"#spatio-log v3".to_vec(),
+            vec![0u8; 14],
+        ] {
+            let dir = tempdir().unwrap();
+            let log_path = dir.path().join("t.log");
+            let mut bytes = write_log(&log_path);
+            bytes[..14].copy_from_slice(&corrupt);
+            std::fs::write(&log_path, &bytes).unwrap();
+
+            assert!(open_cold(&log_path).is_err());
+            assert_eq!(std::fs::read(&log_path).unwrap(), bytes);
+
+            bytes[..14].copy_from_slice(LOG_HEADER_V2.as_bytes());
+            std::fs::write(&log_path, &bytes).unwrap();
+            let cold = open_cold(&log_path).unwrap();
+            assert!(
+                cold.recover_current_locations()
+                    .unwrap()
+                    .contains_key("ns::o")
+            );
+        }
+    }
+
+    #[test]
+    fn test_foreign_file_without_newline_is_refused_and_untouched() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("foreign");
+        std::fs::write(&log_path, b"not a spatio log").unwrap();
+        assert!(open_cold(&log_path).is_err());
+        assert_eq!(std::fs::read(&log_path).unwrap(), b"not a spatio log");
+    }
+
+    #[test]
+    fn test_v2_record_without_header_is_refused() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("t.log");
+        let bytes = write_log(&log_path);
+        std::fs::write(&log_path, &bytes[LOG_HEADER_V2.len() + 1..]).unwrap();
+        assert!(open_cold(&log_path).is_err());
+    }
+
+    /// A crash while the header is being written leaves a prefix of it.
+    #[test]
+    fn test_torn_header_is_treated_as_new_log() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("t.log");
+        std::fs::write(&log_path, &LOG_HEADER_V2.as_bytes()[..6]).unwrap();
+        let cold = open_cold(&log_path).unwrap();
+        assert!(cold.recover_current_locations().unwrap().is_empty());
+    }
+
+    /// A skipped record must stay recoverable once the log is repaired.
+    #[test]
+    fn test_no_checkpoint_after_skipped_record() {
+        let dir = tempdir().unwrap();
+        let log_path = dir.path().join("t.log");
+        let bytes = write_log(&log_path);
+        let snapshot = snapshot_path_for(&log_path);
+        let _ = std::fs::remove_file(&snapshot);
+
+        let mut damaged = bytes.clone();
+        *damaged.last_mut().unwrap() = b'\n';
+        let record_start = LOG_HEADER_V2.len() + 1;
+        damaged[record_start] ^= 1;
+        std::fs::write(&log_path, &damaged).unwrap();
+
+        let cold = open_cold(&log_path).unwrap();
+        let recovered = cold.recover_current_locations().unwrap();
+        assert!(recovered.is_empty());
+        cold.write_checkpoint(&recovered).unwrap();
+        assert!(!snapshot.exists());
+        cold.close().unwrap();
+        drop(cold);
+
+        std::fs::write(&log_path, &bytes).unwrap();
+        let cold = open_cold(&log_path).unwrap();
+        assert!(
+            cold.recover_current_locations()
+                .unwrap()
+                .contains_key("ns::o")
+        );
     }
 }

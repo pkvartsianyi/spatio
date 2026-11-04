@@ -11,7 +11,9 @@
 // All geo types are now accessed through spatio wrappers
 use pyo3::exceptions::{PyIOError, PyKeyError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{
+    PyByteArray, PyBytes, PyFrozenSet, PyList, PyMapping, PySequence, PySet, PyString,
+};
 use spatio::db::CurrentLocation;
 use spatio::error::SpatioError;
 use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Polygon as RustPolygon, Spatio};
@@ -80,7 +82,40 @@ fn location_list(py: Python<'_>, results: Vec<Arc<CurrentLocation>>) -> PyResult
 }
 
 /// Python wrapper for geographic Point (3D)
-#[pyclass(name = "Point")]
+/// serde_json won't parse deeper nesting, so such metadata couldn't be read back.
+const MAX_METADATA_DEPTH: usize = 127;
+
+/// depythonize recurses without a limit, so circular or very deep metadata
+/// overflows the stack and kills the interpreter.
+fn check_metadata_depth(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<()> {
+    if value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyBytes>()
+        || value.is_instance_of::<PyByteArray>()
+    {
+        return Ok(());
+    }
+    let children = if let Ok(mapping) = value.cast::<PyMapping>() {
+        mapping.values()?.into_any()
+    } else if value.cast::<PySequence>().is_ok()
+        || value.is_instance_of::<PySet>()
+        || value.is_instance_of::<PyFrozenSet>()
+    {
+        value.clone()
+    } else {
+        return Ok(());
+    };
+    if depth > MAX_METADATA_DEPTH {
+        return Err(PyValueError::new_err(format!(
+            "metadata is circular or nested deeper than {MAX_METADATA_DEPTH} levels"
+        )));
+    }
+    for child in children.try_iter()? {
+        check_metadata_depth(&child?, depth + 1)?;
+    }
+    Ok(())
+}
+
+#[pyclass(name = "Point", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPoint {
     inner: Point3d,
@@ -157,7 +192,7 @@ impl PyPoint {
 }
 
 /// Python wrapper for distance metrics
-#[pyclass(name = "DistanceMetric")]
+#[pyclass(name = "DistanceMetric", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyDistanceMetric {
     inner: RustDistanceMetric,
@@ -196,7 +231,7 @@ impl PyDistanceMetric {
 }
 
 /// Python wrapper for TemporalPoint
-#[pyclass(name = "TemporalPoint")]
+#[pyclass(name = "TemporalPoint", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyTemporalPoint {
     #[pyo3(get, set)]
@@ -221,7 +256,7 @@ impl PyTemporalPoint {
 }
 
 /// Python wrapper for Polygon
-#[pyclass(name = "Polygon")]
+#[pyclass(name = "Polygon", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPolygon {
     inner: RustPolygon,
@@ -275,7 +310,7 @@ impl PyPolygon {
 }
 
 /// Python wrapper for database Config
-#[pyclass(name = "Config")]
+#[pyclass(name = "Config", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyConfig {
     inner: RustConfig,
@@ -369,6 +404,7 @@ impl PySpatio {
         let pos = point.inner.clone();
 
         let metadata_value = if let Some(meta) = metadata {
+            check_metadata_depth(meta, 1)?;
             pythonize::depythonize(meta).map_err(|e| PyValueError::new_err(e.to_string()))?
         } else {
             serde_json::Value::Null
@@ -768,7 +804,7 @@ impl PySpatio {
 }
 
 /// Options for a write, e.g. an explicit timestamp (seconds since the Unix epoch).
-#[pyclass(name = "SetOptions")]
+#[pyclass(name = "SetOptions", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySetOptions {
     inner: spatio::config::SetOptions,

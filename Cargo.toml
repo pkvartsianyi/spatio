@@ -55,7 +55,7 @@ tarpc = { version = "0.34", features = [
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
 
 # Python bindings
-pyo3 = { version = "0.27.1", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 # Node bindings
 napi = { version = "3", default-features = false, features = ["napi6", "serde-json"] }

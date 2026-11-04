@@ -45,6 +45,10 @@ pub use compute::validation;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[cfg(doctest)]
+#[doc = include_str!("../../README.md")]
+struct ReadmeDoctests;
+
 /// Common imports
 pub mod prelude {
 

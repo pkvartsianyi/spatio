@@ -192,3 +192,53 @@ class TestSpatio:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def nested_list(depth):
+    value = []
+    for _ in range(depth - 1):
+        value = [value]
+    return value
+
+
+class TestMetadataDepth:
+    def test_circular_dict_is_rejected(self):
+        value = {}
+        value["self"] = value
+        with pytest.raises(ValueError, match="circular or nested"):
+            spatio.Spatio.memory().upsert("ns", "o", spatio.Point(1.0, 2.0), value)
+
+    def test_circular_list_is_rejected(self):
+        value = []
+        value.append(value)
+        with pytest.raises(ValueError, match="circular or nested"):
+            spatio.Spatio.memory().upsert(
+                "ns", "o", spatio.Point(1.0, 2.0), {"a": value}
+            )
+
+    def test_very_deep_metadata_is_rejected(self):
+        with pytest.raises(ValueError, match="circular or nested"):
+            spatio.Spatio.memory().upsert(
+                "ns", "o", spatio.Point(1.0, 2.0), nested_list(100_000)
+            )
+
+    def test_deepest_allowed_metadata_survives_reopen(self, tmp_path):
+        path = str(tmp_path / "depth.db")
+        value = nested_list(127)
+        db = spatio.Spatio.open(path)
+        db.upsert("ns", "o", spatio.Point(1.0, 2.0), value)
+        db.close()
+
+        location = spatio.Spatio.open(path).get("ns", "o")
+        assert location[1] == value
+
+    def test_one_level_too_deep_is_rejected(self):
+        with pytest.raises(ValueError, match="circular or nested"):
+            spatio.Spatio.memory().upsert(
+                "ns", "o", spatio.Point(1.0, 2.0), nested_list(128)
+            )
+
+    def test_strings_are_not_walked(self):
+        db = spatio.Spatio.memory()
+        db.upsert("ns", "o", spatio.Point(1.0, 2.0), {"name": "x" * 1000})
+        assert db.get("ns", "o") is not None
