@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "spatio"
-description = "High-performance, embedded spatio-temporal database"
+description = "Embedded spatio-temporal database for real-time tracking of moving objects, with spatial queries and trajectory history"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Petro Kvartsianyi" }]
 dynamic = ["version"]
@@ -18,6 +18,10 @@ keywords = [
   "embedded",
   "temporal",
   "gis",
+  "moving-objects",
+  "trajectory",
+  "geofencing",
+  "tracking",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -42,7 +46,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pkvartsianyi/spatio"
+Homepage = "https://pkvartsianyi.github.io/spatio/"
 Documentation = "https://github.com/pkvartsianyi/spatio#readme"
 Repository = "https://github.com/pkvartsianyi/spatio"
 "PyPI" = "https://pypi.org/project/spatio"

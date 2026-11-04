@@ -3,9 +3,130 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Spatio</title>
-<meta name="description" content="Spatio is an embedded spatio-temporal database in Rust for tracking moving objects in real time, with Python, TypeScript and Go bindings.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 7v14l-12 7-12-7V9z' fill='%232f9a6a'/%3E%3C/svg%3E">
+<title>Spatio: Embedded Spatio-Temporal Database in Rust</title>
+<meta name="description" content="Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.">
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<link rel="canonical" href="https://pkvartsianyi.github.io/spatio/">
+<link rel="alternate" type="text/plain" href="https://pkvartsianyi.github.io/spatio/llms.txt" title="llms.txt">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Spatio">
+<meta property="og:title" content="Spatio: Embedded Spatio-Temporal Database in Rust">
+<meta property="og:description" content="Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.">
+<meta property="og:url" content="https://pkvartsianyi.github.io/spatio/">
+<meta property="og:image" content="https://pkvartsianyi.github.io/spatio/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Spatio, the embedded spatio-temporal database">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-96.png" type="image/png" sizes="96x96">
+<link rel="apple-touch-icon" href="favicon-180.png">
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@graph": [
+  {
+   "@type": "WebSite",
+   "@id": "https://pkvartsianyi.github.io/spatio/#website",
+   "url": "https://pkvartsianyi.github.io/spatio/",
+   "name": "Spatio",
+   "description": "Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.",
+   "inLanguage": "en"
+  },
+  {
+   "@type": "SoftwareSourceCode",
+   "@id": "https://pkvartsianyi.github.io/spatio/#software",
+   "name": "Spatio",
+   "description": "Embedded spatio-temporal database for tracking moving objects. Radius, KNN and geofence queries plus trajectory history, in Rust, Python, Go and Node.js.",
+   "url": "https://pkvartsianyi.github.io/spatio/",
+   "codeRepository": "https://github.com/pkvartsianyi/spatio",
+   "programmingLanguage": "Rust",
+   "license": "https://opensource.org/licenses/MIT",
+   "author": {
+    "@type": "Person",
+    "name": "Petro Kvartsianyi"
+   },
+   "keywords": "spatio-temporal database, embedded database, geospatial, moving objects, trajectory, geofencing, R*-tree",
+   "sameAs": [
+    "https://github.com/pkvartsianyi/spatio",
+    "https://crates.io/crates/spatio",
+    "https://pypi.org/project/spatio",
+    "https://docs.rs/spatio"
+   ]
+  },
+  {
+   "@type": "FAQPage",
+   "@id": "https://pkvartsianyi.github.io/spatio/#faq",
+   "mainEntity": [
+    {
+     "@type": "Question",
+     "name": "What is Spatio?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Spatio is an open-source embedded spatio-temporal database written in Rust. It runs inside your application, like SQLite, and stores the current position of moving objects along with the history of where they have been. It is MIT licensed."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What is Spatio used for?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Applications that track things that move: delivery and logistics fleets, drones and airspace monitoring, and geofencing. Typical questions are which vehicles are within 5 km of a warehouse, which drones are near this drone, and where a truck was during the last hour."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How does Spatio compare to PostGIS and SpatiaLite?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "PostGIS and SpatiaLite are SQL databases with rich geometry types and hundreds of spatial functions. Spatio is narrower: no SQL, and objects are points with metadata. In return it keeps current positions in an in-memory R*-tree and records every move in a trajectory log, with no schema or server to set up. Choose PostGIS or SpatiaLite for general GIS work, and Spatio for high-rate position updates."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How does Spatio compare to Redis GEO and Tile38?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Redis GEO and Tile38 are servers you run and connect to over the network. Spatio is a library that runs in your process, with an optional server for when you need one. It also keeps each object’s movement history on disk and supports 3D queries, such as a radius plus an altitude band."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Does Spatio persist data across restarts?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes, when opened with a file path. Every update is appended to a CRC-checked log, with a configurable sync policy that trades latency for durability. On restart Spatio loads the latest checkpoint and replays the log tail. It also has a purely in-memory mode."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Which languages does Spatio support?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Rust natively, Python through PyO3, Node.js and TypeScript through napi-rs, and Go through the C ABI using purego, so Go builds need no cgo. All of them call the same Rust core in process."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can several processes share one Spatio database?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes, through spatio-server, which exposes the same API over TCP with token auth and TLS. Rust programs connect with the spatio-client crate. Within a single process, the embedded database needs no server."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What does Spatio not do?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "It has no SQL, joins or secondary indexes on metadata, and it stores points rather than arbitrary geometries. Polygons are query shapes, such as a geofence, not stored objects. If you need those features, use a general-purpose spatial database."
+     }
+    }
+   ]
+  }
+ ]
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -243,6 +364,12 @@ td:last-child { color: var(--muted); }
 .pkg span { color: var(--muted); font-size: 14.5px; padding-right: 20px; }
 a.pkg:hover b { color: var(--deep); }
 
+/* faq */
+.faq { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px 56px; }
+@media (max-width: 860px) { .faq { grid-template-columns: minmax(0, 1fr); gap: 28px; } }
+.faq h3 { margin-bottom: 8px; }
+.faq p { margin: 0; color: var(--muted); font-size: 15.5px; }
+
 footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--muted); font-size: 14px; }
 .foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px 32px; align-items: center; }
 .foot nav { display: flex; gap: 22px; flex-wrap: wrap; }
@@ -270,7 +397,7 @@ footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--mu
       <div>
         <span class="eyebrow">Embedded spatio-temporal database · Rust</span>
         <h1>Know where everything is, <em>and where it’s been.</em></h1>
-        <p class="lede">Spatio tracks millions of moving objects inside your process. Current positions live in an in-memory R*-tree for fast spatial queries. Every move is appended to a durable log on disk, so you can replay any object’s path.</p>
+        <p class="lede">Spatio is an embedded spatio-temporal database that tracks millions of moving objects inside your process. Current positions live in an in-memory R*-tree for fast spatial queries. Every move is appended to a durable log on disk, so you can replay any object’s path.</p>
 
         <div class="install">
           <div class="tabs" role="tablist" aria-label="Install command">
@@ -475,7 +602,26 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
         <h2>Throughput on 10,000 points.</h2>
         <p class="lede">Operations per second, mean of 5 runs, from the reproducible suite in <code>test-benchmarks/</code>. Longer bars are better.</p>
       </div>
-      <div class="bench" id="bench"></div>
+      <div class="bench">
+        <div class="op"><h3>Insert<small>ops/s</small></h3>
+          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">6,519</span></div>
+          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:58.8%"></span></span><span class="val">3,834</span></div>
+          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:29.3%"></span></span><span class="val">1,908</span></div>
+          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:27.9%"></span></span><span class="val">1,816</span></div>
+        </div>
+        <div class="op"><h3>Read<small>ops/s</small></h3>
+          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">38,359</span></div>
+          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:31.6%"></span></span><span class="val">12,119</span></div>
+          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:9.8%"></span></span><span class="val">3,747</span></div>
+          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:4.9%"></span></span><span class="val">1,886</span></div>
+        </div>
+        <div class="op"><h3>Distance<small>ops/s</small></h3>
+          <div class="bar me"><span class="label">Spatio</span><span class="track"><span class="fill" style="display:block;width:100.0%"></span></span><span class="val">19,868</span></div>
+          <div class="bar"><span class="label">SpatiaLite</span><span class="track"><span class="fill" style="display:block;width:10.1%"></span></span><span class="val">2,004</span></div>
+          <div class="bar"><span class="label">Spatio Server</span><span class="track"><span class="fill" style="display:block;width:9.7%"></span></span><span class="val">1,927</span></div>
+          <div class="bar"><span class="label">PostGIS</span><span class="track"><span class="fill" style="display:block;width:5.2%"></span></span><span class="val">1,029</span></div>
+        </div>
+      </div>
       <p class="caveat"><b>Read these as a ceiling, not a head-to-head.</b> Spatio was measured in memory with no fsync. SpatiaLite ran file-backed and PostGIS over a network socket, so the setups differ. Spatio Server includes a TCP round trip, which makes it the closer comparison to PostGIS.</p>
     </div>
   </section>
@@ -520,6 +666,24 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
       </div>
     </div>
   </section>
+  <section class="band" id="faq">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="eyebrow">FAQ</span>
+        <h2>Questions, answered plainly.</h2>
+      </div>
+      <div class="faq">
+        <div><h3>What is Spatio?</h3><p>Spatio is an open-source embedded spatio-temporal database written in Rust. It runs inside your application, like SQLite, and stores the current position of moving objects along with the history of where they have been. It is MIT licensed.</p></div>
+        <div><h3>What is Spatio used for?</h3><p>Applications that track things that move: delivery and logistics fleets, drones and airspace monitoring, and geofencing. Typical questions are which vehicles are within 5 km of a warehouse, which drones are near this drone, and where a truck was during the last hour.</p></div>
+        <div><h3>How does Spatio compare to PostGIS and SpatiaLite?</h3><p>PostGIS and SpatiaLite are SQL databases with rich geometry types and hundreds of spatial functions. Spatio is narrower: no SQL, and objects are points with metadata. In return it keeps current positions in an in-memory R*-tree and records every move in a trajectory log, with no schema or server to set up. Choose PostGIS or SpatiaLite for general GIS work, and Spatio for high-rate position updates.</p></div>
+        <div><h3>How does Spatio compare to Redis GEO and Tile38?</h3><p>Redis GEO and Tile38 are servers you run and connect to over the network. Spatio is a library that runs in your process, with an optional server for when you need one. It also keeps each object’s movement history on disk and supports 3D queries, such as a radius plus an altitude band.</p></div>
+        <div><h3>Does Spatio persist data across restarts?</h3><p>Yes, when opened with a file path. Every update is appended to a CRC-checked log, with a configurable sync policy that trades latency for durability. On restart Spatio loads the latest checkpoint and replays the log tail. It also has a purely in-memory mode.</p></div>
+        <div><h3>Which languages does Spatio support?</h3><p>Rust natively, Python through PyO3, Node.js and TypeScript through napi-rs, and Go through the C ABI using purego, so Go builds need no cgo. All of them call the same Rust core in process.</p></div>
+        <div><h3>Can several processes share one Spatio database?</h3><p>Yes, through <code>spatio-server</code>, which exposes the same API over TCP with token auth and TLS. Rust programs connect with the <code>spatio-client</code> crate. Within a single process, the embedded database needs no server.</p></div>
+        <div><h3>What does Spatio not do?</h3><p>It has no SQL, joins or secondary indexes on metadata, and it stores points rather than arbitrary geometries. Polygons are query shapes, such as a geofence, not stored objects. If you need those features, use a general-purpose spatial database.</p></div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -530,6 +694,7 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
       <a href="https://docs.rs/spatio">docs.rs</a>
       <a href="https://github.com/pkvartsianyi/spatio/blob/main/docs/ARCHITECTURE.md">Architecture</a>
       <a href="https://github.com/pkvartsianyi/spatio/blob/main/LICENSE">MIT License</a>
+      <a href="llms.txt">llms.txt</a>
     </nav>
   </div>
 </footer>
@@ -577,19 +742,6 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
     var fallback = function () { var s = window.getSelection(), rg = document.createRange(); rg.selectNodeContents(cmd); s.removeAllRanges(); s.addRange(rg); };
     try { navigator.clipboard.writeText(cmd.textContent).then(done, fallback); } catch (e) { fallback(); }
   });
-
-  var bench = [
-    { op: "Insert", rows: [["Spatio", 6519.26], ["Spatio Server", 3834.14], ["PostGIS", 1908.14], ["SpatiaLite", 1815.75]] },
-    { op: "Read", rows: [["Spatio", 38358.88], ["SpatiaLite", 12118.59], ["Spatio Server", 3746.96], ["PostGIS", 1886.46]] },
-    { op: "Distance", rows: [["Spatio", 19867.94], ["SpatiaLite", 2004.50], ["Spatio Server", 1927.42], ["PostGIS", 1029.16]] }
-  ];
-  var fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-  document.getElementById("bench").innerHTML = bench.map(function (g) {
-    var max = g.rows[0][1];
-    return '<div class="op"><h3>' + g.op + '<small>ops/s</small></h3>' + g.rows.map(function (r) {
-      return '<div class="bar' + (r[0] === "Spatio" ? " me" : "") + '"><span class="label">' + r[0] + '</span><span class="track"><span class="fill" style="display:block;width:' + (r[1] / max * 100).toFixed(1) + '%"></span></span><span class="val">' + fmt.format(r[1]) + '</span></div>';
-    }).join("") + '</div>';
-  }).join("");
 
   var canvas = document.getElementById("map"), box = document.getElementById("box"), ctx = canvas.getContext("2d");
   var radiusInput = document.getElementById("r"), radiusOut = document.getElementById("r-out"), readout = document.getElementById("readout");

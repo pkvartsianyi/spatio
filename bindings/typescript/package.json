@@ -1,16 +1,20 @@
 {
   "name": "spatio-db",
   "version": "0.0.0",
-  "description": "High-performance, embedded spatio-temporal database",
+  "description": "Embedded spatio-temporal database for real-time tracking of moving objects, with spatial queries and trajectory history",
   "keywords": [
     "spatio-temporal",
     "spatial",
     "database",
     "geospatial",
     "embedded",
-    "gis"
+    "gis",
+    "moving-objects",
+    "trajectory",
+    "geofencing",
+    "tracking"
   ],
-  "homepage": "https://github.com/pkvartsianyi/spatio#readme",
+  "homepage": "https://pkvartsianyi.github.io/spatio/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pkvartsianyi/spatio.git",
