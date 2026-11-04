@@ -16,6 +16,9 @@
   <a href="https://pypi.org/project/spatio">
     <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
   </a>
+  <a href="https://www.npmjs.com/package/spatio-db">
+    <img src="https://img.shields.io/npm/v/spatio-db.svg" alt="npm">
+  </a>
   <a href="https://pkvartsianyi.github.io/spatio/">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
   </a>
@@ -25,7 +28,7 @@
 </p>
 
 **Spatio** is a high-performance, **embedded spatio-temporal database** written in Rust.
-It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python bindings**.
+It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python and TypeScript bindings**.
 
 ## Quick Start
 
@@ -47,6 +50,26 @@ db.upsert("cities", "nyc", nyc, {"population": 8000000})
 # Find objects nearby
 nearby = db.query_radius("cities", nyc, 100000, limit=10)
 # Returns: [(object_id, point, metadata, distance), ...]
+```
+
+### TypeScript
+```bash
+npm install spatio-db
+```
+
+```ts
+import { Point, Spatio } from 'spatio-db'
+
+// Open or create a database
+const db = Spatio.memory()
+
+// Upsert an object's location (longitude, latitude)
+const nyc = new Point(-74.006, 40.7128)
+db.upsert('cities', 'nyc', nyc, { population: 8000000 })
+
+// Find objects nearby
+const nearby = db.queryRadius('cities', nyc, 100000, 10)
+// Returns: [{ objectId, point, metadata, distance }, ...]
 ```
 
 ### Rust
