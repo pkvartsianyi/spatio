@@ -56,9 +56,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      # spatio-py is excluded: pyo3 extension-module test binaries don't link.
+      # The pyo3 and napi extension test binaries don't link; both are tested from their own language.
       - name: Run tests
-        run: cargo test --workspace --all-features --exclude spatio-py
+        run: cargo test --workspace --all-features --exclude spatio-py --exclude spatio-node
 
       - name: Run tests (spatio - default features)
         run: cargo test -p spatio
@@ -135,7 +135,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --workspace --all-features --exclude spatio-py
+        run: cargo test --workspace --all-features --exclude spatio-py --exclude spatio-node
 
   # Check documentation builds
   docs:
@@ -224,3 +224,50 @@ jobs:
       - name: Run tests
         working-directory: bindings/go
         run: go test -race ./...
+
+  typescript:
+    name: TypeScript bindings on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: bindings/typescript
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bindings/typescript/package-lock.json
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build:debug
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test

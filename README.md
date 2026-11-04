@@ -16,6 +16,9 @@
   <a href="https://pypi.org/project/spatio">
     <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
   </a>
+  <a href="https://www.npmjs.com/package/spatio-db">
+    <img src="https://img.shields.io/npm/v/spatio-db.svg" alt="npm">
+  </a>
   <a href="https://pkvartsianyi.github.io/spatio/">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
   </a>
@@ -25,7 +28,7 @@
 </p>
 
 **Spatio** is a high-performance, **embedded spatio-temporal database** written in Rust.
-It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python bindings**.
+It's designed for **real-time tracking of moving objects**, with **hot/cold state separation**, **durable persistence**, and **native Python and TypeScript bindings**.
 
 ## Quick Start
 
@@ -47,6 +50,26 @@ db.upsert("cities", "nyc", nyc, {"population": 8000000})
 # Find objects nearby
 nearby = db.query_radius("cities", nyc, 100000, limit=10)
 # Returns: [(object_id, point, metadata, distance), ...]
+```
+
+### TypeScript
+```bash
+npm install spatio-db
+```
+
+```ts
+import { Point, Spatio } from 'spatio-db'
+
+// Open or create a database
+const db = Spatio.memory()
+
+// Upsert an object's location (longitude, latitude)
+const nyc = new Point(-74.006, 40.7128)
+db.upsert('cities', 'nyc', nyc, { population: 8000000 })
+
+// Find objects nearby
+const nearby = db.queryRadius('cities', nyc, 100000, 10)
+// Returns: [{ objectId, point, metadata, distance }, ...]
 ```
 
 ### Rust
@@ -85,7 +108,7 @@ Spatio follows a specialized architecture for tracking millions of moving object
 - **Trajectories:** Optimized storage and querying of historical movement paths over time.
 - **Durable Persistence:** CRC-checked append-only trajectory log with configurable sync policy and checkpoint recovery.
 - **Lightweight:** No external services, no SQL overhead, and a zero-setup embedded engine.
-- **Cross-language:** Native high-performance Python bindings via PyO3.
+- **Cross-language:** Native high-performance Python bindings via PyO3, and Node.js/TypeScript bindings via napi-rs.
 - **Server Mode:** Includes an optional lightweight TCP server for remote access.
 
 ## Configuration
@@ -179,6 +202,7 @@ let stats = client.stats().await?;
 - **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Operation complexity:** [docs/COMPLEXITY.md](docs/COMPLEXITY.md)
 - **Python docs:** [bindings/python/README.md](bindings/python/README.md)
+- **TypeScript docs:** [bindings/typescript/README.md](bindings/typescript/README.md)
 - **Server docs:** [crates/server/README.md](crates/server/README.md)
 - **Client docs:** [crates/client/README.md](crates/client/README.md)
 - **API docs:** [docs.rs/spatio](https://docs.rs/spatio)

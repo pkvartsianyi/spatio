@@ -1,0 +1,24 @@
+[package]
+name = "spatio-node"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Node.js bindings for Spatio - A high-performance, embedded spatio-temporal database"
+keywords = ["spatial", "database", "geospatial", "nodejs", "bindings"]
+categories = ["database-implementations", "science::geo", "api-bindings"]
+
+[lib]
+name = "spatio_node"
+crate-type = ["cdylib"]
+
+[dependencies]
+spatio = { workspace = true }
+spatio-types = { workspace = true }
+serde_json = { workspace = true }
+napi = { workspace = true }
+napi-derive = { workspace = true }
+
+[build-dependencies]
+napi-build = { workspace = true }

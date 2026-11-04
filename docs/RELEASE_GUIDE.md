@@ -12,6 +12,7 @@ waits for CI to pass, then releases each component whose version has no tag yet.
 | spatio-client | `crates/client/Cargo.toml` | `client-v<ver>` | crates.io |
 | spatio-cabi | `crates/cabi/Cargo.toml` | `cabi-v<ver>` | crates.io |
 | spatio-py | `bindings/python/Cargo.toml` | `python-v<ver>` | PyPI (`spatio`) |
+| spatio-node | `bindings/typescript/Cargo.toml` | `typescript-v<ver>` | npm (`spatio-db`) |
 | Go bindings | `bindings/go/VERSION` | `bindings/go/v<ver>` | GitHub Release (native libs) |
 
 Crates are published in dependency order (types → core → server → client;
@@ -34,6 +35,11 @@ Commit the result and merge to `main`.
 The Python package version comes from `bindings/python/Cargo.toml`
 (`dynamic = ["version"]` in `pyproject.toml`).
 
+The npm version comes from `bindings/typescript/Cargo.toml` too: `package.json`
+stays at `0.0.0` and `scripts/publish-npm.sh` stamps it at release time. Each
+platform ships as its own package (`spatio-db-linux-x64-gnu`, ...), published
+before `spatio-db` itself, and versions already on npm are skipped.
+
 ## Core Release Benchmarks
 
 Bumping `spatio` runs `scripts/bench-release.sh <version>`, which runs `bench_core`
@@ -45,3 +51,4 @@ to the previous version. Commit both files; CI uses the `.md` as the body of the
 
 - `CRATES_IO_TOKEN` secret: crates.io API token.
 - PyPI uses trusted publishing (OIDC); no token secret is needed.
+- `NPM_TOKEN` secret: npm token allowed to publish `spatio-db` and its platform packages.
