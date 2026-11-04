@@ -8,7 +8,7 @@ build:
     cargo build -p spatio -p spatio-types -p spatio-server -p spatio-client -p spatio-cabi --release
 
 test *args:
-    cargo test --workspace --all-features --exclude spatio-py -- {{args}}
+    cargo test --workspace --all-features --exclude spatio-py --exclude spatio-node -- {{args}}
 
 test-integration *args:
     cargo test -p spatio-integration-tests --all-features -- {{args}}
@@ -104,6 +104,24 @@ go-fmt:
 go-example: go-build-lib
     cd bindings/go && go run ./examples/basic
 
+# TypeScript commands (napi-rs bindings)
+# ======================================
+
+ts-setup:
+    cd bindings/typescript && npm ci
+
+ts-build:
+    cd bindings/typescript && npm run build:debug
+
+ts-build-release:
+    cd bindings/typescript && npm run build
+
+ts-test: ts-build
+    cd bindings/typescript && npm test
+
+ts-typecheck: ts-build
+    cd bindings/typescript && npm run typecheck
+
 # Version management (requires cargo-edit for `cargo set-version`)
 # ==================
 
@@ -119,7 +137,7 @@ bump-go VERSION:
 patch-all:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo set-version --bump patch -p spatio-types -p spatio -p spatio-server -p spatio-client -p spatio-py -p spatio-cabi
+    cargo set-version --bump patch -p spatio-types -p spatio -p spatio-server -p spatio-client -p spatio-py -p spatio-node -p spatio-cabi
     go=$(tr -d '[:space:]' < bindings/go/VERSION)
     echo "${go%.*}.$((${go##*.} + 1))" > bindings/go/VERSION
     id=$(cargo pkgid -p spatio)
@@ -179,7 +197,7 @@ test-examples:
 # Combined commands
 # ================
 
-test-all: test py-test
+test-all: test py-test ts-test
 
 fmt-all: py-fmt
     cargo fmt

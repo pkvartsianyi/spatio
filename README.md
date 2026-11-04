@@ -85,7 +85,7 @@ Spatio follows a specialized architecture for tracking millions of moving object
 - **Trajectories:** Optimized storage and querying of historical movement paths over time.
 - **Durable Persistence:** CRC-checked append-only trajectory log with configurable sync policy and checkpoint recovery.
 - **Lightweight:** No external services, no SQL overhead, and a zero-setup embedded engine.
-- **Cross-language:** Native high-performance Python bindings via PyO3.
+- **Cross-language:** Native high-performance Python bindings via PyO3, and Node.js/TypeScript bindings via napi-rs.
 - **Server Mode:** Includes an optional lightweight TCP server for remote access.
 
 ## Configuration
@@ -179,6 +179,7 @@ let stats = client.stats().await?;
 - **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **Operation complexity:** [docs/COMPLEXITY.md](docs/COMPLEXITY.md)
 - **Python docs:** [bindings/python/README.md](bindings/python/README.md)
+- **TypeScript docs:** [bindings/typescript/README.md](bindings/typescript/README.md)
 - **Server docs:** [crates/server/README.md](crates/server/README.md)
 - **Client docs:** [crates/client/README.md](crates/client/README.md)
 - **API docs:** [docs.rs/spatio](https://docs.rs/spatio)

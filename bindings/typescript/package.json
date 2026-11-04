@@ -1,0 +1,50 @@
+{
+  "name": "spatio-db",
+  "version": "0.0.0",
+  "description": "High-performance, embedded spatio-temporal database",
+  "keywords": [
+    "spatio-temporal",
+    "spatial",
+    "database",
+    "geospatial",
+    "embedded",
+    "gis"
+  ],
+  "homepage": "https://github.com/pkvartsianyi/spatio#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pkvartsianyi/spatio.git",
+    "directory": "bindings/typescript"
+  },
+  "license": "MIT",
+  "author": "Petro Kvartsianyi",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "napi": {
+    "binaryName": "spatio",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release --no-const-enum",
+    "build:debug": "napi build --platform --no-const-enum",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.10.12",
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}

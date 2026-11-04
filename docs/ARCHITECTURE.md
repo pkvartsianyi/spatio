@@ -41,6 +41,10 @@ The project is divided into the following crates:
   - Allows using Spatio as a native Python library (`import spatio`).
   - Bypasses the server/client layer for maximum performance in Python applications.
 
+- **`spatio-node` (`bindings/typescript`)**:
+  - Node.js and TypeScript bindings for the core `spatio` engine using `napi-rs`.
+  - Published to npm as `spatio-db`, with a prebuilt addon per platform.
+
 ## Component Interaction Diagram
 
 ```mermaid
