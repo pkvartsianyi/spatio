@@ -321,7 +321,8 @@ impl PyConfig {
     /// Create a configuration.
     ///
     /// Args:
-    ///     buffer_capacity: recent-history buffer size per object.
+    ///     buffer_capacity: updates kept per object. For in-memory databases
+    ///         this is all the history they keep.
     ///     persistence_buffer_size: writes buffered before flushing to the OS.
     #[new]
     #[pyo3(signature = (buffer_capacity=None, persistence_buffer_size=None))]

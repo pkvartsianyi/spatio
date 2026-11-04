@@ -282,8 +282,10 @@ impl SpatialIndexManager {
 
     /// Find the k nearest neighbors by [`Point3d::haversine_3d`] distance.
     ///
-    /// The tree's raw (lon°, lat°, alt m) metric only seeds a distance bound;
-    /// the k nearest are then selected exactly by a sphere query of that radius.
+    /// The tree's raw (lon°, lat°, alt m) metric only seeds an upper bound, which
+    /// altitude can inflate to cover most of the tree. So the radius grows from
+    /// 1 m until a sphere holds k points: those are the exact k nearest, and the
+    /// sphere is at most 4x wider than it had to be.
     pub fn knn_3d(&self, prefix: &str, center: &Point3d, k: usize) -> Vec<(String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
@@ -298,6 +300,15 @@ impl SpatialIndexManager {
             .take(k)
             .map(|p| center.haversine_3d(&Point3d::new(p.x, p.y, p.z)))
             .fold(0.0, f64::max);
+
+        let mut radius = 1.0;
+        while radius < bound && k < tree.size() {
+            let found = self.query_within_sphere(prefix, center, radius, k);
+            if found.len() == k {
+                return found;
+            }
+            radius *= 4.0;
+        }
 
         self.query_within_sphere(prefix, center, bound, k)
     }
@@ -374,25 +385,43 @@ impl SpatialIndexManager {
         polygon: &spatio_types::geo::Polygon,
         limit: usize,
     ) -> Vec<(f64, f64, String)> {
-        use geo::{BoundingRect, Intersects};
+        use geo::{BoundingRect, Intersects, MapCoords};
 
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
         };
 
-        let Some(bbox) = polygon.inner().bounding_rect() else {
+        // A crossing ring is tested in 0..360 longitudes, where it is contiguous.
+        let crossing = crosses_antimeridian(polygon.inner());
+        let shifted = crossing.then(|| {
+            polygon.inner().map_coords(|c| geo::Coord {
+                x: unwrap_longitude(c.x),
+                y: c.y,
+            })
+        });
+        let shape = shifted.as_ref().unwrap_or(polygon.inner());
+
+        let Some(bbox) = shape.bounding_rect() else {
             return Vec::new();
         };
 
-        let min = bbox.min();
-        let max = bbox.max();
+        let (min, max) = (bbox.min(), bbox.max());
+        let envelopes = geo_envelopes(
+            wrap_longitude(min.x),
+            min.y,
+            f64::NEG_INFINITY,
+            wrap_longitude(max.x),
+            max.y,
+            f64::INFINITY,
+        );
 
-        let min_corner = IndexedPoint3D::new(min.x, min.y, f64::NEG_INFINITY, String::new());
-        let max_corner = IndexedPoint3D::new(max.x, max.y, f64::INFINITY, String::new());
-        let envelope = rstar::AABB::from_corners(min_corner, max_corner);
-
-        tree.locate_in_envelope_intersecting(&envelope)
-            .filter(|p| polygon.inner().intersects(&geo::Point::new(p.x, p.y)))
+        envelopes
+            .iter()
+            .flat_map(|e| tree.locate_in_envelope_intersecting(e))
+            .filter(|p| {
+                let x = if crossing { unwrap_longitude(p.x) } else { p.x };
+                shape.intersects(&geo::Point::new(x, p.y))
+            })
             .take(limit)
             .map(|p| (p.x, p.y, p.key.clone()))
             .collect()
@@ -438,6 +467,34 @@ fn top_k<'a>(
         .into_iter()
         .map(|c| (c.point.key.clone(), c.distance))
         .collect()
+}
+
+/// Bring a longitude up to 360 degrees out of range back into `-180..=180`.
+pub(crate) fn wrap_longitude(x: f64) -> f64 {
+    if x < -180.0 {
+        x + 360.0
+    } else if x > 180.0 {
+        x - 360.0
+    } else {
+        x
+    }
+}
+
+/// Map `-180..=180` to `0..=360`, where the antimeridian isn't a discontinuity.
+fn unwrap_longitude(x: f64) -> f64 {
+    if x < 0.0 { x + 360.0 } else { x }
+}
+
+/// Whether an edge of any ring is shorter going across the antimeridian. An edge
+/// of exactly 360 degrees joins -180 to +180, the same meridian.
+fn crosses_antimeridian(polygon: &geo::Polygon<f64>) -> bool {
+    std::iter::once(polygon.exterior())
+        .chain(polygon.interiors())
+        .flat_map(|ring| ring.lines())
+        .any(|edge| {
+            let span = (edge.end.x - edge.start.x).abs();
+            span > 180.0 && span < 360.0
+        })
 }
 
 /// Envelopes for a lon/lat box; `min_x > max_x` denotes a box crossing the antimeridian.
@@ -488,20 +545,11 @@ fn circle_envelopes(
         .min(1.0)
         .asin()
         .to_degrees();
-    let wrap = |x: f64| {
-        if x < -180.0 {
-            x + 360.0
-        } else if x > 180.0 {
-            x - 360.0
-        } else {
-            x
-        }
-    };
     geo_envelopes(
-        wrap(lon - dlon),
+        wrap_longitude(lon - dlon),
         min_y,
         min_z,
-        wrap(lon + dlon),
+        wrap_longitude(lon + dlon),
         max_y,
         max_z,
     )
@@ -699,5 +747,63 @@ mod tests {
             .collect();
         keys.sort();
         assert_eq!(keys, ["east", "west"]);
+    }
+
+    fn brute_force_knn(points: &[(f64, f64, f64)], center: &Point3d, k: usize) -> Vec<f64> {
+        let mut distances: Vec<f64> = points
+            .iter()
+            .map(|&(x, y, z)| center.haversine_3d(&Point3d::new(x, y, z)))
+            .collect();
+        distances.sort_by(f64::total_cmp);
+        distances.truncate(k);
+        distances
+    }
+
+    #[test]
+    fn test_knn_matches_brute_force_when_altitude_dominates_the_tree_metric() {
+        let mut index = SpatialIndexManager::new();
+        let mut state = 42u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let points: Vec<_> = (0..2_000)
+            .map(|_| {
+                (
+                    next() * 360.0 - 180.0,
+                    next() * 180.0 - 90.0,
+                    next() * 20_000.0,
+                )
+            })
+            .collect();
+        for (i, &(x, y, z)) in points.iter().enumerate() {
+            index.insert_point("ns", x, y, z, i.to_string());
+        }
+
+        for center in [
+            Point3d::new(0.0, 0.0, 0.0),
+            Point3d::new(179.9, 10.0, 15_000.0),
+            Point3d::new(-30.0, 89.9, 500.0),
+        ] {
+            for k in [1, 7, 100, 2_000, 5_000] {
+                let found: Vec<f64> = index
+                    .knn_3d("ns", &center, k)
+                    .into_iter()
+                    .map(|(_, d)| d)
+                    .collect();
+                assert_eq!(found, brute_force_knn(&points, &center, k), "k={k}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_knn_with_every_point_at_the_center() {
+        let mut index = SpatialIndexManager::new();
+        for i in 0..5 {
+            index.insert_point("ns", 1.0, 2.0, 3.0, i.to_string());
+        }
+        assert_eq!(index.knn_3d("ns", &Point3d::new(1.0, 2.0, 3.0), 3).len(), 3);
     }
 }

@@ -155,7 +155,8 @@ type openConfig struct {
 	PersistenceBufferSize *int `json:"persistence_buffer_size,omitempty"`
 }
 
-// WithBufferCapacity sets the per-object recent-history buffer size.
+// WithBufferCapacity sets the updates kept per object. For in-memory databases
+// this is all the history they keep.
 func WithBufferCapacity(n int) Option {
 	return func(c *openConfig) { c.BufferCapacity = &n }
 }

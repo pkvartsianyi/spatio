@@ -3,6 +3,7 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
+use crate::compute::spatial::rtree::wrap_longitude;
 use crate::compute::validation;
 use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
@@ -10,12 +11,12 @@ use parking_lot::{Mutex, MutexGuard};
 use std::hash::BuildHasher;
 use std::path::Path;
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 mod cold_state;
 mod hot_state;
 
-pub use cold_state::{ColdState, LocationUpdate};
+pub use cold_state::{ColdState, CompactionStats, LocationUpdate};
 pub use hot_state::{CurrentLocation, HotState};
 
 use std::sync::Arc;
@@ -48,12 +49,62 @@ fn validate_identifier(kind: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// How far ahead of the clock a write may be stamped. A later timestamp would
+/// stop the object's current position from updating until the clock caught up.
+const MAX_FUTURE_SKEW: Duration = Duration::from_secs(3600);
+
+fn validate_timestamp(timestamp: SystemTime) -> Result<()> {
+    if timestamp > SystemTime::now() + MAX_FUTURE_SKEW {
+        return Err(SpatioError::InvalidInput(format!(
+            "timestamp is more than {} seconds in the future; expected seconds since the \
+             epoch, not milliseconds",
+            MAX_FUTURE_SKEW.as_secs()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_extent(name: &str, value: f64) -> Result<()> {
+    if value > 0.0 && value.is_finite() {
+        Ok(())
+    } else {
+        Err(SpatioError::InvalidInput(format!(
+            "{name} must be positive and finite, got: {value}"
+        )))
+    }
+}
+
+/// A `width` x `height` degree box around `center` as `(min_x, min_y, max_x,
+/// max_y)`, wrapping the antimeridian and clamped at the poles.
+fn box_around(
+    center: &spatio_types::point::Point3d,
+    width: f64,
+    height: f64,
+) -> Result<(f64, f64, f64, f64)> {
+    validate_extent("width", width)?;
+    validate_extent("height", height)?;
+    let (min_x, max_x) = if width >= 360.0 {
+        (-180.0, 180.0)
+    } else {
+        (
+            wrap_longitude(center.x() - width / 2.0),
+            wrap_longitude(center.x() + width / 2.0),
+        )
+    };
+    Ok((
+        min_x,
+        (center.y() - height / 2.0).max(-90.0),
+        max_x,
+        (center.y() + height / 2.0).min(90.0),
+    ))
+}
+
 /// Embedded spatio-temporal database.
 ///
 /// Optimized for tracking moving objects with hot/cold data separation.
 /// - **Hot State**: Current locations in memory (DashMap)
 /// - **Cold State**: Historical trajectories on disk (Append-only log).
-///   `:memory:` databases keep this log in memory and never touch the filesystem.
+///   `:memory:` databases have no log and never touch the filesystem.
 ///
 /// Thread-safe by default (uses internal locking/lock-free structures).
 #[derive(Clone)]
@@ -90,12 +141,15 @@ impl DB {
             // Pure in-memory: no temp dir, no file, no serialization on writes.
             Arc::new(ColdState::new_memory(config.buffer_capacity))
         } else {
-            Arc::new(ColdState::new(
-                path_ref,
-                config.buffer_capacity,
-                config.persistence.clone(),
-                sync,
-            )?)
+            Arc::new(
+                ColdState::new(
+                    path_ref,
+                    config.buffer_capacity,
+                    config.persistence.clone(),
+                    sync,
+                )?
+                .with_max_buffered_objects(config.max_buffered_objects),
+            )
         };
 
         // Recover current locations from cold storage (skip for :memory: mode)
@@ -147,6 +201,10 @@ impl DB {
     }
 
     /// Upsert an object's location.
+    ///
+    /// An update older than the object's current one is added to its history
+    /// but doesn't change its current location. Timestamps more than an hour
+    /// ahead of the clock are rejected.
     pub fn upsert(
         &self,
         namespace: &str,
@@ -163,10 +221,11 @@ impl DB {
         // Reject NaN/Inf/out-of-range coordinates before they poison the index.
         validation::validate_geographic_point_3d(&position)?;
 
-        let ts = cold_state::truncate_to_micros(
-            opts.and_then(|o| o.timestamp)
-                .unwrap_or_else(SystemTime::now),
-        );
+        let ts = opts
+            .and_then(|o| o.timestamp)
+            .unwrap_or_else(SystemTime::now);
+        validate_timestamp(ts)?;
+        let ts = cold_state::truncate_to_micros(ts);
 
         // Log first: a failed append must leave the hot state untouched.
         let _guard = self.key_lock(namespace, object_id);
@@ -220,6 +279,7 @@ impl DB {
             .map(|tp| {
                 let pos = spatio_types::point::Point3d::new(tp.point.x(), tp.point.y(), 0.0);
                 validation::validate_geographic_point_3d(&pos)?;
+                validate_timestamp(tp.timestamp)?;
                 Ok((pos, cold_state::truncate_to_micros(tp.timestamp)))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -385,18 +445,8 @@ impl DB {
             .get_current_location(namespace, object_id)
             .ok_or(SpatioError::ObjectNotFound)?;
 
-        let half_width = width / 2.0;
-        let half_height = height / 2.0;
-        let center = &target.position;
-
-        self.query_bbox(
-            namespace,
-            center.x() - half_width,
-            center.y() - half_height,
-            center.x() + half_width,
-            center.y() + half_height,
-            limit,
-        )
+        let (min_x, min_y, max_x, max_y) = box_around(&target.position, width, height)?;
+        self.query_bbox(namespace, min_x, min_y, max_x, max_y, limit)
     }
 
     /// Query objects within a cylindrical volume relative to another object
@@ -442,19 +492,18 @@ impl DB {
             .get_current_location(namespace, object_id)
             .ok_or(SpatioError::ObjectNotFound)?;
 
-        let half_width = width / 2.0;
-        let half_height = height / 2.0;
+        let (min_x, min_y, max_x, max_y) = box_around(&target.position, width, height)?;
+        validate_extent("depth", depth)?;
         let half_depth = depth / 2.0;
-        let center = &target.position;
 
         self.query_within_bbox_3d(
             namespace,
-            center.x() - half_width,
-            center.y() - half_height,
-            center.z() - half_depth,
-            center.x() + half_width,
-            center.y() + half_height,
-            center.z() + half_depth,
+            min_x,
+            min_y,
+            target.position.z() - half_depth,
+            max_x,
+            max_y,
+            target.position.z() + half_depth,
             limit,
         )
     }
@@ -494,6 +543,30 @@ impl DB {
             .query_trajectory(namespace, object_id, start_time, end_time, limit)
     }
 
+    /// Flush buffered writes to the log and sync them to stable storage, unless
+    /// the sync policy is `Never`. Every write acknowledged before this call is
+    /// durable once it returns. No-op for memory databases.
+    pub fn flush(&self) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.cold.flush()
+    }
+
+    /// Shrink the log by dropping history older than `keep_since`.
+    ///
+    /// Each live object keeps its latest update, so current locations survive.
+    /// Writes wait until it finishes, and it needs free disk space for a second
+    /// copy of what it keeps, so run it before the disk is full. Fails without
+    /// changing anything if the log has unreadable records. No-op for memory
+    /// databases.
+    pub fn compact(&self, keep_since: SystemTime) -> Result<CompactionStats> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
+        self.cold.compact(keep_since)
+    }
+
     /// Close the database: flush buffered writes (syncing them unless the policy
     /// is `Never`), then release the file lock so the path can be reopened even
     /// while clones are alive.
@@ -515,7 +588,11 @@ impl DB {
             memory_usage_bytes: hot_objects * 200 + cold_buffer_bytes,
         }
     }
-    /// Query objects within a polygon
+    /// Query objects within a polygon.
+    ///
+    /// Each edge takes the shorter way around the globe, so a ring with an edge
+    /// over 180 degrees of longitude crosses the antimeridian. A polygon that
+    /// really spans that much needs intermediate vertices.
     pub fn query_polygon(
         &self,
         namespace: &str,
@@ -758,9 +835,6 @@ mod tests {
 
     #[test]
     fn test_memory_db_serves_trajectory_history_in_memory() {
-        // A :memory: DB must not touch the filesystem yet still answer
-        // trajectory queries (history kept in the in-memory log) beyond the
-        // recent buffer window.
         let db = DB::memory().unwrap();
 
         let t0 = SystemTime::now();
@@ -781,9 +855,8 @@ mod tests {
         let current = db.get("ns", "obj").unwrap().unwrap();
         assert_eq!(current.position.x(), 4.0);
 
-        // Full trajectory is queryable from the in-memory log. Use a window that
-        // safely brackets all records: stored timestamps are truncated to micros,
-        // so a raw-now() lower bound could exclude the boundary record.
+        // Stored timestamps are truncated to micros, so a raw-now() lower bound
+        // could exclude the boundary record.
         let traj = db
             .query_trajectory(
                 "ns",
@@ -793,7 +866,38 @@ mod tests {
                 10,
             )
             .unwrap();
-        assert_eq!(traj.len(), 5, "all in-memory history must be queryable");
+        assert_eq!(traj.len(), 5, "history within capacity must be queryable");
+    }
+
+    #[test]
+    fn test_memory_db_history_follows_buffer_capacity() {
+        let db = DB::memory_with_config(Config::default().with_buffer_capacity(4)).unwrap();
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        for i in 0..50u64 {
+            db.upsert(
+                "ns",
+                "o",
+                Point3d::new(0.0, 0.0, 0.0),
+                serde_json::json!({ "i": i }),
+                Some(SetOptions::with_timestamp(t0 + Duration::from_secs(i))),
+            )
+            .unwrap();
+        }
+
+        let traj = db
+            .query_trajectory(
+                "ns",
+                "o",
+                SystemTime::UNIX_EPOCH,
+                t0 + Duration::from_secs(99),
+                100,
+            )
+            .unwrap();
+        assert_eq!(traj.len(), 4);
+        assert_eq!(traj[0].metadata["i"], 49);
+
+        db.delete("ns", "o").unwrap();
+        assert_eq!(db.cold.stats(), (0, 0), "delete must free history");
     }
 
     #[test]
@@ -1064,7 +1168,8 @@ mod tests {
         use std::sync::Barrier;
         use std::thread;
 
-        let db = Arc::new(DB::memory().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(DB::open(dir.path().join("race.log")).unwrap());
         let pos = Point3d::new(1.0, 2.0, 0.0);
         for _ in 0..300 {
             let barrier = Arc::new(Barrier::new(2));
@@ -1082,6 +1187,7 @@ mod tests {
             up.join().unwrap();
             del.join().unwrap();
 
+            db.cold.flush().unwrap();
             let in_log = db
                 .cold
                 .recover_current_locations()
@@ -1094,7 +1200,8 @@ mod tests {
 
     #[test]
     fn test_same_micros_timestamps_agree_with_log() {
-        let db = DB::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db = DB::open(dir.path().join("micros.log")).unwrap();
         let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         for (x, nanos) in [(1.0, 900), (2.0, 100)] {
             db.upsert(
@@ -1108,6 +1215,7 @@ mod tests {
             )
             .unwrap();
         }
+        db.cold.flush().unwrap();
         let recovered = db.cold.recover_current_locations().unwrap();
         assert_eq!(recovered["ns::o"].position.x(), 2.0);
         assert_eq!(db.get("ns", "o").unwrap().unwrap().position.x(), 2.0);
@@ -1254,5 +1362,315 @@ mod tests {
         ));
         drop(first);
         assert!(second.get("ns", "b").unwrap().is_none());
+    }
+
+    fn put(db: &DB, id: &str, x: f64, y: f64) {
+        db.upsert(
+            "ns",
+            id,
+            Point3d::new(x, y, 0.0),
+            serde_json::json!({}),
+            None,
+        )
+        .unwrap();
+    }
+
+    fn ids(found: &[Arc<CurrentLocation>]) -> Vec<&str> {
+        let mut ids: Vec<_> = found.iter().map(|l| l.object_id.as_str()).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn test_future_timestamp_is_rejected_and_leaves_no_trace() {
+        let db = DB::memory().unwrap();
+        let pos = Point3d::new(1.0, 2.0, 0.0);
+        let millis_as_secs = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000_000);
+        let opts = Some(SetOptions::with_timestamp(millis_as_secs));
+        let err = db
+            .upsert("ns", "o", pos.clone(), serde_json::json!({}), opts)
+            .unwrap_err();
+        assert!(matches!(err, SpatioError::InvalidInput(_)), "{err}");
+        assert!(db.get("ns", "o").unwrap().is_none());
+
+        let points = [TemporalPoint::new(
+            spatio_types::geo::Point::new(1.0, 2.0),
+            millis_as_secs,
+        )];
+        assert!(db.insert_trajectory("ns", "o", &points).is_err());
+        assert!(db.get("ns", "o").unwrap().is_none());
+
+        let soon = SystemTime::now() + Duration::from_secs(60);
+        db.upsert(
+            "ns",
+            "o",
+            pos,
+            serde_json::json!({}),
+            Some(SetOptions::with_timestamp(soon)),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_older_update_goes_to_history_only() {
+        let db = DB::memory().unwrap();
+        let t = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        for (x, secs) in [(1.0, 10), (2.0, 5)] {
+            db.upsert(
+                "ns",
+                "o",
+                Point3d::new(x, 0.0, 0.0),
+                serde_json::json!({}),
+                Some(SetOptions::with_timestamp(t + Duration::from_secs(secs))),
+            )
+            .unwrap();
+        }
+        assert_eq!(db.get("ns", "o").unwrap().unwrap().position.x(), 1.0);
+        let history = db
+            .query_trajectory("ns", "o", t, t + Duration::from_secs(99), 10)
+            .unwrap();
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
+    fn test_flush_makes_buffered_writes_visible_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flush.log");
+        let config = Config::default().with_persistence(crate::config::PersistenceConfig {
+            buffer_size: 10_000,
+        });
+        let db = DB::open_with_config(&path, config).unwrap();
+        put(&db, "o", 1.0, 2.0);
+        let before = std::fs::metadata(&path).unwrap().len();
+
+        db.flush().unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > before);
+
+        db.close().unwrap();
+        assert!(matches!(db.flush(), Err(SpatioError::DatabaseClosed)));
+        assert!(DB::memory().unwrap().flush().is_ok());
+    }
+
+    #[test]
+    fn test_compact_keeps_current_locations_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compact.log");
+        let t0 = SystemTime::now() - Duration::from_secs(10_000);
+        {
+            let db = DB::open(&path).unwrap();
+            for i in 0..100u64 {
+                db.upsert(
+                    "ns",
+                    "o",
+                    Point3d::new(i as f64 / 10.0, 0.0, 0.0),
+                    serde_json::json!({ "i": i }),
+                    Some(SetOptions::with_timestamp(t0 + Duration::from_secs(i))),
+                )
+                .unwrap();
+            }
+            let stats = db.compact(SystemTime::now()).unwrap();
+            assert!(stats.bytes_after < stats.bytes_before / 10);
+            db.close().unwrap();
+            assert!(matches!(
+                db.compact(SystemTime::now()),
+                Err(SpatioError::DatabaseClosed)
+            ));
+        }
+
+        let db = DB::open(&path).unwrap();
+        let current = db.get("ns", "o").unwrap().unwrap();
+        assert_eq!(current.metadata["i"], 99);
+        let history = db
+            .query_trajectory("ns", "o", t0, SystemTime::now(), 1_000)
+            .unwrap();
+        assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn test_bbox_near_object_wraps_the_antimeridian() {
+        let db = DB::memory().unwrap();
+        put(&db, "east", 179.9, 0.0);
+        put(&db, "west", -179.9, 0.0);
+        put(&db, "far", 0.0, 0.0);
+
+        for target in ["east", "west"] {
+            let found = db
+                .query_bbox_near_object("ns", target, 1.0, 1.0, 10)
+                .unwrap();
+            assert_eq!(ids(&found), ["east", "west"]);
+            let found = db
+                .query_bbox_3d_near_object("ns", target, 1.0, 1.0, 10.0, 10)
+                .unwrap();
+            assert_eq!(ids(&found), ["east", "west"]);
+        }
+    }
+
+    #[test]
+    fn test_bbox_near_object_clamps_at_the_poles() {
+        let db = DB::memory().unwrap();
+        put(&db, "north", 10.0, 89.9);
+        put(&db, "south", 10.0, -89.9);
+
+        assert_eq!(
+            ids(&db
+                .query_bbox_near_object("ns", "north", 1.0, 1.0, 10)
+                .unwrap()),
+            ["north"]
+        );
+        assert_eq!(
+            ids(&db
+                .query_bbox_near_object("ns", "south", 1.0, 1.0, 10)
+                .unwrap()),
+            ["south"]
+        );
+    }
+
+    #[test]
+    fn test_bbox_near_object_spans_the_world_when_wide_enough() {
+        let db = DB::memory().unwrap();
+        put(&db, "a", 10.0, 0.0);
+        put(&db, "b", -170.0, 0.0);
+        let found = db
+            .query_bbox_near_object("ns", "a", 400.0, 1.0, 10)
+            .unwrap();
+        assert_eq!(ids(&found), ["a", "b"]);
+    }
+
+    #[test]
+    fn test_bbox_near_object_rejects_non_positive_extents() {
+        let db = DB::memory().unwrap();
+        put(&db, "a", 10.0, 0.0);
+        for (w, h) in [
+            (-1.0, 1.0),
+            (1.0, -1.0),
+            (0.0, 1.0),
+            (f64::NAN, 1.0),
+            (f64::INFINITY, 1.0),
+        ] {
+            assert!(
+                matches!(
+                    db.query_bbox_near_object("ns", "a", w, h, 10),
+                    Err(SpatioError::InvalidInput(_))
+                ),
+                "{w} x {h}"
+            );
+        }
+        assert!(
+            db.query_bbox_3d_near_object("ns", "a", 1.0, 1.0, -1.0, 10)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_polygon_across_the_antimeridian() {
+        use geo::polygon;
+        let db = DB::memory().unwrap();
+        put(&db, "east", 179.5, -17.0);
+        put(&db, "west", -179.5, -17.0);
+        put(&db, "seam", 180.0, -17.0);
+        put(&db, "far", 0.0, -17.0);
+        put(&db, "north", 179.5, 10.0);
+
+        let fiji: spatio_types::geo::Polygon = polygon![
+            (x: 179.0, y: -18.0),
+            (x: -179.0, y: -18.0),
+            (x: -179.0, y: -16.0),
+            (x: 179.0, y: -16.0),
+            (x: 179.0, y: -18.0),
+        ]
+        .into();
+        let found = db.query_polygon("ns", &fiji, 10).unwrap();
+        assert_eq!(ids(&found), ["east", "seam", "west"]);
+    }
+
+    #[test]
+    fn test_polygon_hole_across_the_antimeridian() {
+        let db = DB::memory().unwrap();
+        put(&db, "ring", 179.0, 0.0);
+        put(&db, "hole", -179.9, 0.0);
+
+        let ring = |w: f64, e: f64, h: f64| {
+            geo::LineString::from(vec![(w, -h), (e, -h), (e, h), (w, h), (w, -h)])
+        };
+        let shape: spatio_types::geo::Polygon =
+            geo::Polygon::new(ring(178.0, -178.0, 5.0), vec![ring(179.5, -179.5, 1.0)]).into();
+        assert_eq!(ids(&db.query_polygon("ns", &shape, 10).unwrap()), ["ring"]);
+    }
+
+    #[test]
+    fn test_whole_world_polygon_is_not_treated_as_crossing() {
+        use geo::polygon;
+        let db = DB::memory().unwrap();
+        put(&db, "a", 10.0, 0.0);
+        put(&db, "b", -170.0, 0.0);
+        let world: spatio_types::geo::Polygon = polygon![
+            (x: -180.0, y: -90.0),
+            (x: 180.0, y: -90.0),
+            (x: 180.0, y: 90.0),
+            (x: -180.0, y: 90.0),
+            (x: -180.0, y: -90.0),
+        ]
+        .into();
+        assert_eq!(
+            ids(&db.query_polygon("ns", &world, 10).unwrap()),
+            ["a", "b"]
+        );
+    }
+
+    #[test]
+    fn test_compact_races_with_writes_and_queries() {
+        use std::sync::atomic::AtomicUsize;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("race.log");
+        let config = Config::default().with_buffer_capacity(4);
+        let db = DB::open_with_config(&path, config).unwrap();
+        let done = Arc::new(AtomicUsize::new(0));
+        let writers = 4;
+
+        let handles: Vec<_> = (0..writers)
+            .map(|w| {
+                let (db, done) = (db.clone(), done.clone());
+                thread::spawn(move || {
+                    for i in 0..2_000u64 {
+                        db.upsert(
+                            "ns",
+                            &format!("o{w}"),
+                            Point3d::new(1.0, 2.0, 0.0),
+                            serde_json::json!({ "i": i }),
+                            None,
+                        )
+                        .unwrap();
+                    }
+                    done.fetch_add(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        let reader = {
+            let (db, done) = (db.clone(), done.clone());
+            thread::spawn(move || {
+                while done.load(Ordering::SeqCst) < writers {
+                    let end = SystemTime::now() + Duration::from_secs(1);
+                    db.query_trajectory("ns", "o0", SystemTime::UNIX_EPOCH, end, 10)
+                        .unwrap();
+                }
+            })
+        };
+        while done.load(Ordering::SeqCst) < writers {
+            db.compact(SystemTime::now() - Duration::from_millis(5))
+                .unwrap();
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        reader.join().unwrap();
+        db.close().unwrap();
+
+        let db = DB::open(&path).unwrap();
+        for w in 0..writers {
+            let current = db.get("ns", &format!("o{w}")).unwrap().unwrap();
+            assert_eq!(current.metadata["i"], 1_999);
+        }
     }
 }

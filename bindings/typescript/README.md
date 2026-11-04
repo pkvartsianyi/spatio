@@ -77,7 +77,7 @@ Distance metrics are `'haversine'`, `'geodesic'`, `'rhumb'` and `'euclidean'`.
 **Timestamps are seconds since the Unix epoch**, not milliseconds, so use
 `Date.now() / 1000`.
 
-`config` accepts `bufferCapacity` and `persistenceBufferSize`.
+`config` accepts `bufferCapacity` and `persistenceBufferSize`. `bufferCapacity` (default 100) is the number of updates kept per object. For `Spatio.memory()` that is all the history kept, and `delete` removes it.
 
 ## Errors
 

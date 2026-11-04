@@ -101,7 +101,7 @@ fn main() -> Result<()> {
 
 Spatio follows a specialized architecture for tracking moving objects:
 - **Hot State**: Current locations are kept in-memory using a sharded concurrent `DashMap` and a high-performance R*-tree spatial index.
-- **Cold State**: Historical movement (trajectories) is persisted to an append-only log on disk.
+- **Cold State**: Historical movement (trajectories) is persisted to an append-only log on disk. `:memory:` databases have no log: they keep the last `buffer_capacity` updates per object (default 100), and `delete` removes them.
 - **Recovery**: At startup, the Hot State is automatically rebuilt by scanning the latest entries in the Trajectory Log.
 
 ## Features
@@ -142,7 +142,8 @@ Spatio exposes a `Config` builder for tuning performance and persistence.
 use spatio::config::{Config, PersistenceConfig};
 
 let config = Config::default()
-    // Per-object in-memory history kept for fast recent-trajectory reads
+    // Updates kept in memory per object: a read cache for file databases,
+    // and the entire history of a `:memory:` database
     .with_buffer_capacity(100)
     .with_persistence(PersistenceConfig {
         // Records buffered before the log is flushed to the OS
@@ -151,6 +152,12 @@ let config = Config::default()
 
 let db = Spatio::open_with_config("path/to/db", config)?;
 ```
+
+`with_max_buffered_objects` caps how many objects keep that history in memory (default 100,000). The log is unaffected.
+
+`db.flush()` makes every acknowledged write durable. `db.compact(keep_since)` shrinks the log by dropping older history, keeping the latest update of each live object. Writes wait while it runs, and it needs free disk space for a second copy of what it keeps, so run it before the disk is full.
+
+Timestamps are seconds since the epoch. Writes stamped more than an hour ahead of the clock are rejected. An update older than an object's current one is added to its history without moving it.
 
 ## Examples
 

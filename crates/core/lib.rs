@@ -26,7 +26,7 @@ pub mod db;
 pub mod error;
 
 pub use builder::DBBuilder;
-pub use db::DB;
+pub use db::{CompactionStats, DB};
 pub use error::{Result, SpatioError};
 
 #[doc(inline)]

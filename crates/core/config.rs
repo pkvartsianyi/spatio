@@ -22,9 +22,15 @@ pub struct Config {
     #[serde(default = "Config::default_sync_batch_size")]
     pub sync_batch_size: usize,
 
-    /// Buffer capacity per object for recent history in ColdState
+    /// Updates kept per object in memory. File databases use this as a cache
+    /// over the log; for `:memory:` databases it is all the history they keep.
     #[serde(default = "Config::default_buffer_capacity")]
     pub buffer_capacity: usize,
+
+    /// Objects with a recent-update buffer in a file database. Past this, the
+    /// least recently written buffers are dropped; their history stays in the log.
+    #[serde(default = "Config::default_max_buffered_objects")]
+    pub max_buffered_objects: usize,
 
     /// Persistence configuration
     #[serde(default)]
@@ -89,6 +95,16 @@ impl Config {
         self
     }
 
+    const fn default_max_buffered_objects() -> usize {
+        100_000
+    }
+
+    pub fn with_max_buffered_objects(mut self, max: usize) -> Self {
+        assert!(max > 0, "Max buffered objects must be greater than zero");
+        self.max_buffered_objects = max;
+        self
+    }
+
     pub fn with_persistence(mut self, config: PersistenceConfig) -> Self {
         self.persistence = config;
         self
@@ -101,6 +117,10 @@ impl Config {
 
         if self.buffer_capacity == 0 {
             return Err("Buffer capacity must be greater than zero".to_string());
+        }
+
+        if self.max_buffered_objects == 0 {
+            return Err("Max buffered objects must be greater than zero".to_string());
         }
 
         Ok(())
@@ -140,6 +160,7 @@ impl Default for Config {
             sync_mode: SyncMode::default(),
             sync_batch_size: Self::default_sync_batch_size(),
             buffer_capacity: Self::default_buffer_capacity(),
+            max_buffered_objects: Self::default_max_buffered_objects(),
             persistence: PersistenceConfig::default(),
         }
     }
