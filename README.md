@@ -149,6 +149,12 @@ let config = Config::default()
 let db = Spatio::open_with_config("path/to/db", config)?;
 ```
 
+`with_max_buffered_objects` caps how many objects keep that history in memory (default 100,000). The log is unaffected.
+
+`db.flush()` makes every acknowledged write durable. `db.compact(keep_since)` shrinks the log by dropping older history, keeping the latest update of each live object. Writes wait while it runs, and it needs free disk space for a second copy of what it keeps, so run it before the disk is full.
+
+Timestamps are seconds since the epoch. Writes stamped more than an hour ahead of the clock are rejected. An update older than an object's current one is added to its history without moving it.
+
 ## Examples
 
 ### Tracking Moving Objects

@@ -100,7 +100,7 @@ graph TD
 3. **Return**: Current locations are returned immediately.
 
 ### Read Path (Trajectory Query)
-1. **Buffer Check**: The in-memory buffer in `ColdState` is checked for recent history.
+1. **Buffer Check**: The in-memory buffer in `ColdState` answers the query if it can prove nothing newer is missing. `ColdState` tracks a horizon: every update not in a buffer is older than it. The answer comes from the buffer or the log, never a merge of the two.
 2. **Disk Scan**: If more history is needed, the append-only log is scanned efficiently (or via index if available). `:memory:` databases have no log, so the buffer is their whole history: the last `buffer_capacity` updates per object, removed on `delete`.
 
 ## Threading Model
