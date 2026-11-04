@@ -9,7 +9,7 @@ Key facts:
 - Coordinates are (longitude, latitude), with optional altitude. Distances are in meters.
 - Objects are addressed by namespace and object ID: `upsert(namespace, object_id, position, metadata, options)`.
 - Queries: radius, 2D and 3D bounding box, cylinder (radius plus altitude band), K nearest neighbors, polygon, and trajectory between two timestamps. Most have an object-relative form, such as `query_near(namespace, object_id, radius, limit)`.
-- Python: `pip install spatio`. Rust: `cargo add spatio`. Go: `go get github.com/pkvartsianyi/spatio/bindings/go`. TypeScript: the `spatio-db` npm package is not published yet, so build it from `bindings/typescript`.
+- Python: `pip install spatio`. Rust: `cargo add spatio`. Go: `go get github.com/pkvartsianyi/spatio/bindings/go`. TypeScript: `npm install spatio-db`.
 - For multi-process or remote access, `spatio-server` exposes the same API over TCP with token auth and TLS.
 
 ## Docs

@@ -16,6 +16,9 @@
   <a href="https://pypi.org/project/spatio">
     <img src="https://img.shields.io/pypi/v/spatio.svg" alt="PyPI">
   </a>
+  <a href="https://www.npmjs.com/package/spatio-db">
+    <img src="https://img.shields.io/npm/v/spatio-db.svg" alt="npm">
+  </a>
   <a href="https://spatiodb.com/">
     <img src="https://img.shields.io/badge/Docs-Available-blue.svg" alt="Documentation">
   </a>
@@ -52,8 +55,9 @@ nearby = db.query_radius("cities", nyc, 100000, limit=10)
 ```
 
 ### TypeScript
-
-The `spatio-db` package is not on npm yet. Build it from [`bindings/typescript`](bindings/typescript/README.md) for now.
+```bash
+npm install spatio-db
+```
 
 ```ts
 import { Point, Spatio } from 'spatio-db'
