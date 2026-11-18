@@ -106,6 +106,7 @@ impl SpatioService for Handler {
         namespace: String,
         id: String,
     ) -> Result<(), String> {
+        check_ids(&namespace, &id)?;
         let db = self.db.clone();
         self.blocking(move || db.delete(&namespace, &id).map_err(|e| e.to_string()))
             .await
@@ -307,5 +308,29 @@ impl SpatioService for Handler {
     async fn stats(self, _: context::Context) -> Result<Stats, String> {
         let reader = self.reader.clone();
         self.blocking(move || Ok(reader.stats())).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn delete_rejects_oversized_ids() {
+        let db = Arc::new(Spatio::memory().unwrap());
+        let handler = Handler::new(db, Arc::new(Semaphore::new(1)));
+        let long = "x".repeat(MAX_ID_BYTES + 1);
+        let err = handler
+            .clone()
+            .delete(context::current(), "ns".into(), long.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("at most"), "{err}");
+        assert!(
+            handler
+                .delete(context::current(), long, "id".into())
+                .await
+                .is_err()
+        );
     }
 }

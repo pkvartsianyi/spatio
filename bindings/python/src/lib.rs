@@ -201,13 +201,33 @@ pub struct PyDistanceMetric {
 #[pymethods]
 impl PyDistanceMetric {
     #[classattr]
-    const HAVERSINE: &'static str = "haversine";
+    #[allow(non_snake_case)]
+    fn HAVERSINE() -> Self {
+        Self {
+            inner: RustDistanceMetric::Haversine,
+        }
+    }
     #[classattr]
-    const GEODESIC: &'static str = "geodesic";
+    #[allow(non_snake_case)]
+    fn GEODESIC() -> Self {
+        Self {
+            inner: RustDistanceMetric::Geodesic,
+        }
+    }
     #[classattr]
-    const RHUMB: &'static str = "rhumb";
+    #[allow(non_snake_case)]
+    fn RHUMB() -> Self {
+        Self {
+            inner: RustDistanceMetric::Rhumb,
+        }
+    }
     #[classattr]
-    const EUCLIDEAN: &'static str = "euclidean";
+    #[allow(non_snake_case)]
+    fn EUCLIDEAN() -> Self {
+        Self {
+            inner: RustDistanceMetric::Euclidean,
+        }
+    }
 
     #[new]
     fn new(metric: &str) -> PyResult<Self> {

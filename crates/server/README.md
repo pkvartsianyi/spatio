@@ -17,7 +17,7 @@ cargo run --package spatio-server -- --host 127.0.0.1 --port 3000 --data-dir ./d
 - `--host`: Bind address (default: `127.0.0.1`)
 - `--port`: Port to listen on (default: `3000`)
 - `--data-dir`: Directory for the persistent database. If omitted, the server runs in-memory.
-- `--auth-token` / `SPATIO_AUTH_TOKEN`: Token clients must present. Required when binding a non-loopback address unless `--insecure` is passed.
+- `--auth-token` / `SPATIO_AUTH_TOKEN`: Token clients must present. Required when binding a non-loopback address unless `--insecure` is passed. An empty value is an error.
 - `--tls-cert`, `--tls-key` / `SPATIO_TLS_CERT`, `SPATIO_TLS_KEY`: PEM certificate chain and key; enables TLS.
 
 Docker binds `0.0.0.0`, so it needs `-e SPATIO_AUTH_TOKEN=...` (and ideally TLS files mounted into the container).

@@ -2,6 +2,7 @@ import time
 
 import pytest
 
+from spatio import DistanceMetric
 from spatio import Point
 from spatio import Spatio
 from spatio import TemporalPoint
@@ -78,3 +79,16 @@ def test_relative_queries(db):
     # Near "center", lookup up z=500..1500 (should be empty)
     results = db.query_cylinder_near_object(namespace, "center", 500, 1500, 10)
     assert len(results) == 0
+
+
+def test_distance_metric_constants():
+    db = Spatio.memory()
+    db.upsert("ns", "a", Point(0, 0))
+    db.upsert("ns", "b", Point(1, 0))
+    for metric in (
+        DistanceMetric.HAVERSINE,
+        DistanceMetric.GEODESIC,
+        DistanceMetric.RHUMB,
+        DistanceMetric.EUCLIDEAN,
+    ):
+        assert db.distance_between("ns", "a", "b", metric) > 0
