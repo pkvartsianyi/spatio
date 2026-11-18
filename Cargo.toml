@@ -63,10 +63,10 @@ napi-derive = "3"
 napi-build = "2"
 
 # Workspace crates
-spatio = { version = "0.4.0", path = "crates/core" }
+spatio = { version = "0.5.0", path = "crates/core" }
 spatio-types = { version = "0.3.0", path = "crates/types" }
-spatio-server = { version = "0.3.0", path = "crates/server" }
-spatio-client = { version = "0.3.0", path = "crates/client" }
+spatio-server = { version = "0.4.0", path = "crates/server" }
+spatio-client = { version = "0.4.0", path = "crates/client" }
 
 # Dev dependencies
 criterion = "0.7.0"

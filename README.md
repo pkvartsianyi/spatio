@@ -77,7 +77,7 @@ const nearby = db.queryRadius('cities', nyc, 100000, 10)
 ### Rust
 ```toml
 [dependencies]
-spatio = "0.4"
+spatio = "0.5"
 serde_json = "1"
 ```
 
