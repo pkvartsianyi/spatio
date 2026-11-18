@@ -50,9 +50,9 @@ algorithmic complexity.
 | `query_bbox` (2D) | `O(log N + K)` | 🟡 T2 | |
 | `query_within_bbox_3d` | `O(log N + K)` | 🟡 T2 | |
 | `query_within_cylinder` | `O(log N + K)` | 🟡 T2 | envelope + altitude/horizontal filter. |
-| `knn` | `O(log N + K)` | 🟡 T2 | grows a sphere from 1 m until it holds `k` points, so `K` is what that sphere covers, at most 4x wider than needed. Tightly clustered points raise `K`. |
+| `knn` | `O(log N + K)` | 🟡 T2 | seeds a bound from the tree, then grows a sphere from a sixteenth of it until it holds `k` points, so `K` is what that sphere covers. Large altitude differences inflate the bound and raise `K`. |
 | `query_polygon` | `O(log N + K·V)` | 🟡 T2 | bbox broad-phase, then point-in-polygon per candidate. **The only op with a two-axis degradation path** — cost grows with both `K` (envelope selectivity) *and* `V` (vertex count), so `K·V` is worse than the plain `K→N` of the other queries. |
-| `query_near`, all `*_near_object` | `O(1)` + delegate | 🟡 T2 | `O(1)` target lookup, then one delegate query; inherits that query's cost — `query_near`→`query_radius`, `knn_near_object`→`knn` (`O(k log N)`), etc. |
+| `query_near`, all `*_near_object` | `O(1)` + delegate | 🟡 T2 | `O(1)` target lookup, then one delegate query; inherits that query's cost — `query_near`→`query_radius`, `knn_near_object`→`knn`, etc. |
 | **Namespace-wide** | | | |
 | `convex_hull` | `O(N log N)` | 🟠 T3 | materializes all namespace points, then hull. |
 | `stats` | `O(P)` | 🟠 T3 | hot part `O(1)`; cold part iterates recent buffers. |
