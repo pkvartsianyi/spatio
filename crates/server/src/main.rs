@@ -61,6 +61,9 @@ fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
     let addr: SocketAddr = format!("{}:{}", args.host, args.port).parse()?;
+    if args.auth_token.as_deref().is_some_and(str::is_empty) {
+        bail!("--auth-token / SPATIO_AUTH_TOKEN is set but empty");
+    }
     if args.auth_token.is_none() && !addr.ip().is_loopback() {
         if !args.insecure {
             bail!(

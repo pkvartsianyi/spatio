@@ -76,6 +76,9 @@ pub async fn run_server_with(
     config: ServerConfig,
     mut shutdown: impl Future<Output = ()> + Unpin + Send + 'static,
 ) -> anyhow::Result<()> {
+    if config.auth_token.as_deref().is_some_and(str::is_empty) {
+        anyhow::bail!("auth token must not be empty");
+    }
     let permits = Arc::new(Semaphore::new(MAX_BLOCKING_TASKS));
     let handler = Handler::new(db, permits.clone());
     let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -200,5 +203,24 @@ where
             Some(_) = in_flight.next() => {}
             _ = tokio::time::sleep(IDLE_TIMEOUT), if in_flight.is_empty() => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_auth_token_is_rejected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let db = Arc::new(Spatio::memory().unwrap());
+        let config = ServerConfig {
+            auth_token: Some(String::new()),
+            tls: None,
+        };
+        let err = run_server_with(listener, db, config, std::future::ready(()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("empty"), "{err}");
     }
 }
