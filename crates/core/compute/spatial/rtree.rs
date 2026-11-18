@@ -55,12 +55,41 @@ pub struct IndexedPoint3D {
     pub y: f64,
     pub z: f64,
     pub key: String,
+    tree_z: f64,
 }
+
+/// Max per-key altitude offset in the tree. Points sharing one altitude give
+/// zero-volume envelopes, which make R* insertion build a very slow tree.
+const Z_SPREAD: f64 = 1e-6;
 
 impl IndexedPoint3D {
     pub fn new(x: f64, y: f64, z: f64, key: String) -> Self {
-        Self { x, y, z, key }
+        let tree_z = z + key_offset(&key);
+        Self {
+            x,
+            y,
+            z,
+            key,
+            tree_z,
+        }
     }
+
+    fn corner(x: f64, y: f64, z: f64) -> Self {
+        Self {
+            x,
+            y,
+            z,
+            key: String::new(),
+            tree_z: z,
+        }
+    }
+}
+
+fn key_offset(key: &str) -> f64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    key.hash(&mut h);
+    (h.finish() >> 11) as f64 / (1u64 << 53) as f64 * Z_SPREAD
 }
 
 impl RstarPoint for IndexedPoint3D {
@@ -68,19 +97,14 @@ impl RstarPoint for IndexedPoint3D {
     const DIMENSIONS: usize = 3;
 
     fn generate(mut generator: impl FnMut(usize) -> Self::Scalar) -> Self {
-        Self {
-            x: generator(0),
-            y: generator(1),
-            z: generator(2),
-            key: String::new(),
-        }
+        Self::corner(generator(0), generator(1), generator(2))
     }
 
     fn nth(&self, index: usize) -> Self::Scalar {
         match index {
             0 => self.x,
             1 => self.y,
-            2 => self.z,
+            2 => self.tree_z,
             _ => unreachable!(),
         }
     }
@@ -89,7 +113,7 @@ impl RstarPoint for IndexedPoint3D {
         match index {
             0 => &mut self.x,
             1 => &mut self.y,
-            2 => &mut self.z,
+            2 => &mut self.tree_z,
             _ => unreachable!(),
         }
     }
@@ -249,6 +273,7 @@ impl SpatialIndexManager {
         geo_envelopes(min_x, min_y, min_z, max_x, max_y, max_z)
             .iter()
             .flat_map(|e| tree.locate_in_envelope_intersecting(e))
+            .filter(|p| p.z >= min_z && p.z <= max_z)
             .take(limit)
             .map(|point| (point.key.clone(),))
             .collect()
@@ -274,6 +299,7 @@ impl SpatialIndexManager {
             envelopes
                 .iter()
                 .flat_map(|e| tree.locate_in_envelope_intersecting(e))
+                .filter(|p| p.z >= min_z && p.z <= max_z)
                 .map(|p| (p, center.haversine_distance(&GeoPoint::new(p.x, p.y))))
                 .filter(|(_, d)| *d <= radius),
             limit,
@@ -284,8 +310,8 @@ impl SpatialIndexManager {
     ///
     /// The tree's raw (lon°, lat°, alt m) metric only seeds an upper bound, which
     /// altitude can inflate to cover most of the tree. So the radius grows from
-    /// 1 m until a sphere holds k points: those are the exact k nearest, and the
-    /// sphere is at most 4x wider than it had to be.
+    /// a sixteenth of that bound until a sphere holds k points: those are the
+    /// exact k nearest.
     pub fn knn_3d(&self, prefix: &str, center: &Point3d, k: usize) -> Vec<(String, f64)> {
         let Some(tree) = self.indexes.get(prefix) else {
             return Vec::new();
@@ -294,14 +320,14 @@ impl SpatialIndexManager {
             return Vec::new();
         }
 
-        let query_point = IndexedPoint3D::new(center.x(), center.y(), center.z(), String::new());
+        let query_point = IndexedPoint3D::corner(center.x(), center.y(), center.z());
         let bound = tree
             .nearest_neighbor_iter(&query_point)
             .take(k)
             .map(|p| center.haversine_3d(&Point3d::new(p.x, p.y, p.z)))
             .fold(0.0, f64::max);
 
-        let mut radius = 1.0;
+        let mut radius = (bound / 16.0).max(1.0);
         while radius < bound && k < tree.size() {
             let found = self.query_within_sphere(prefix, center, radius, k);
             if found.len() == k {
@@ -508,8 +534,8 @@ fn geo_envelopes(
 ) -> Vec<AABB<IndexedPoint3D>> {
     let aabb = |x0, x1| {
         AABB::from_corners(
-            IndexedPoint3D::new(x0, min_y, min_z, String::new()),
-            IndexedPoint3D::new(x1, max_y, max_z, String::new()),
+            IndexedPoint3D::corner(x0, min_y, min_z - Z_SPREAD),
+            IndexedPoint3D::corner(x1, max_y, max_z + Z_SPREAD),
         )
     };
     if min_x <= max_x {
@@ -796,6 +822,99 @@ mod tests {
                 assert_eq!(found, brute_force_knn(&points, &center, k), "k={k}");
             }
         }
+    }
+
+    fn nodes_visited(
+        node: &rstar::ParentNode<IndexedPoint3D>,
+        query: &AABB<IndexedPoint3D>,
+    ) -> usize {
+        use rstar::{Envelope, RTreeNode};
+        1 + node
+            .children()
+            .iter()
+            .map(|child| match child {
+                RTreeNode::Parent(p) if p.envelope().intersects(query) => nodes_visited(p, query),
+                _ => 0,
+            })
+            .sum::<usize>()
+    }
+
+    #[test]
+    fn test_points_at_one_altitude_build_a_searchable_tree() {
+        let mut index = SpatialIndexManager::new();
+        let mut state = 7u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for i in 0..20_000 {
+            let (x, y) = (next() * 360.0 - 180.0, next() * 180.0 - 90.0);
+            index.insert_point("ns", x, y, 0.0, i.to_string());
+        }
+        let tree = &index.indexes["ns"];
+        let query = AABB::from_corners(
+            IndexedPoint3D::corner(10.0, 45.0, -1.0),
+            IndexedPoint3D::corner(10.1, 45.1, 1.0),
+        );
+        let visited = nodes_visited(tree.root(), &query);
+        assert!(visited < 50, "visited {visited} nodes");
+    }
+
+    #[test]
+    fn test_altitude_bounds_are_exact() {
+        let mut index = SpatialIndexManager::new();
+        for (i, z) in [-1e-7, 0.0, 1e-7, 100.0].into_iter().enumerate() {
+            index.insert_point("ns", 1.0, 1.0, z, format!("k{i}"));
+        }
+        let bbox = |index: &SpatialIndexManager, min_z, max_z| {
+            let mut keys: Vec<_> = index
+                .query_within_bbox(
+                    "ns",
+                    BBoxQuery {
+                        min_x: 0.0,
+                        min_y: 0.0,
+                        min_z,
+                        max_x: 2.0,
+                        max_y: 2.0,
+                        max_z,
+                    },
+                    10,
+                )
+                .into_iter()
+                .map(|(k,)| k)
+                .collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(bbox(&index, 0.0, 0.0), ["k1"]);
+        assert_eq!(bbox(&index, 0.0, 100.0), ["k1", "k2", "k3"]);
+        assert_eq!(bbox(&index, -1e-7, 1e-7), ["k0", "k1", "k2"]);
+
+        let cylinder = |index: &SpatialIndexManager, min_z, max_z| {
+            let mut keys: Vec<_> = index
+                .query_within_cylinder(
+                    "ns",
+                    CylinderQuery {
+                        center: GeoPoint::new(1.0, 1.0),
+                        min_z,
+                        max_z,
+                        radius: 10.0,
+                    },
+                    10,
+                )
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(cylinder(&index, 0.0, 0.0), ["k1"]);
+        assert_eq!(cylinder(&index, 1e-7, 100.0), ["k2", "k3"]);
+
+        assert!(index.remove_entry("ns", "k1", Some((1.0, 1.0, 0.0))));
+        assert_eq!(bbox(&index, 0.0, 0.0), Vec::<String>::new());
     }
 
     #[test]
