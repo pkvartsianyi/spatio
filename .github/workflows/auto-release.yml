@@ -13,6 +13,11 @@ on:
       - "crates/cabi/Cargo.toml"
       - "bindings/go/VERSION"
   workflow_dispatch:
+    inputs:
+      docker:
+        description: Build and push the server Docker image for the current server version
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -282,7 +287,11 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     needs: [detect-changes, release-server]
-    if: needs.release-server.result == 'success'
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.release-server.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.docker))
     permissions:
       contents: read
       packages: write
@@ -329,12 +338,12 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         platform:
-          # Linux x86_64
-          - os: ubuntu-latest
+          # Linux x86_64. ubuntu-latest (26.04) has no Python 3.9.
+          - os: ubuntu-24.04
             target: x86_64
             manylinux: auto
           # Linux aarch64 (Raspberry Pi, ARM servers) via QEMU
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: aarch64
             manylinux: auto
           # macOS Apple Silicon
