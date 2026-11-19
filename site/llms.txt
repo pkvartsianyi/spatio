@@ -2,13 +2,15 @@
 
 > Spatio is an open-source (MIT) embedded spatio-temporal database written in Rust. It tracks moving objects inside your process: current positions live in an in-memory R*-tree, and every move is appended to a durable trajectory log on disk. Bindings exist for Python, Node.js/TypeScript and Go.
 
-Use Spatio for fleet and delivery tracking, drones and airspace, geofencing, and any workload with frequent position updates plus "where is it now" and "where has it been" queries. It is not a general GIS database: it has no SQL or joins, and it stores points with metadata rather than arbitrary geometries. For those needs, use PostGIS or SpatiaLite.
+Use Spatio for fleet and delivery tracking, drones and airspace, geofencing, and any workload with frequent position updates plus "where is it now" and "where has it been" queries. It is not a general GIS database: it has no SQL or joins, and besides points with metadata it stores only polygons, circles and corridors (for geofences), not arbitrary geometries. For those needs, use PostGIS or SpatiaLite.
 
 Key facts:
 
 - Coordinates are (longitude, latitude), with optional altitude. Distances are in meters.
 - Objects are addressed by namespace and object ID: `upsert(namespace, object_id, position, metadata, options)`.
 - Queries: radius, 2D and 3D bounding box, cylinder (radius plus altitude band), K nearest neighbors, polygon, and trajectory between two timestamps. Most have an object-relative form, such as `query_near(namespace, object_id, radius, limit)`.
+- Shapes: `set_shape(namespace, shape_id, shape)` stores a polygon, circle or corridor (line plus width in meters). `shapes_containing(namespace, point, limit)` and `shapes_within(namespace, point, meters, limit)` find the shapes at or near a point. Spatio does not emit enter/exit events; the application tracks those.
+- Line geometry uses great circles: `LineString::distance_to(point)`, `intersects(other)` and `intersections(other)`.
 - Python: `pip install spatio`. Rust: `cargo add spatio`. Go: `go get github.com/pkvartsianyi/spatio/bindings/go`. TypeScript: `npm install spatio-db`.
 - For multi-process or remote access, `spatio-server` exposes the same API over TCP with token auth and TLS.
 

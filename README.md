@@ -108,6 +108,8 @@ Spatio follows a specialized architecture for tracking moving objects:
 
 - **Spatial Queries:** Radius search, 2D/3D Bounding box, K-Nearest Neighbors (KNN), Cylindrical queries.
 - **Object-Centric API:** Query around moving objects directly without manual coordinate lookups.
+- **Stored Shapes:** Keep polygons, circles and corridors (a line plus a width) beside your points, and ask which shapes contain a point or lie within N meters of it.
+- **Line Geometry:** Distance from a point to a line and line intersection on the earth's surface (great circles), accurate over long lines.
 - **Trajectories:** Optimized storage and querying of historical movement paths over time.
 - **Durable Persistence:** CRC-checked append-only trajectory log with configurable sync policy and checkpoint recovery.
 - **Lightweight:** No external services, no SQL overhead, and a zero-setup embedded engine.
@@ -120,7 +122,7 @@ Spatio fits applications that track things that move and ask where they are now 
 
 - Delivery and logistics fleet tracking
 - Drones and airspace monitoring, using 3D and altitude-band queries
-- Geofencing with polygon queries
+- Geofencing: store fences as shapes and look up the ones containing each new position
 - Nearby search around a moving object
 
 ## How Spatio Compares
@@ -130,7 +132,7 @@ Spatio fits applications that track things that move and ask where they are now 
 | Deployment | In-process library, optional server | Server | In-process library | Server | Server |
 | Query language | Native API | SQL | SQL | Commands | Commands |
 | Movement history | Built in | Model it yourself | Model it yourself | Model it yourself | Model it yourself |
-| Stored geometry | Points with metadata | Full geometry | Full geometry | Points | Full geometry |
+| Stored geometry | Points with metadata, plus polygons, circles and corridors | Full geometry | Full geometry | Points | Full geometry |
 
 Choose PostGIS or SpatiaLite for general GIS work, such as joins, arbitrary geometries and hundreds of spatial functions.
 
@@ -183,6 +185,23 @@ db.upsert("drones", "drone_1", drone_pos, json!({}), None)?;
 let in_airspace = db.query_within_bbox_3d("drones", min_x, min_y, min_z, max_x, max_y, max_z, 100)?;
 ```
 
+### Geofences
+```rust,ignore
+use spatio::{LineString, Point, Polygon, Shape};
+
+db.set_shape("fences", "depot", Shape::polygon(depot_polygon))?;
+db.set_shape("fences", "hub", Shape::circle(Point::new(-74.0, 40.7), 500.0))?;
+let route = LineString::from_coords(&[(-74.0, 40.7), (-73.9, 40.8)]);
+db.set_shape("fences", "route_7", Shape::corridor(route, 50.0))?;
+
+// Which fences is this truck inside?
+let inside = db.shapes_containing("fences", &truck_pos, 100)?;
+// Fences within 1 km, nearest first, as (shape_id, meters)
+let near = db.shapes_within("fences", &truck_pos, 1_000.0, 10)?;
+```
+
+Shapes are saved beside the log (`<db>.shapes`) and reloaded on open. Polygon edges are straight lines in longitude/latitude, as in GeoJSON, and polygons that cross the antimeridian aren't supported. Circles and corridors use great-circle distance and work anywhere. Spatio stores and queries them; tracking which fences each object is in, and raising enter/exit events, is left to your application.
+
 ### Historical Trajectories
 ```rust,ignore
 // Query movement history for a specific vehicle
@@ -210,6 +229,19 @@ let history = db.query_trajectory("logistics", "truck_001", start, SystemTime::n
 - `query_cylinder_near_object(namespace, object_id, min_z, max_z, radius, limit)`
 - `query_bbox_3d_near_object(namespace, object_id, width, height, depth, limit)`
 - `knn_near_object(namespace, object_id, k)`
+
+### Shapes
+- `set_shape(namespace, shape_id, shape)`
+- `get_shape(namespace, shape_id)`
+- `delete_shape(namespace, shape_id)`
+- `list_shapes(namespace)`
+- `shapes_containing(namespace, point, limit)`
+- `shapes_within(namespace, point, meters, limit)`
+
+### Line Geometry
+- `LineString::distance_to(point)`, `is_within(point, meters)`, `length()`
+- `LineString::intersects(other)`, `intersections(other)`
+- `Shape::contains(point)`, `distance_to(point)`, `is_within(point, meters)`
 
 ## Server Mode
 
