@@ -291,6 +291,55 @@ pub fn validate_bbox_3d(
     Ok(())
 }
 
+/// Validates a shape before it is stored: coordinates in range, polygons
+/// with at least three distinct vertices, corridors with at least two, and
+/// finite non-negative widths and positive radii in meters.
+///
+/// # Examples
+///
+/// ```
+/// use spatio::compute::validation::validate_shape;
+/// use spatio::{Point, Shape};
+///
+/// assert!(validate_shape(&Shape::circle(Point::new(0.0, 0.0), 100.0)).is_ok());
+/// assert!(validate_shape(&Shape::circle(Point::new(0.0, 0.0), -1.0)).is_err());
+/// ```
+pub fn validate_shape(shape: &spatio_types::shape::Shape) -> Result<()> {
+    use spatio_types::shape::Shape;
+    for (idx, (x, y)) in shape.coords().into_iter().enumerate() {
+        validate_geographic_point(&Point::new(x, y))
+            .map_err(|e| SpatioError::InvalidInput(format!("Shape point at index {idx}: {e}")))?;
+    }
+    match shape {
+        Shape::Polygon(p) => {
+            if p.exterior().0.len() < 4 {
+                return Err(SpatioError::InvalidInput(
+                    "Polygon needs at least 3 distinct vertices".to_string(),
+                ));
+            }
+            if let Some(i) = p.interiors().iter().position(|r| r.0.len() < 4) {
+                return Err(SpatioError::InvalidInput(format!(
+                    "Polygon hole {i} needs at least 3 distinct vertices"
+                )));
+            }
+        }
+        Shape::Circle { radius_m, .. } => validate_radius(*radius_m)?,
+        Shape::Corridor { line, half_width_m } => {
+            if line.len() < 2 {
+                return Err(SpatioError::InvalidInput(
+                    "Corridor line needs at least 2 vertices".to_string(),
+                ));
+            }
+            if !(half_width_m.is_finite() && *half_width_m >= 0.0) {
+                return Err(SpatioError::InvalidInput(format!(
+                    "Corridor half width must be finite and non-negative, got: {half_width_m}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,11 +3,13 @@
 //! This module defines the main `DB` type along with spatio-temporal helpers and
 //! persistence wiring that power the public `Spatio` API.
 
+use crate::compute::spatial::ShapeIndex;
 use crate::compute::spatial::rtree::wrap_longitude;
 use crate::compute::validation;
 use crate::config::{Config, DbStats, SetOptions, TemporalPoint};
 use crate::error::{Result, SpatioError};
 use parking_lot::{Mutex, MutexGuard};
+use spatio_types::shape::Shape;
 use std::hash::BuildHasher;
 use std::path::Path;
 
@@ -15,6 +17,9 @@ use std::time::{Duration, SystemTime};
 
 mod cold_state;
 mod hot_state;
+mod shape_store;
+
+use shape_store::ShapeStore;
 
 pub use cold_state::{ColdState, CompactionStats, LocationUpdate};
 pub use hot_state::{CurrentLocation, HotState};
@@ -114,6 +119,10 @@ pub struct DB {
     pub(crate) closed: Arc<AtomicBool>,
     pub(crate) ops_count: Arc<AtomicU64>,
     key_locks: Arc<[Mutex<()>]>,
+    /// Stored shapes per namespace. Separate from the point index so shape
+    /// writes never contend with location updates.
+    shapes: Arc<parking_lot::RwLock<std::collections::HashMap<String, ShapeIndex>>>,
+    shape_store: Arc<ShapeStore>,
 }
 
 impl DB {
@@ -152,6 +161,17 @@ impl DB {
             )
         };
 
+        let mut shapes = std::collections::HashMap::<String, ShapeIndex>::new();
+        let shape_store = if path_ref.to_str() == Some(":memory:") {
+            ShapeStore::memory()
+        } else {
+            let (store, loaded) = ShapeStore::open(path_ref)?;
+            for ((ns, id), shape) in loaded {
+                shapes.entry(ns).or_default().insert(&id, shape);
+            }
+            store
+        };
+
         // Recover current locations from cold storage (skip for :memory: mode)
         if path_ref.to_str() != Some(":memory:") {
             let recovered = cold.recover_current_locations()?;
@@ -181,6 +201,8 @@ impl DB {
             closed: Arc::new(AtomicBool::new(false)),
             ops_count: Arc::new(AtomicU64::new(0)),
             key_locks: (0..64).map(|_| Mutex::new(())).collect(),
+            shapes: Arc::new(parking_lot::RwLock::new(shapes)),
+            shape_store: Arc::new(shape_store),
         })
     }
 
@@ -236,6 +258,119 @@ impl DB {
 
         self.ops_count.fetch_add(1, Ordering::Relaxed);
 
+        Ok(())
+    }
+
+    /// Store `shape` under `shape_id` in `namespace`, replacing any shape
+    /// with that ID. Shapes have their own keyspace: a shape and an object
+    /// may share a namespace and an ID. File databases sync the write to
+    /// disk before it becomes visible.
+    pub fn set_shape(&self, namespace: &str, shape_id: &str, shape: Shape) -> Result<()> {
+        self.check_open()?;
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("shape_id", shape_id)?;
+        validation::validate_shape(&shape)?;
+        let mut shapes = self.shapes.write();
+        self.shape_store.set(namespace, shape_id, &shape)?;
+        shapes
+            .entry(namespace.to_string())
+            .or_default()
+            .insert(shape_id, shape);
+        Ok(())
+    }
+
+    /// Get a stored shape.
+    pub fn get_shape(&self, namespace: &str, shape_id: &str) -> Result<Option<Shape>> {
+        self.check_open()?;
+        Ok(self
+            .shapes
+            .read()
+            .get(namespace)
+            .and_then(|idx| idx.get(shape_id).cloned()))
+    }
+
+    /// Delete a stored shape. Returns whether it existed.
+    pub fn delete_shape(&self, namespace: &str, shape_id: &str) -> Result<bool> {
+        self.check_open()?;
+        validate_identifier("namespace", namespace)?;
+        validate_identifier("shape_id", shape_id)?;
+        let mut shapes = self.shapes.write();
+        let Some(idx) = shapes.get_mut(namespace) else {
+            return Ok(false);
+        };
+        if idx.get(shape_id).is_none() {
+            return Ok(false);
+        }
+        self.shape_store.delete(namespace, shape_id)?;
+        idx.remove(shape_id);
+        if idx.len() == 0 {
+            shapes.remove(namespace);
+        }
+        Ok(true)
+    }
+
+    /// All shapes in `namespace`, sorted by ID.
+    pub fn list_shapes(&self, namespace: &str) -> Result<Vec<(String, Shape)>> {
+        self.check_open()?;
+        let shapes = self.shapes.read();
+        let mut out: Vec<(String, Shape)> = shapes
+            .get(namespace)
+            .map(|idx| {
+                idx.iter()
+                    .map(|(id, s)| (id.to_string(), s.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
+    /// IDs of shapes in `namespace` that contain `point` (boundary
+    /// included), sorted. Altitude is ignored.
+    pub fn shapes_containing(
+        &self,
+        namespace: &str,
+        point: &spatio_types::point::Point3d,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        self.check_open()?;
+        validation::validate_geographic_point(&point.to_2d())?;
+        Ok(self
+            .shapes
+            .read()
+            .get(namespace)
+            .map(|idx| idx.containing(point.x(), point.y(), limit))
+            .unwrap_or_default())
+    }
+
+    /// Shapes in `namespace` with any part within `meters` of `point`, as
+    /// `(shape_id, distance_m)` nearest first. Distance is 0 inside a shape.
+    pub fn shapes_within(
+        &self,
+        namespace: &str,
+        point: &spatio_types::point::Point3d,
+        meters: f64,
+        limit: usize,
+    ) -> Result<Vec<(String, f64)>> {
+        self.check_open()?;
+        validation::validate_geographic_point(&point.to_2d())?;
+        if !(meters.is_finite() && meters >= 0.0) {
+            return Err(SpatioError::InvalidInput(format!(
+                "Distance must be finite and non-negative, got: {meters}"
+            )));
+        }
+        Ok(self
+            .shapes
+            .read()
+            .get(namespace)
+            .map(|idx| idx.within(point.x(), point.y(), meters, limit))
+            .unwrap_or_default())
+    }
+
+    fn check_open(&self) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SpatioError::DatabaseClosed);
+        }
         Ok(())
     }
 
@@ -564,7 +699,14 @@ impl DB {
         if self.closed.load(Ordering::Acquire) {
             return Err(SpatioError::DatabaseClosed);
         }
-        self.cold.compact(keep_since)
+        let stats = self.cold.compact(keep_since)?;
+        let shapes = self.shapes.read();
+        self.shape_store.compact(
+            shapes
+                .iter()
+                .flat_map(|(ns, idx)| idx.iter().map(move |(id, s)| (ns.as_str(), id, s))),
+        )?;
+        Ok(stats)
     }
 
     /// Close the database: flush buffered writes (syncing them unless the policy
