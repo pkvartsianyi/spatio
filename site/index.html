@@ -590,17 +590,17 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
       <div class="sec-head">
         <span class="eyebrow">Benchmarks</span>
         <h2>Core operations, in memory.</h2>
-        <p class="lede">Spatio only, from the <a href="https://github.com/pkvartsianyi/spatio/blob/main/crates/benchmarks/results/core-v0.5.0.md">v0.5.0 release benchmark</a>: 100,000 objects on a uniform grid, one thread, one namespace, on aarch64.</p>
+        <p class="lede">Spatio only, from the <a href="https://github.com/pkvartsianyi/spatio/blob/main/crates/benchmarks/results/core-v0.6.0.md">v0.6.0 release benchmark</a>: 100,000 objects on a uniform grid, one thread, one namespace, on aarch64.</p>
       </div>
       <div class="table-box">
         <table>
           <thead><tr><th>Operation</th><th>Ops/s</th><th>Latency</th></tr></thead>
           <tbody>
-            <tr><td><code>upsert</code>, new object</td><td>184,057</td><td>5.4 µs</td></tr>
-            <tr><td><code>upsert</code>, moving object</td><td>132,189</td><td>7.7 µs</td></tr>
-            <tr><td><code>get</code></td><td>6,431,516</td><td>0.16 µs</td></tr>
-            <tr><td><code>knn</code>, k = 10</td><td>145,537</td><td>6.9 µs</td></tr>
-            <tr><td><code>distance_between</code></td><td>4,239,402</td><td>0.24 µs</td></tr>
+            <tr><td><code>upsert</code>, new object</td><td>208,367</td><td>4.8 µs</td></tr>
+            <tr><td><code>upsert</code>, moving object</td><td>150,542</td><td>6.6 µs</td></tr>
+            <tr><td><code>get</code></td><td>7,462,417</td><td>0.13 µs</td></tr>
+            <tr><td><code>knn</code>, k = 10</td><td>161,910</td><td>6.2 µs</td></tr>
+            <tr><td><code>distance_between</code></td><td>4,342,832</td><td>0.24 µs</td></tr>
           </tbody>
         </table>
       </div>
@@ -638,13 +638,13 @@ db.upsert(<span class="s">"cities"</span>, <span class="s">"nyc"</span>, nyc, { 
         <h2>One core, several ways in.</h2>
       </div>
       <div class="pkgs">
-        <a class="pkg" href="https://crates.io/crates/spatio"><div class="pkg-top"><b>spatio</b><span class="v">0.5</span></div><span>The embedded engine.</span></a>
-        <a class="pkg" href="https://pypi.org/project/spatio"><div class="pkg-top"><b>spatio (PyPI)</b><span class="v">0.4</span></div><span>Python bindings via PyO3.</span></a>
-        <a class="pkg" href="https://www.npmjs.com/package/spatio-db"><div class="pkg-top"><b>spatio-db (npm)</b><span class="v">0.2</span></div><span>Node.js and TypeScript bindings via napi-rs.</span></a>
-        <a class="pkg" href="https://github.com/pkvartsianyi/spatio/tree/main/bindings/go"><div class="pkg-top"><b>bindings/go</b><span class="v">0.3</span></div><span>Go bindings over the C ABI, no cgo.</span></a>
-        <a class="pkg" href="https://crates.io/crates/spatio-server"><div class="pkg-top"><b>spatio-server</b><span class="v">0.4</span></div><span>TCP server with auth and TLS.</span></a>
-        <a class="pkg" href="https://crates.io/crates/spatio-client"><div class="pkg-top"><b>spatio-client</b><span class="v">0.4</span></div><span>Async Rust client for the server.</span></a>
-        <a class="pkg" href="https://crates.io/crates/spatio-types"><div class="pkg-top"><b>spatio-types</b><span class="v">0.3</span></div><span>Point3d, BoundingBox, Polygon and GeoJSON.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio"><div class="pkg-top"><b>spatio</b><span class="v">0.6</span></div><span>The embedded engine.</span></a>
+        <a class="pkg" href="https://pypi.org/project/spatio"><div class="pkg-top"><b>spatio (PyPI)</b><span class="v">0.5</span></div><span>Python bindings via PyO3.</span></a>
+        <a class="pkg" href="https://www.npmjs.com/package/spatio-db"><div class="pkg-top"><b>spatio-db (npm)</b><span class="v">0.3</span></div><span>Node.js and TypeScript bindings via napi-rs.</span></a>
+        <a class="pkg" href="https://github.com/pkvartsianyi/spatio/tree/main/bindings/go"><div class="pkg-top"><b>bindings/go</b><span class="v">0.4</span></div><span>Go bindings over the C ABI, no cgo.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-server"><div class="pkg-top"><b>spatio-server</b><span class="v">0.5</span></div><span>TCP server with auth and TLS.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-client"><div class="pkg-top"><b>spatio-client</b><span class="v">0.5</span></div><span>Async Rust client for the server.</span></a>
+        <a class="pkg" href="https://crates.io/crates/spatio-types"><div class="pkg-top"><b>spatio-types</b><span class="v">0.4</span></div><span>Point3d, BoundingBox, Polygon, LineString, Shape and GeoJSON.</span></a>
       </div>
     </div>
   </section>

@@ -12,7 +12,7 @@ This crate provides fundamental types for working with spatio-temporal data, bui
 
 ```toml
 [dependencies]
-spatio-types = "0.3"
+spatio-types = "0.4"
 ```
 
 ### Optional Features
