@@ -2,6 +2,7 @@ use crate::protocol::{CurrentLocation, LocationUpdate, Stats};
 use spatio::Spatio;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::shape::Shape;
 use spatio_types::time::system_time_from_secs;
 use std::sync::Arc;
 
@@ -231,5 +232,56 @@ impl Reader {
             .bounding_box(namespace)
             .map(|opt| opt.map(spatio_types::bbox::BoundingBox2D::from_rect))
             .map_err(|e| format!("Internal error: {e}"))
+    }
+
+    pub fn get_shape(&self, namespace: &str, id: &str) -> Result<Option<Shape>, String> {
+        self.db.get_shape(namespace, id).map_err(internal_err)
+    }
+
+    pub fn list_shapes(
+        &self,
+        namespace: &str,
+        after: Option<&str>,
+        limit: usize,
+        max_vertices: usize,
+    ) -> Result<Vec<(String, Shape)>, String> {
+        let shapes = self.db.list_shapes(namespace).map_err(internal_err)?;
+        let mut page = Vec::new();
+        let mut vertices = 0;
+        for (id, shape) in shapes {
+            if after.is_some_and(|a| id.as_str() <= a) {
+                continue;
+            }
+            let n = shape.coords().len();
+            if page.len() >= limit || (!page.is_empty() && vertices + n > max_vertices) {
+                break;
+            }
+            vertices += n;
+            page.push((id, shape));
+        }
+        Ok(page)
+    }
+
+    pub fn shapes_containing(
+        &self,
+        namespace: &str,
+        point: &Point3d,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        self.db
+            .shapes_containing(namespace, point, limit)
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn shapes_within(
+        &self,
+        namespace: &str,
+        point: &Point3d,
+        meters: f64,
+        limit: usize,
+    ) -> Result<Vec<(String, f64)>, String> {
+        self.db
+            .shapes_within(namespace, point, meters, limit)
+            .map_err(|e| e.to_string())
     }
 }
