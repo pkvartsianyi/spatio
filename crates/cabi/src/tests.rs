@@ -266,7 +266,7 @@ fn trajectory_records_carry_altitude() {
         (1.0, 2.0, 150.0, 1000.0)
     );
     assert!(r.bytes().is_empty());
-    assert_eq!(spatio_wire_version(), 2);
+    assert_eq!(spatio_wire_version(), 3);
     assert_eq!(spatio_close(h, &mut err), SPATIO_OK);
 }
 
@@ -276,4 +276,228 @@ fn panics_become_error_codes() {
     assert_eq!(guard(&mut err, || panic!("boom")), SPATIO_ERR_OTHER);
     assert!(!err.is_null());
     spatio_string_free(err);
+}
+
+unsafe fn take_err(err: &mut *mut c_char) -> String {
+    let msg = unsafe { CStr::from_ptr(*err) }
+        .to_string_lossy()
+        .into_owned();
+    spatio_string_free(*err);
+    *err = ptr::null_mut();
+    msg
+}
+
+fn set_shape(h: *mut c_void, ns: &CString, id: &str, json: &str) -> i32 {
+    let id = CString::new(id).unwrap();
+    let json = CString::new(json).unwrap();
+    let mut err = ptr::null_mut();
+    let code = spatio_set_shape(h, ns.as_ptr(), id.as_ptr(), json.as_ptr(), &mut err);
+    spatio_string_free(err);
+    code
+}
+
+fn get_shape(h: *mut c_void, ns: &CString, id: &str) -> Option<serde_json::Value> {
+    let id = CString::new(id).unwrap();
+    let mut out: *mut c_char = ptr::null_mut();
+    let mut err = ptr::null_mut();
+    assert_eq!(
+        spatio_get_shape(h, ns.as_ptr(), id.as_ptr(), &mut out, &mut err),
+        SPATIO_OK
+    );
+    if out.is_null() {
+        return None;
+    }
+    let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_owned();
+    spatio_string_free(out);
+    Some(serde_json::from_str(&s).unwrap())
+}
+
+#[test]
+fn shapes_roundtrip_and_query() {
+    let mut h: *mut c_void = ptr::null_mut();
+    let mut err: *mut c_char = ptr::null_mut();
+    assert_eq!(spatio_open_memory(ptr::null(), &mut h, &mut err), SPATIO_OK);
+    let ns = CString::new("zones").unwrap();
+
+    let square =
+        r#"{"type":"polygon","exterior":[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]}"#;
+    let circle = r#"{"type":"circle","center":[0.5,0.5],"radius_m":1000.0}"#;
+    let corridor = r#"{"type":"corridor","line":[[2.0,0.0],[2.0,1.0]],"half_width_m":50.0}"#;
+    assert_eq!(set_shape(h, &ns, "square", square), SPATIO_OK);
+    assert_eq!(set_shape(h, &ns, "circle", circle), SPATIO_OK);
+    assert_eq!(set_shape(h, &ns, "road", corridor), SPATIO_OK);
+
+    let got = get_shape(h, &ns, "circle").unwrap();
+    assert_eq!(
+        got,
+        serde_json::from_str::<serde_json::Value>(circle).unwrap()
+    );
+    assert_eq!(get_shape(h, &ns, "road").unwrap()["half_width_m"], 50.0);
+    assert!(get_shape(h, &ns, "missing").is_none());
+
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_list_shapes(h, ns.as_ptr(), &mut p, &mut l, &mut err),
+        SPATIO_OK
+    );
+    let buf = unsafe { take_buffer(p, l) };
+    let mut r = Reader::new(&buf);
+    assert_eq!(r.u32(), 3);
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        ids.push(r.str().to_owned());
+        let v: serde_json::Value = serde_json::from_slice(r.bytes()).unwrap();
+        assert!(v["type"].is_string());
+    }
+    assert_eq!(ids, ["circle", "road", "square"]);
+
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_shapes_containing(h, ns.as_ptr(), 0.5, 0.5, 0.0, 10, &mut p, &mut l, &mut err),
+        SPATIO_OK
+    );
+    let buf = unsafe { take_buffer(p, l) };
+    let mut r = Reader::new(&buf);
+    assert_eq!(r.u32(), 2);
+    assert_eq!((r.str(), r.str()), ("circle", "square"));
+
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_shapes_within(
+            h,
+            ns.as_ptr(),
+            2.001,
+            0.5,
+            0.0,
+            200.0,
+            10,
+            &mut p,
+            &mut l,
+            &mut err
+        ),
+        SPATIO_OK
+    );
+    let buf = unsafe { take_buffer(p, l) };
+    let mut r = Reader::new(&buf);
+    assert_eq!(r.u32(), 1);
+    let dist = r.f64();
+    assert_eq!(r.str(), "road");
+    assert!((dist - 61.2).abs() < 1.0, "{dist}");
+
+    let id = CString::new("road").unwrap();
+    let mut deleted = false;
+    assert_eq!(
+        spatio_delete_shape(h, ns.as_ptr(), id.as_ptr(), &mut deleted, &mut err),
+        SPATIO_OK
+    );
+    assert!(deleted);
+    assert_eq!(
+        spatio_delete_shape(h, ns.as_ptr(), id.as_ptr(), &mut deleted, &mut err),
+        SPATIO_OK
+    );
+    assert!(!deleted);
+    assert!(get_shape(h, &ns, "road").is_none());
+
+    assert_eq!(spatio_close(h, &mut err), SPATIO_OK);
+}
+
+#[test]
+fn shape_errors() {
+    let mut h: *mut c_void = ptr::null_mut();
+    let mut err: *mut c_char = ptr::null_mut();
+    assert_eq!(spatio_open_memory(ptr::null(), &mut h, &mut err), SPATIO_OK);
+    let ns = CString::new("zones").unwrap();
+    let id = CString::new("z").unwrap();
+
+    assert_eq!(set_shape(h, &ns, "z", "not json"), SPATIO_ERR_INVALID_INPUT);
+    assert_eq!(
+        set_shape(h, &ns, "z", r#"{"type":"hexagon"}"#),
+        SPATIO_ERR_INVALID_INPUT
+    );
+    assert_eq!(
+        set_shape(
+            h,
+            &ns,
+            "z",
+            r#"{"type":"circle","center":[0.0,0.0],"radius_m":-1.0}"#
+        ),
+        SPATIO_ERR_INVALID_INPUT
+    );
+    assert_eq!(
+        set_shape(
+            h,
+            &ns,
+            "z",
+            r#"{"type":"corridor","line":[[0.0,0.0]],"half_width_m":1.0}"#
+        ),
+        SPATIO_ERR_INVALID_INPUT
+    );
+    assert_eq!(
+        set_shape(
+            h,
+            &ns,
+            "z",
+            r#"{"type":"circle","center":[200.0,0.0],"radius_m":1.0}"#
+        ),
+        SPATIO_ERR_INVALID_INPUT
+    );
+
+    let json = CString::new(r#"{"type":"circle","center":[0.0,0.0],"radius_m":1.0}"#).unwrap();
+    assert_eq!(
+        spatio_set_shape(h, ns.as_ptr(), id.as_ptr(), ptr::null(), &mut err),
+        SPATIO_ERR_NULL_ARG
+    );
+    assert_eq!(unsafe { take_err(&mut err) }, "null pointer argument");
+    assert_eq!(
+        spatio_set_shape(
+            ptr::null_mut(),
+            ns.as_ptr(),
+            id.as_ptr(),
+            json.as_ptr(),
+            &mut err
+        ),
+        SPATIO_ERR_NULL_ARG
+    );
+    unsafe { take_err(&mut err) };
+    assert_eq!(
+        spatio_get_shape(h, ns.as_ptr(), id.as_ptr(), ptr::null_mut(), &mut err),
+        SPATIO_ERR_NULL_ARG
+    );
+    unsafe { take_err(&mut err) };
+
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_shapes_within(
+            h,
+            ns.as_ptr(),
+            0.0,
+            0.0,
+            0.0,
+            -5.0,
+            10,
+            &mut p,
+            &mut l,
+            &mut err
+        ),
+        SPATIO_ERR_INVALID_INPUT
+    );
+    assert!(unsafe { take_err(&mut err) }.contains("non-negative"));
+    assert_eq!(
+        spatio_shapes_containing(h, ns.as_ptr(), 0.0, 95.0, 0.0, 10, &mut p, &mut l, &mut err),
+        SPATIO_ERR_INVALID_INPUT
+    );
+    unsafe { take_err(&mut err) };
+    assert_eq!(
+        spatio_list_shapes(h, ns.as_ptr(), ptr::null_mut(), &mut l, &mut err),
+        SPATIO_ERR_NULL_ARG
+    );
+
+    let (mut p, mut l) = (ptr::null_mut(), 0usize);
+    assert_eq!(
+        spatio_list_shapes(h, ns.as_ptr(), &mut p, &mut l, &mut err),
+        SPATIO_OK
+    );
+    assert_eq!(Reader::new(&unsafe { take_buffer(p, l) }).u32(), 0);
+
+    assert_eq!(spatio_close(h, &mut err), SPATIO_OK);
 }

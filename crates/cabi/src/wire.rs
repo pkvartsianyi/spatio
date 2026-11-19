@@ -18,15 +18,19 @@
 //! - **neighbor**   `x y z timestamp distance` (5×f64), `id:str`, `meta:bytes`
 //! - **location**   `x y z timestamp` (4×f64), `id:str`, `meta:bytes`
 //! - **trajectory** `x y z timestamp` (4×f64), `meta:bytes`
+//! - **shape**      `id:str`, `shape:bytes` (shape JSON, see [`spatio::Shape`])
+//! - **shape_id**   `id:str`
+//! - **shape_hit**  `distance` (f64), `id:str`
 //!
 //! `get` reuses the **location** shape with a count of 0 or 1.
 
+use spatio::Shape;
 use spatio::db::{CurrentLocation, LocationUpdate};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Layout version, exported as `spatio_wire_version`.
-pub const WIRE_VERSION: u32 = 2;
+pub const WIRE_VERSION: u32 = 3;
 
 fn unix_secs(t: SystemTime) -> f64 {
     t.duration_since(UNIX_EPOCH)
@@ -130,6 +134,35 @@ pub fn encode_trajectory(updates: &[LocationUpdate]) -> Box<[u8]> {
         w.f64(u.position.z());
         w.f64(unix_secs(u.timestamp));
         w.meta(&u.metadata);
+    }
+    w.into_box()
+}
+
+/// Encode `(shape_id, shape)` pairs (`list_shapes`).
+pub fn encode_shapes(shapes: &[(String, Shape)]) -> serde_json::Result<Box<[u8]>> {
+    let mut w = Writer::with_count(shapes.len());
+    for (id, shape) in shapes {
+        w.str(id);
+        w.bytes(&serde_json::to_vec(shape)?);
+    }
+    Ok(w.into_box())
+}
+
+/// Encode shape IDs (`shapes_containing`).
+pub fn encode_shape_ids(ids: &[String]) -> Box<[u8]> {
+    let mut w = Writer::with_count(ids.len());
+    for id in ids {
+        w.str(id);
+    }
+    w.into_box()
+}
+
+/// Encode `(shape_id, distance)` pairs (`shapes_within`).
+pub fn encode_shape_hits(hits: &[(String, f64)]) -> Box<[u8]> {
+    let mut w = Writer::with_count(hits.len());
+    for (id, dist) in hits {
+        w.f64(*dist);
+        w.str(id);
     }
     w.into_box()
 }

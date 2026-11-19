@@ -440,6 +440,85 @@ func (db *DB) BoundingBox(namespace string) (*geom.Bounds, error) {
 	return geom.NewBounds(geom.XY).Set(minX, minY, maxX, maxY), nil
 }
 
+// SetShape stores shape under shapeID, replacing any shape with that ID.
+// Shapes have their own keyspace, separate from objects.
+func (db *DB) SetShape(namespace, shapeID string, shape *Shape) error {
+	js, err := shape.toJSON()
+	if err != nil {
+		return err
+	}
+	return db.call([]string{namespace, shapeID, js}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnSetShape(h, c[0].ptr(), c[1].ptr(), c[2].ptr(), errOut)
+	})
+}
+
+// GetShape returns a stored shape, or nil if it does not exist.
+func (db *DB) GetShape(namespace, shapeID string) (*Shape, error) {
+	var out unsafe.Pointer
+	err := db.call([]string{namespace, shapeID}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnGetShape(h, c[0].ptr(), c[1].ptr(), unsafe.Pointer(&out), errOut)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, nil
+	}
+	return shapeFromJSON([]byte(consumeString(out)))
+}
+
+// DeleteShape removes a stored shape and reports whether it existed.
+func (db *DB) DeleteShape(namespace, shapeID string) (bool, error) {
+	var deleted bool
+	err := db.call([]string{namespace, shapeID}, func(h uintptr, c []cString, errOut unsafe.Pointer) int32 {
+		return fnDeleteShape(h, c[0].ptr(), c[1].ptr(), unsafe.Pointer(&deleted), errOut)
+	})
+	return deleted, err
+}
+
+// ListShapes returns every shape in a namespace, sorted by ID.
+func (db *DB) ListShapes(namespace string) ([]StoredShape, error) {
+	buf, err := db.query(0, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnListShapes(h, c[0].ptr(), p, n, e)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return decodeShapes(buf)
+}
+
+// ShapesContaining returns the sorted IDs of shapes that contain point
+// (boundary included). Altitude is ignored.
+func (db *DB) ShapesContaining(namespace string, point *geom.Point, limit int) ([]string, error) {
+	x, y, z, err := pointXYZ(point)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnShapesContaining(h, c[0].ptr(), x, y, z, limit, p, n, e)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return decodeShapeIDs(buf), nil
+}
+
+// ShapesWithin returns shapes with any part within meters of point, nearest
+// first. Distance is 0 for shapes containing the point.
+func (db *DB) ShapesWithin(namespace string, point *geom.Point, meters float64, limit int) ([]ShapeHit, error) {
+	x, y, z, err := pointXYZ(point)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := db.query(limit, []string{namespace}, func(h uintptr, c []cString, p, n, e unsafe.Pointer) int32 {
+		return fnShapesWithin(h, c[0].ptr(), x, y, z, meters, limit, p, n, e)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return decodeShapeHits(buf), nil
+}
+
 // metadataJSON marshals optional metadata, returning nil for nil.
 func metadataJSON(m any) (*string, error) {
 	if m == nil {
