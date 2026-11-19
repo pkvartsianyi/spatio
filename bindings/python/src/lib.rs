@@ -16,7 +16,10 @@ use pyo3::types::{
 };
 use spatio::db::CurrentLocation;
 use spatio::error::SpatioError;
-use spatio::{DistanceMetric as RustDistanceMetric, Point3d, Polygon as RustPolygon, Spatio};
+use spatio::{
+    DistanceMetric as RustDistanceMetric, LineString as RustLineString, Point3d,
+    Polygon as RustPolygon, Shape as RustShape, Spatio,
+};
 use spatio::{config::Config as RustConfig, error::Result as RustResult};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -326,6 +329,203 @@ impl PyPolygon {
             self.inner.exterior().coords().count(),
             self.inner.interiors().len()
         )
+    }
+}
+
+fn point_2d(point: &PyPoint) -> spatio::Point {
+    spatio::Point::new(point.inner.x(), point.inner.y())
+}
+
+fn py_point_2d(point: &spatio::Point) -> PyPoint {
+    PyPoint {
+        inner: Point3d::new(point.x(), point.y(), 0.0),
+    }
+}
+
+/// A path of (lon, lat) vertices joined by great-circle segments.
+#[pyclass(name = "LineString", from_py_object, eq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PyLineString {
+    inner: RustLineString,
+}
+
+#[pymethods]
+impl PyLineString {
+    /// Create a line from at least two (lon, lat) vertices.
+    #[new]
+    fn new(coords: Vec<(f64, f64)>) -> PyResult<Self> {
+        if coords.len() < 2 {
+            return Err(PyValueError::new_err(
+                "LineString needs at least 2 vertices",
+            ));
+        }
+        Ok(PyLineString {
+            inner: RustLineString::from_coords(&coords),
+        })
+    }
+
+    #[getter]
+    fn coords(&self) -> Vec<(f64, f64)> {
+        self.inner.coords()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Length along the surface, in meters.
+    fn length(&self) -> f64 {
+        self.inner.length()
+    }
+
+    /// Shortest surface distance from `point` to the line, in meters.
+    fn distance_to(&self, point: &PyPoint) -> f64 {
+        self.inner.distance_to(&point_2d(point))
+    }
+
+    /// Whether any part of the line lies within `meters` of `point`.
+    fn is_within(&self, point: &PyPoint, meters: f64) -> bool {
+        self.inner.is_within(&point_2d(point), meters)
+    }
+
+    /// Whether the two lines touch or cross.
+    fn intersects(&self, other: &PyLineString) -> bool {
+        self.inner.intersects(&other.inner)
+    }
+
+    /// Points where the two lines touch or cross.
+    fn intersections(&self, other: &PyLineString) -> Vec<PyPoint> {
+        self.inner
+            .intersections(&other.inner)
+            .iter()
+            .map(py_point_2d)
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LineString(points={})", self.inner.len())
+    }
+}
+
+/// A stored area: a polygon, a circle or a corridor around a line.
+#[pyclass(name = "Shape", from_py_object, eq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PyShape {
+    inner: RustShape,
+}
+
+impl PyShape {
+    fn validated(inner: RustShape) -> PyResult<Self> {
+        handle_error(spatio::validation::validate_shape(&inner))?;
+        Ok(PyShape { inner })
+    }
+}
+
+#[pymethods]
+impl PyShape {
+    #[staticmethod]
+    fn polygon(polygon: &PyPolygon) -> PyResult<Self> {
+        Self::validated(RustShape::polygon(polygon.inner.clone()))
+    }
+
+    /// Everything within `radius_m` meters of `center`.
+    #[staticmethod]
+    fn circle(center: &PyPoint, radius_m: f64) -> PyResult<Self> {
+        Self::validated(RustShape::circle(point_2d(center), radius_m))
+    }
+
+    /// Everything within `half_width_m` meters of `line`.
+    #[staticmethod]
+    fn corridor(line: &PyLineString, half_width_m: f64) -> PyResult<Self> {
+        Self::validated(RustShape::corridor(line.inner.clone(), half_width_m))
+    }
+
+    /// "polygon", "circle" or "corridor".
+    #[getter]
+    fn kind(&self) -> &'static str {
+        match self.inner {
+            RustShape::Polygon(_) => "polygon",
+            RustShape::Circle { .. } => "circle",
+            RustShape::Corridor { .. } => "corridor",
+        }
+    }
+
+    /// The polygon of a polygon shape, else None.
+    fn as_polygon(&self) -> Option<PyPolygon> {
+        match &self.inner {
+            RustShape::Polygon(p) => Some(PyPolygon { inner: p.clone() }),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn center(&self) -> Option<PyPoint> {
+        match &self.inner {
+            RustShape::Circle { center, .. } => Some(py_point_2d(center)),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn radius_m(&self) -> Option<f64> {
+        match self.inner {
+            RustShape::Circle { radius_m, .. } => Some(radius_m),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn line(&self) -> Option<PyLineString> {
+        match &self.inner {
+            RustShape::Corridor { line, .. } => Some(PyLineString {
+                inner: line.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn half_width_m(&self) -> Option<f64> {
+        match self.inner {
+            RustShape::Corridor { half_width_m, .. } => Some(half_width_m),
+            _ => None,
+        }
+    }
+
+    /// Whether `point` is inside the shape (the boundary counts).
+    fn contains(&self, point: &PyPoint) -> bool {
+        self.inner.contains(&point_2d(point))
+    }
+
+    /// Surface distance from `point` to the shape in meters; 0 inside.
+    fn distance_to(&self, point: &PyPoint) -> f64 {
+        self.inner.distance_to(&point_2d(point))
+    }
+
+    /// Whether any part of the shape lies within `meters` of `point`.
+    fn is_within(&self, point: &PyPoint, meters: f64) -> bool {
+        self.inner.is_within(&point_2d(point), meters)
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            RustShape::Polygon(p) => format!(
+                "Shape.polygon(exterior_points={}, interiors={})",
+                p.exterior().coords().count(),
+                p.interiors().len()
+            ),
+            RustShape::Circle { center, radius_m } => format!(
+                "Shape.circle(center=({:.4}, {:.4}), radius_m={})",
+                center.x(),
+                center.y(),
+                radius_m
+            ),
+            RustShape::Corridor { line, half_width_m } => format!(
+                "Shape.corridor(line_points={}, half_width_m={})",
+                line.len(),
+                half_width_m
+            ),
+        }
     }
 }
 
@@ -740,6 +940,75 @@ impl PySpatio {
         location_list(py, handle_error(results)?)
     }
 
+    /// Store a shape under `shape_id`, replacing any existing one.
+    #[pyo3(signature = (namespace, shape_id, shape))]
+    fn set_shape(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        shape_id: &str,
+        shape: &PyShape,
+    ) -> PyResult<()> {
+        let shape = shape.inner.clone();
+        handle_error(py.detach(|| self.db.set_shape(namespace, shape_id, shape)))
+    }
+
+    /// Get a stored shape, or None.
+    #[pyo3(signature = (namespace, shape_id))]
+    fn get_shape(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        shape_id: &str,
+    ) -> PyResult<Option<PyShape>> {
+        let result = handle_error(py.detach(|| self.db.get_shape(namespace, shape_id)))?;
+        Ok(result.map(|inner| PyShape { inner }))
+    }
+
+    /// Delete a stored shape. Returns whether it existed.
+    #[pyo3(signature = (namespace, shape_id))]
+    fn delete_shape(&self, py: Python<'_>, namespace: &str, shape_id: &str) -> PyResult<bool> {
+        handle_error(py.detach(|| self.db.delete_shape(namespace, shape_id)))
+    }
+
+    /// All shapes in a namespace as `[(shape_id, shape)]`.
+    #[pyo3(signature = (namespace))]
+    fn list_shapes(&self, py: Python<'_>, namespace: &str) -> PyResult<Vec<(String, PyShape)>> {
+        let result = handle_error(py.detach(|| self.db.list_shapes(namespace)))?;
+        Ok(result
+            .into_iter()
+            .map(|(id, inner)| (id, PyShape { inner }))
+            .collect())
+    }
+
+    /// Ids of shapes that contain `point`.
+    #[pyo3(signature = (namespace, point, limit=100))]
+    fn shapes_containing(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        point: &PyPoint,
+        limit: usize,
+    ) -> PyResult<Vec<String>> {
+        let p = point.inner.clone();
+        handle_error(py.detach(|| self.db.shapes_containing(namespace, &p, limit)))
+    }
+
+    /// `[(shape_id, distance)]` for shapes within `meters` of
+    /// `point`, nearest first.
+    #[pyo3(signature = (namespace, point, meters, limit=100))]
+    fn shapes_within(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        point: &PyPoint,
+        meters: f64,
+        limit: usize,
+    ) -> PyResult<Vec<(String, f64)>> {
+        let p = point.inner.clone();
+        handle_error(py.detach(|| self.db.shapes_within(namespace, &p, meters, limit)))
+    }
+
     /// Calculate distance between two objects
     #[pyo3(signature = (namespace, id1, id2, metric))]
     fn distance_between(
@@ -849,6 +1118,8 @@ impl PySetOptions {
 fn _spatio(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySpatio>()?;
     m.add_class::<PyPolygon>()?;
+    m.add_class::<PyLineString>()?;
+    m.add_class::<PyShape>()?;
     m.add_class::<PyPoint>()?;
     m.add_class::<PyConfig>()?;
     m.add_class::<PyDistanceMetric>()?;

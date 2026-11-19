@@ -23,9 +23,11 @@ from __future__ import annotations
 # Import the compiled Rust extension
 from spatio._spatio import Config as _Config
 from spatio._spatio import DistanceMetric as _DistanceMetric
+from spatio._spatio import LineString as _LineString
 from spatio._spatio import Point as _Point
 from spatio._spatio import Polygon as _Polygon
 from spatio._spatio import SetOptions as _SetOptions
+from spatio._spatio import Shape as _Shape
 from spatio._spatio import Spatio as _Spatio
 from spatio._spatio import TemporalPoint as _TemporalPoint
 from spatio._spatio import __version__
@@ -34,9 +36,11 @@ from spatio._spatio import __version__
 __all__ = [
     "Config",
     "DistanceMetric",
+    "LineString",
     "Point",
     "Polygon",
     "SetOptions",
+    "Shape",
     "Spatio",
     "TemporalPoint",
     "__version__",
@@ -50,6 +54,8 @@ SetOptions = _SetOptions
 Config = _Config
 Polygon = _Polygon
 DistanceMetric = _DistanceMetric
+LineString = _LineString
+Shape = _Shape
 
 # Package metadata
 __author__ = "Petro Kvartsianyi"
