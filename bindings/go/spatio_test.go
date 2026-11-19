@@ -378,3 +378,128 @@ func TestTrajectoryAltitudeAndMetadataValue(t *testing.T) {
 		t.Error("Metadata() on a list should fail")
 	}
 }
+
+func TestShapes(t *testing.T) {
+	db := openTestDB(t)
+
+	square := geom.NewPolygonFlat(geom.XY, []float64{0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0.4, 0.4, 0.6, 0.4, 0.6, 0.6, 0.4, 0.6, 0.4, 0.4}, []int{10, 20})
+	road := geom.NewLineStringFlat(geom.XY, []float64{2, 0, 2, 1})
+	shapes := map[string]*spatio.Shape{
+		"square": spatio.PolygonShape(square),
+		"circle": spatio.CircleShape(point(0.2, 0.2), 1000),
+		"road":   spatio.CorridorShape(road, 50),
+	}
+	for id, s := range shapes {
+		if err := db.SetShape("zones", id, s); err != nil {
+			t.Fatalf("set_shape %s: %v", id, err)
+		}
+	}
+
+	got, err := db.GetShape("zones", "square")
+	if err != nil {
+		t.Fatalf("get_shape: %v", err)
+	}
+	if got == nil || got.Kind != spatio.ShapePolygon || got.Polygon.NumLinearRings() != 2 {
+		t.Fatalf("square = %+v, want polygon with a hole", got)
+	}
+	if got.Polygon.SRID() != 4326 {
+		t.Errorf("SRID = %d, want 4326", got.Polygon.SRID())
+	}
+	circle, _ := db.GetShape("zones", "circle")
+	if circle.Kind != spatio.ShapeCircle || circle.Radius != 1000 || circle.Center.X() != 0.2 {
+		t.Errorf("circle = %+v", circle)
+	}
+	corridor, _ := db.GetShape("zones", "road")
+	if corridor.Kind != spatio.ShapeCorridor || corridor.HalfWidth != 50 || corridor.Line.NumCoords() != 2 {
+		t.Errorf("road = %+v", corridor)
+	}
+	missing, err := db.GetShape("zones", "nope")
+	if err != nil || missing != nil {
+		t.Errorf("missing = %v, %v; want nil, nil", missing, err)
+	}
+
+	all, err := db.ListShapes("zones")
+	if err != nil {
+		t.Fatalf("list_shapes: %v", err)
+	}
+	var ids []string
+	for _, s := range all {
+		ids = append(ids, s.ID)
+	}
+	if fmt.Sprint(ids) != "[circle road square]" {
+		t.Errorf("list ids = %v", ids)
+	}
+
+	inside, err := db.ShapesContaining("zones", point(0.2, 0.2), 10)
+	if err != nil {
+		t.Fatalf("shapes_containing: %v", err)
+	}
+	if fmt.Sprint(inside) != "[circle square]" {
+		t.Errorf("containing = %v, want [circle square]", inside)
+	}
+	hole, _ := db.ShapesContaining("zones", point(0.5, 0.5), 10)
+	if len(hole) != 0 {
+		t.Errorf("containing in hole = %v, want none", hole)
+	}
+
+	near, err := db.ShapesWithin("zones", point(2.001, 0.5), 200, 10)
+	if err != nil {
+		t.Fatalf("shapes_within: %v", err)
+	}
+	if len(near) != 1 || near[0].ID != "road" || math.Abs(near[0].Distance-61.2) > 1 {
+		t.Errorf("within = %+v, want road at ~61m", near)
+	}
+
+	deleted, err := db.DeleteShape("zones", "road")
+	if err != nil || !deleted {
+		t.Fatalf("delete_shape = %v, %v", deleted, err)
+	}
+	deleted, err = db.DeleteShape("zones", "road")
+	if err != nil || deleted {
+		t.Errorf("second delete_shape = %v, %v; want false", deleted, err)
+	}
+	if s, _ := db.GetShape("zones", "road"); s != nil {
+		t.Error("expected nil after delete")
+	}
+}
+
+func TestShapeErrors(t *testing.T) {
+	db := openTestDB(t)
+
+	cases := map[string]*spatio.Shape{
+		"nil":             nil,
+		"negative radius": spatio.CircleShape(point(0, 0), -1),
+		"bad latitude":    spatio.CircleShape(point(0, 95), 10),
+		"short corridor":  spatio.CorridorShape(geom.NewLineStringFlat(geom.XY, []float64{0, 0}), 10),
+		"nil polygon":     spatio.PolygonShape(nil),
+		"nil center":      spatio.CircleShape(nil, 10),
+		"unknown kind":    {Kind: "hexagon"},
+	}
+	for name, s := range cases {
+		if err := db.SetShape("zones", "z", s); !errors.Is(err, spatio.ErrInvalidInput) {
+			t.Errorf("%s: err = %v, want ErrInvalidInput", name, err)
+		}
+	}
+
+	if _, err := db.ShapesWithin("zones", point(0, 0), -5, 10); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("negative distance: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := db.ShapesContaining("zones", point(0, 0), -1); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("negative limit: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := db.ShapesContaining("zones", nil, 10); !errors.Is(err, spatio.ErrInvalidInput) {
+		t.Errorf("nil point: err = %v, want ErrInvalidInput", err)
+	}
+	empty, err := db.ListShapes("zones")
+	if err != nil || len(empty) != 0 {
+		t.Errorf("list empty = %v, %v", empty, err)
+	}
+
+	_ = db.Close()
+	if err := db.SetShape("zones", "z", spatio.CircleShape(point(0, 0), 1)); !errors.Is(err, spatio.ErrClosed) {
+		t.Errorf("after close: err = %v, want ErrClosed", err)
+	}
+	if _, err := db.ListShapes("zones"); !errors.Is(err, spatio.ErrClosed) {
+		t.Errorf("list after close: err = %v, want ErrClosed", err)
+	}
+}

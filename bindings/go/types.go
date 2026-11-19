@@ -391,3 +391,188 @@ func decodeTrajectory(buf []byte) []TrajectoryPoint {
 	}
 	return out
 }
+
+// Shapes
+
+// ShapeKind identifies the variant of a Shape.
+type ShapeKind string
+
+const (
+	ShapePolygon  ShapeKind = "polygon"
+	ShapeCircle   ShapeKind = "circle"
+	ShapeCorridor ShapeKind = "corridor"
+)
+
+// Shape is a stored area: a polygon, a circle, or a corridor (everything within
+// HalfWidth meters of a line). Build one with PolygonShape, CircleShape, or
+// CorridorShape; only the fields for its Kind are set.
+type Shape struct {
+	Kind ShapeKind
+
+	Polygon *geom.Polygon
+
+	Center *geom.Point
+	Radius float64
+
+	Line      *geom.LineString
+	HalfWidth float64
+}
+
+// PolygonShape wraps a polygon. Edges are straight in lon/lat, as in GeoJSON.
+func PolygonShape(p *geom.Polygon) *Shape {
+	return &Shape{Kind: ShapePolygon, Polygon: p}
+}
+
+// CircleShape is the area within radius meters of center.
+func CircleShape(center *geom.Point, radius float64) *Shape {
+	return &Shape{Kind: ShapeCircle, Center: center, Radius: radius}
+}
+
+// CorridorShape is the area within halfWidth meters of line.
+func CorridorShape(line *geom.LineString, halfWidth float64) *Shape {
+	return &Shape{Kind: ShapeCorridor, Line: line, HalfWidth: halfWidth}
+}
+
+// StoredShape is a shape with its ID, returned by ListShapes.
+type StoredShape struct {
+	ID    string
+	Shape *Shape
+}
+
+// ShapeHit is a shape ID and its distance in meters from the query point (0
+// inside the shape), returned by ShapesWithin.
+type ShapeHit struct {
+	ID       string
+	Distance float64
+}
+
+// shapeJSON mirrors the serde form of spatio::Shape.
+type shapeJSON struct {
+	Type       ShapeKind      `json:"type"`
+	Exterior   [][2]float64   `json:"exterior,omitempty"`
+	Interiors  [][][2]float64 `json:"interiors,omitempty"`
+	Center     *[2]float64    `json:"center,omitempty"`
+	RadiusM    *float64       `json:"radius_m,omitempty"`
+	Line       [][2]float64   `json:"line,omitempty"`
+	HalfWidthM *float64       `json:"half_width_m,omitempty"`
+}
+
+func xyCoords(cs []geom.Coord) [][2]float64 {
+	out := make([][2]float64, len(cs))
+	for i, c := range cs {
+		out[i] = [2]float64{c[0], c[1]}
+	}
+	return out
+}
+
+func flatXY(cs [][2]float64) []float64 {
+	out := make([]float64, 0, 2*len(cs))
+	for _, c := range cs {
+		out = append(out, c[0], c[1])
+	}
+	return out
+}
+
+func (s *Shape) toJSON() (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("%w: shape is nil", ErrInvalidInput)
+	}
+	j := shapeJSON{Type: s.Kind}
+	switch s.Kind {
+	case ShapePolygon:
+		if s.Polygon == nil || s.Polygon.NumLinearRings() == 0 {
+			return "", fmt.Errorf("%w: polygon shape has no exterior ring", ErrInvalidInput)
+		}
+		j.Exterior = xyCoords(s.Polygon.LinearRing(0).Coords())
+		for i := 1; i < s.Polygon.NumLinearRings(); i++ {
+			j.Interiors = append(j.Interiors, xyCoords(s.Polygon.LinearRing(i).Coords()))
+		}
+	case ShapeCircle:
+		x, y, _, err := pointXYZ(s.Center)
+		if err != nil {
+			return "", err
+		}
+		j.Center = &[2]float64{x, y}
+		j.RadiusM = &s.Radius
+	case ShapeCorridor:
+		if s.Line == nil {
+			return "", fmt.Errorf("%w: corridor line is nil", ErrInvalidInput)
+		}
+		j.Line = xyCoords(s.Line.Coords())
+		j.HalfWidthM = &s.HalfWidth
+	default:
+		return "", fmt.Errorf("%w: unknown shape kind %q", ErrInvalidInput, s.Kind)
+	}
+	b, err := json.Marshal(j)
+	if err != nil {
+		return "", fmt.Errorf("spatio: encoding shape: %w", err)
+	}
+	return string(b), nil
+}
+
+func shapeFromJSON(b []byte) (*Shape, error) {
+	var j shapeJSON
+	if err := json.Unmarshal(b, &j); err != nil {
+		return nil, fmt.Errorf("spatio: decoding shape: %w", err)
+	}
+	switch j.Type {
+	case ShapePolygon:
+		ends := []int{2 * len(j.Exterior)}
+		flat := flatXY(j.Exterior)
+		for _, r := range j.Interiors {
+			flat = append(flat, flatXY(r)...)
+			ends = append(ends, len(flat))
+		}
+		return PolygonShape(geom.NewPolygonFlat(geom.XY, flat, ends).SetSRID(srid4326)), nil
+	case ShapeCircle:
+		if j.Center == nil || j.RadiusM == nil {
+			return nil, fmt.Errorf("spatio: decoding shape: incomplete circle")
+		}
+		center := geom.NewPointFlat(geom.XY, j.Center[:]).SetSRID(srid4326)
+		return CircleShape(center, *j.RadiusM), nil
+	case ShapeCorridor:
+		if j.HalfWidthM == nil {
+			return nil, fmt.Errorf("spatio: decoding shape: incomplete corridor")
+		}
+		line := geom.NewLineStringFlat(geom.XY, flatXY(j.Line)).SetSRID(srid4326)
+		return CorridorShape(line, *j.HalfWidthM), nil
+	default:
+		return nil, fmt.Errorf("spatio: decoding shape: unknown type %q", j.Type)
+	}
+}
+
+func decodeShapes(buf []byte) ([]StoredShape, error) {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]StoredShape, n)
+	for i := range out {
+		id := r.str()
+		s, err := shapeFromJSON(r.blob())
+		if err != nil {
+			return nil, err
+		}
+		out[i] = StoredShape{ID: id, Shape: s}
+	}
+	return out, nil
+}
+
+func decodeShapeIDs(buf []byte) []string {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]string, n)
+	for i := range out {
+		out[i] = r.str()
+	}
+	return out
+}
+
+func decodeShapeHits(buf []byte) []ShapeHit {
+	r := reader{b: buf}
+	n := int(r.u32())
+	out := make([]ShapeHit, n)
+	for i := range out {
+		d := r.f64()
+		out[i] = ShapeHit{ID: r.str(), Distance: d}
+	}
+	return out
+}

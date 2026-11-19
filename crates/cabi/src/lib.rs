@@ -18,6 +18,8 @@
 //!   [`wire`] for the layout. Per-record metadata is an opaque length-prefixed
 //!   blob (JSON), decoded lazily by the caller.
 //! - **Polygons / convex hull:** GeoJSON strings.
+//! - **Shapes:** JSON strings in the [`spatio::Shape`] serde form, e.g.
+//!   `{"type":"circle","center":[lon,lat],"radius_m":100.0}`.
 //! - **Timestamps:** `f64` seconds since the unix epoch.
 //!
 //! Every fallible export runs inside [`guard`], so a panic becomes
@@ -34,7 +36,7 @@ use ffi::*;
 use serde::Deserialize;
 use spatio::config::{Config, SetOptions};
 use spatio::db::CurrentLocation;
-use spatio::{DistanceMetric, Point, Point3d, Polygon, Spatio, TemporalPoint};
+use spatio::{DistanceMetric, Point, Point3d, Polygon, Shape, Spatio, TemporalPoint};
 use spatio_types::time::system_time_from_secs;
 use std::ffi::{CString, c_char, c_void};
 use std::sync::Arc;
@@ -859,6 +861,171 @@ pub extern "C" fn spatio_bounding_box(
                 }
                 SPATIO_OK
             }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+// Shapes
+
+/// Store a shape (JSON, see [`spatio::Shape`]) under `shape_id`, replacing any
+/// existing one.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_set_shape(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    shape_id: *const c_char,
+    shape_json: *const c_char,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(shape_id) }, err);
+        let json = tri!(unsafe { cstr(shape_json) }, err);
+        let shape: Shape = match serde_json::from_str(json) {
+            Ok(s) => s,
+            Err(e) => {
+                unsafe { set_err(err, &format!("invalid shape: {e}")) };
+                return SPATIO_ERR_INVALID_INPUT;
+            }
+        };
+        match db.set_shape(ns, id, shape) {
+            Ok(()) => SPATIO_OK,
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+/// Get a stored shape as JSON through `out_json`, or null if it does not exist.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_get_shape(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    shape_id: *const c_char,
+    out_json: *mut *mut c_char,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        if out_json.is_null() {
+            return unsafe { arg_err(err, SPATIO_ERR_NULL_ARG) };
+        }
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(shape_id) }, err);
+        match db.get_shape(ns, id) {
+            Ok(Some(shape)) => {
+                let json = tri!(
+                    serde_json::to_string(&shape).map_err(|_| SPATIO_ERR_SERIALIZATION),
+                    err
+                );
+                match unsafe { out_string(out_json, json) } {
+                    SPATIO_OK => SPATIO_OK,
+                    code => unsafe { arg_err(err, code) },
+                }
+            }
+            Ok(None) => {
+                unsafe { *out_json = std::ptr::null_mut() };
+                SPATIO_OK
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+/// Delete a stored shape. `*out_deleted` is false if it did not exist.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_delete_shape(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    shape_id: *const c_char,
+    out_deleted: *mut bool,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        let id = tri!(unsafe { cstr(shape_id) }, err);
+        match db.delete_shape(ns, id) {
+            Ok(deleted) => {
+                if !out_deleted.is_null() {
+                    unsafe { *out_deleted = deleted };
+                }
+                SPATIO_OK
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+/// All shapes in a namespace, sorted by ID, as a buffer of shape records.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_list_shapes(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.list_shapes(ns) {
+            Ok(shapes) => {
+                let buf = tri!(
+                    wire::encode_shapes(&shapes).map_err(|_| SPATIO_ERR_SERIALIZATION),
+                    err
+                );
+                unsafe { emit_buffer(out_ptr, out_len, buf) }
+            }
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+/// IDs of shapes containing a point, sorted, as a buffer of shape_id records.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_shapes_containing(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    x: f64,
+    y: f64,
+    z: f64,
+    limit: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.shapes_containing(ns, &Point3d::new(x, y, z), limit) {
+            Ok(ids) => unsafe { emit_buffer(out_ptr, out_len, wire::encode_shape_ids(&ids)) },
+            Err(e) => unsafe { report(err, &e) },
+        }
+    })
+}
+
+/// Shapes with any part within `meters` of a point, nearest first, as a buffer
+/// of shape_hit records.
+#[unsafe(no_mangle)]
+pub extern "C" fn spatio_shapes_within(
+    handle_ptr: *mut c_void,
+    namespace: *const c_char,
+    x: f64,
+    y: f64,
+    z: f64,
+    meters: f64,
+    limit: usize,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    err: *mut *mut c_char,
+) -> i32 {
+    guard(err, || {
+        let db = tri!(unsafe { handle(handle_ptr) }, err);
+        let ns = tri!(unsafe { cstr(namespace) }, err);
+        match db.shapes_within(ns, &Point3d::new(x, y, z), meters, limit) {
+            Ok(hits) => unsafe { emit_buffer(out_ptr, out_len, wire::encode_shape_hits(&hits)) },
             Err(e) => unsafe { report(err, &e) },
         }
     })

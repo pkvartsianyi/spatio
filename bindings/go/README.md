@@ -60,6 +60,7 @@ func main() {
 | polygon               | `*geom.Polygon` (via GeoJSON)    |
 | trajectory (input)    | `*geom.LineString` layout `XYM`  |
 | bounding box (output) | `*geom.Bounds`                   |
+| shape                 | `*spatio.Shape` (see below)      |
 
 Geometries returned by the bindings carry SRID 4326 (WGS84). For
 `InsertTrajectory`, the line's `M` ordinate holds each sample's timestamp as
@@ -68,6 +69,31 @@ rejected.
 
 Errors map to sentinel values (`spatio.ErrObjectNotFound`, `spatio.ErrClosed`,
 …); match them with `errors.Is`.
+
+## Shapes
+
+Stored areas (geofences, zones, routes) live in their own keyspace per
+namespace, so a shape and an object may share an ID. Build one with
+`PolygonShape(*geom.Polygon)`, `CircleShape(center *geom.Point, radius)` or
+`CorridorShape(line *geom.LineString, halfWidth)` (everything within
+`halfWidth` meters of the line). Distances are in meters.
+
+```go
+_ = db.SetShape("zones", "depot", spatio.CircleShape(nyc, 500))
+_ = db.SetShape("zones", "route", spatio.CorridorShape(
+	geom.NewLineStringFlat(geom.XY, []float64{-74.01, 40.70, -74.00, 40.75}), 50))
+
+ids, _ := db.ShapesContaining("zones", nyc, 10)        // []string, sorted
+hits, _ := db.ShapesWithin("zones", nyc, 1_000, 10)    // []ShapeHit, nearest first
+shape, _ := db.GetShape("zones", "depot")              // *Shape, nil if missing
+all, _ := db.ListShapes("zones")                       // []StoredShape, sorted by ID
+deleted, _ := db.DeleteShape("zones", "depot")         // false if it did not exist
+```
+
+`ShapeHit.Distance` is 0 for shapes containing the point. Invalid shapes
+(out-of-range coordinates, a negative radius, a corridor line with fewer than
+two points, a polygon ring with fewer than three vertices) return
+`ErrInvalidInput`.
 
 ## Metadata
 
@@ -90,8 +116,8 @@ Result sets cross the FFI boundary as a single packed little-endian binary
 buffer (allocated once in Rust, read directly in Go via `unsafe.Slice`), not
 JSON, so there's no per-record float formatting, JSON envelope, or reflection.
 Coordinates are scalars; per-record metadata is an opaque blob decoded only when
-`Metadata()` is called. `convex_hull` still returns GeoJSON (low-volume,
-geometry-shaped).
+`Metadata()` is called. `convex_hull` still returns GeoJSON and shapes cross as
+JSON (low-volume, geometry-shaped).
 
 ## Native library resolution
 

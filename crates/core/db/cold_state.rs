@@ -477,7 +477,7 @@ const LOG_HEADER_V2: &str = "#spatio-log v2";
 
 /// CRC32 (IEEE 802.3 / ISO-HDLC, reflected). Implemented inline to avoid adding
 /// a dependency. Check value: `crc32(b"123456789") == 0xCBF43926`.
-fn crc32(bytes: &[u8]) -> u32 {
+pub(super) fn crc32(bytes: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     for &byte in bytes {
         crc ^= byte as u32;
@@ -512,7 +512,7 @@ fn record_body(line: &str, version: LogVersion) -> Option<&str> {
 /// Best-effort `fsync` of a file's parent directory so a newly created file's
 /// directory entry is durable across power loss. No-op where a directory handle
 /// can't be opened/synced (e.g. Windows).
-fn sync_parent_dir(path: &Path) {
+pub(super) fn sync_parent_dir(path: &Path) {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

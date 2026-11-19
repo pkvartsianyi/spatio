@@ -5,3 +5,6 @@ pub use algorithms::{
 
 pub mod rtree;
 pub use rtree::{BBoxQuery, CylinderQuery, SpatialIndexManager};
+
+pub(crate) mod shapes;
+pub(crate) use shapes::ShapeIndex;

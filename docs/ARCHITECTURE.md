@@ -13,11 +13,13 @@ The project is divided into the following crates:
   - Implements the "Hot/Cold" architecture.
   - **Hot State**: In-memory `DashMap` + R*-tree for real-time spatial queries.
   - **Cold State**: Append-only log files for historical trajectory persistence.
+  - **Shapes**: Polygons, circles and corridors per namespace in their own R*-tree behind their own lock, saved to `<db>.shapes`.
   - No network dependencies; purely embedded.
 
 - **`spatio-types` (`crates/types`)**:
   - Shared primitive types used across the ecosystem.
-  - Defines `Point3d`, `BoundingBox`, `Polygon`, etc.
+  - Defines `Point3d`, `BoundingBox`, `Polygon`, `LineString`, `Shape`, etc.
+  - Great-circle line geometry: point-to-line distance and line intersection.
   - Serializaton logic (Serde, GeoJSON).
   - Dependency for all other crates to ensure type compatibility.
 
@@ -95,9 +97,19 @@ graph TD
    - **Flushing**: When the buffer is full (`pending_writes >= buffer_size`), the data is explicitly flushed to the log file.
    - **Configuration**: Controlled via `PersistenceConfig` (`buffer_size`).
 
+### Write Path (Shapes)
+1. **Validate**: Coordinates, vertex counts, radius and width are checked.
+2. **Persist**: A CRC-checked record is appended to `<db>.shapes` and synced before the shape becomes visible. Shapes change rarely, so each write is synced.
+3. **Index**: The shape's padded bounding box goes into the namespace's shape R*-tree. This lock is separate from the point index, so shape writes never block location updates.
+4. **Recovery**: On open the file is replayed; torn or corrupt records are skipped, and the file is rewritten when it ends mid-record or holds mostly superseded records. `compact` also rewrites it.
+
 ### Read Path (Spatial Query)
 1. **Hot Query**: Radius/BBox queries scan the in-memory R*-tree.
 3. **Return**: Current locations are returned immediately.
+
+### Read Path (Shape Query)
+1. **Broad phase**: The shape R*-tree returns shapes whose padded bounding box covers the point (or the point's radius).
+2. **Exact test**: Polygons use point-in-polygon (edges straight in lon/lat, as in GeoJSON); circles and corridors use great-circle distance.
 
 ### Read Path (Trajectory Query)
 1. **Buffer Check**: The in-memory buffer in `ColdState` answers the query if it can prove nothing newer is missing. `ColdState` tracks a horizon: every update not in a buffer is older than it. The answer comes from the buffer or the log, never a merge of the two.

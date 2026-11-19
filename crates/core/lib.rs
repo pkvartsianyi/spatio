@@ -33,7 +33,8 @@ pub use error::{Result, SpatioError};
 pub use db::DB as Spatio;
 
 pub use geo::Rect;
-pub use spatio_types::geo::{Point, Polygon};
+pub use spatio_types::geo::{LineString, Point, Polygon};
+pub use spatio_types::shape::Shape;
 
 pub use config::{
     BoundingBox2D, Config, DbStats, Point3d, SetOptions, SyncMode, SyncPolicy, TemporalPoint,
@@ -54,7 +55,7 @@ pub mod prelude {
 
     pub use crate::{DBBuilder, Result, Spatio, SpatioError};
 
-    pub use crate::{Point, Polygon};
+    pub use crate::{LineString, Point, Polygon, Shape};
     pub use geo::Rect;
 
     pub use crate::{Config, SetOptions, SyncPolicy};

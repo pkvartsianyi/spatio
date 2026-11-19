@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::shape::Shape;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocationUpdate {
@@ -132,4 +133,32 @@ pub trait SpatioService {
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>, String>;
 
     async fn stats() -> Result<Stats, String>;
+
+    async fn set_shape(namespace: String, id: String, shape: Shape) -> Result<(), String>;
+
+    async fn get_shape(namespace: String, id: String) -> Result<Option<Shape>, String>;
+
+    async fn delete_shape(namespace: String, id: String) -> Result<bool, String>;
+
+    /// One page of shapes sorted by ID, starting after `after`. A page holds
+    /// at most `limit` shapes and stops early once it reaches the vertex
+    /// budget; an empty page means there are no more.
+    async fn list_shapes(
+        namespace: String,
+        after: Option<String>,
+        limit: usize,
+    ) -> Result<Vec<(String, Shape)>, String>;
+
+    async fn shapes_containing(
+        namespace: String,
+        point: Point3d,
+        limit: usize,
+    ) -> Result<Vec<String>, String>;
+
+    async fn shapes_within(
+        namespace: String,
+        point: Point3d,
+        meters: f64,
+        limit: usize,
+    ) -> Result<Vec<(String, f64)>, String>;
 }

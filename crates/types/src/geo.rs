@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::line::LineString;
+
 /// Error type for GeoJSON conversions.
 #[derive(Debug)]
 #[non_exhaustive]

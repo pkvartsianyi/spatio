@@ -18,6 +18,7 @@ use futures::{SinkExt, StreamExt};
 use spatio_server::{HANDSHAKE_OK, HANDSHAKE_TIMEOUT, SpatioServiceClient};
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::shape::Shape;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -330,6 +331,64 @@ impl SpatioClient {
     ) -> Result<Option<spatio_types::bbox::BoundingBox2D>> {
         let ns = namespace.to_string();
         self.call(|c, ctx| async move { c.bounding_box(ctx, ns).await })
+            .await
+    }
+
+    pub async fn set_shape(&self, namespace: &str, id: &str, shape: Shape) -> Result<()> {
+        let (ns, id) = (namespace.to_string(), id.to_string());
+        self.call(|c, ctx| async move { c.set_shape(ctx, ns, id, shape).await })
+            .await
+    }
+
+    pub async fn get_shape(&self, namespace: &str, id: &str) -> Result<Option<Shape>> {
+        let (ns, id) = (namespace.to_string(), id.to_string());
+        self.call(|c, ctx| async move { c.get_shape(ctx, ns, id).await })
+            .await
+    }
+
+    /// Returns whether the shape existed.
+    pub async fn delete_shape(&self, namespace: &str, id: &str) -> Result<bool> {
+        let (ns, id) = (namespace.to_string(), id.to_string());
+        self.call(|c, ctx| async move { c.delete_shape(ctx, ns, id).await })
+            .await
+    }
+
+    /// One page of shapes sorted by ID, starting after `after`. Pass the
+    /// last ID of a page to get the next; an empty page means no more. Pages
+    /// can be shorter than `limit` when the shapes are large.
+    pub async fn list_shapes(
+        &self,
+        namespace: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(String, Shape)>> {
+        let ns = namespace.to_string();
+        let after = after.map(str::to_string);
+        self.call(|c, ctx| async move { c.list_shapes(ctx, ns, after, limit).await })
+            .await
+    }
+
+    pub async fn shapes_containing(
+        &self,
+        namespace: &str,
+        point: Point3d,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let ns = namespace.to_string();
+        self.call(|c, ctx| async move { c.shapes_containing(ctx, ns, point, limit).await })
+            .await
+    }
+
+    /// `(id, distance_m)` pairs, nearest first.
+    pub async fn shapes_within(
+        &self,
+        namespace: &str,
+        point: Point3d,
+        meters: f64,
+        limit: usize,
+    ) -> Result<Vec<(String, f64)>> {
+        let ns = namespace.to_string();
+        self.call(|c, ctx| async move { c.shapes_within(ctx, ns, point, meters, limit).await })
             .await
     }
 }

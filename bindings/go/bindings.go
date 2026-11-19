@@ -39,7 +39,7 @@ const (
 )
 
 // wireVersion must match WIRE_VERSION in crates/cabi/src/wire.rs.
-const wireVersion = 2
+const wireVersion = 3
 
 // C ABI entry points, bound at load time by registerLibrary.
 var (
@@ -77,6 +77,13 @@ var (
 	fnDistanceTo      func(h uintptr, ns, id unsafe.Pointer, x, y float64, metric, outDist, outFound, errOut unsafe.Pointer) int32
 	fnConvexHull      func(h uintptr, ns, outGeoJSON, errOut unsafe.Pointer) int32
 	fnBoundingBox     func(h uintptr, ns, outMinX, outMinY, outMaxX, outMaxY, outFound, errOut unsafe.Pointer) int32
+
+	fnSetShape         func(h uintptr, ns, id, shape, errOut unsafe.Pointer) int32
+	fnGetShape         func(h uintptr, ns, id, outJSON, errOut unsafe.Pointer) int32
+	fnDeleteShape      func(h uintptr, ns, id, outDeleted, errOut unsafe.Pointer) int32
+	fnListShapes       func(h uintptr, ns, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnShapesContaining func(h uintptr, ns unsafe.Pointer, x, y, z float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
+	fnShapesWithin     func(h uintptr, ns unsafe.Pointer, x, y, z, meters float64, limit int, outPtr, outLen, errOut unsafe.Pointer) int32
 )
 
 var (
@@ -188,6 +195,13 @@ func registerLibrary(lib uintptr) {
 	purego.RegisterLibFunc(&fnDistanceTo, lib, "spatio_distance_to")
 	purego.RegisterLibFunc(&fnConvexHull, lib, "spatio_convex_hull")
 	purego.RegisterLibFunc(&fnBoundingBox, lib, "spatio_bounding_box")
+
+	purego.RegisterLibFunc(&fnSetShape, lib, "spatio_set_shape")
+	purego.RegisterLibFunc(&fnGetShape, lib, "spatio_get_shape")
+	purego.RegisterLibFunc(&fnDeleteShape, lib, "spatio_delete_shape")
+	purego.RegisterLibFunc(&fnListShapes, lib, "spatio_list_shapes")
+	purego.RegisterLibFunc(&fnShapesContaining, lib, "spatio_shapes_containing")
+	purego.RegisterLibFunc(&fnShapesWithin, lib, "spatio_shapes_within")
 }
 
 // Version returns the version of the loaded native library.

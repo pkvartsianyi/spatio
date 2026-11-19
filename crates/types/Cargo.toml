@@ -18,6 +18,9 @@ serde.workspace = true
 geojson = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [features]
 default = []
 geojson = ["dep:geojson", "dep:serde_json"]

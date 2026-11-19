@@ -16,7 +16,10 @@ use serde_json::Value;
 use spatio::config::{Config as CoreConfig, SetOptions as CoreSetOptions};
 use spatio::db::CurrentLocation;
 use spatio::error::SpatioError;
-use spatio::{DistanceMetric as CoreMetric, Point3d, Polygon as CorePolygon};
+use spatio::{
+    DistanceMetric as CoreMetric, LineString as CoreLineString, Point3d, Polygon as CorePolygon,
+    Shape as CoreShape,
+};
 
 const DEFAULT_LIMIT: usize = 100;
 
@@ -178,6 +181,177 @@ impl Polygon {
     }
 }
 
+fn point_2d(point: &Point) -> spatio::Point {
+    spatio::Point::new(point.x(), point.y())
+}
+
+/// A path of `[lon, lat]` vertices joined by great-circle segments.
+#[napi]
+#[derive(Clone)]
+pub struct LineString {
+    inner: CoreLineString,
+}
+
+#[napi]
+impl LineString {
+    #[napi(constructor)]
+    pub fn new(coords: Vec<(f64, f64)>) -> Self {
+        Self {
+            inner: CoreLineString::from_coords(&coords),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn coords(&self) -> Vec<(f64, f64)> {
+        self.inner.coords()
+    }
+
+    /// Length along the surface, in meters.
+    #[napi]
+    pub fn length(&self) -> f64 {
+        self.inner.length()
+    }
+
+    /// Shortest surface distance to `point`, in meters.
+    #[napi]
+    pub fn distance_to(&self, point: &Point) -> f64 {
+        self.inner.distance_to(&point_2d(point))
+    }
+
+    #[napi]
+    pub fn is_within(&self, point: &Point, meters: f64) -> bool {
+        self.inner.is_within(&point_2d(point), meters)
+    }
+
+    #[napi]
+    pub fn intersects(&self, other: &LineString) -> bool {
+        self.inner.intersects(&other.inner)
+    }
+
+    #[napi]
+    pub fn intersections(&self, other: &LineString) -> Vec<Point> {
+        self.inner
+            .intersections(&other.inner)
+            .into_iter()
+            .map(|p| Point::new(p.x(), p.y(), None))
+            .collect()
+    }
+}
+
+#[napi(string_enum = "lowercase")]
+pub enum ShapeKind {
+    Polygon,
+    Circle,
+    Corridor,
+}
+
+/// A stored area: a polygon, a circle or a corridor around a line.
+#[napi]
+#[derive(Clone)]
+pub struct Shape {
+    inner: CoreShape,
+}
+
+#[napi]
+impl Shape {
+    #[napi(factory)]
+    pub fn polygon(polygon: &Polygon) -> Self {
+        Self {
+            inner: CoreShape::polygon(polygon.inner.clone()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn circle(center: &Point, radius_m: f64) -> Self {
+        Self {
+            inner: CoreShape::circle(point_2d(center), radius_m),
+        }
+    }
+
+    /// Everything within `halfWidthM` meters of `line`.
+    #[napi(factory)]
+    pub fn corridor(line: &LineString, half_width_m: f64) -> Self {
+        Self {
+            inner: CoreShape::corridor(line.inner.clone(), half_width_m),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn kind(&self) -> ShapeKind {
+        match self.inner {
+            CoreShape::Polygon(_) => ShapeKind::Polygon,
+            CoreShape::Circle { .. } => ShapeKind::Circle,
+            CoreShape::Corridor { .. } => ShapeKind::Corridor,
+        }
+    }
+
+    #[napi(getter, js_name = "polygon")]
+    pub fn as_polygon(&self) -> Option<Polygon> {
+        match &self.inner {
+            CoreShape::Polygon(p) => Some(Polygon { inner: p.clone() }),
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn center(&self) -> Option<Point> {
+        match &self.inner {
+            CoreShape::Circle { center, .. } => Some(Point::new(center.x(), center.y(), None)),
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn radius_m(&self) -> Option<f64> {
+        match self.inner {
+            CoreShape::Circle { radius_m, .. } => Some(radius_m),
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn line(&self) -> Option<LineString> {
+        match &self.inner {
+            CoreShape::Corridor { line, .. } => Some(LineString {
+                inner: line.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    #[napi(getter)]
+    pub fn half_width_m(&self) -> Option<f64> {
+        match self.inner {
+            CoreShape::Corridor { half_width_m, .. } => Some(half_width_m),
+            _ => None,
+        }
+    }
+
+    /// Whether `point` is inside the shape; the boundary counts.
+    #[napi]
+    pub fn contains(&self, point: &Point) -> bool {
+        self.inner.contains(&point_2d(point))
+    }
+
+    /// Surface distance to `point` in meters; 0 inside.
+    #[napi]
+    pub fn distance_to(&self, point: &Point) -> f64 {
+        self.inner.distance_to(&point_2d(point))
+    }
+
+    #[napi]
+    pub fn is_within(&self, point: &Point, meters: f64) -> bool {
+        self.inner.is_within(&point_2d(point), meters)
+    }
+}
+
+impl FromNapiValue for Shape {
+    unsafe fn from_napi_value(env: napi_env, value: napi_value) -> napi::Result<Self> {
+        let shape = unsafe { <&Shape>::from_napi_value(env, value) }?;
+        Ok(shape.clone())
+    }
+}
+
 #[napi(string_enum = "lowercase")]
 pub enum DistanceMetric {
     Haversine,
@@ -276,6 +450,19 @@ impl From<(Arc<CurrentLocation>, f64)> for Neighbor {
             distance,
         }
     }
+}
+
+#[napi(object)]
+pub struct StoredShape {
+    pub shape_id: String,
+    pub shape: Shape,
+}
+
+#[napi(object)]
+pub struct ShapeMatch {
+    pub shape_id: String,
+    /// Distance from the query point, in meters; 0 inside the shape.
+    pub distance: f64,
 }
 
 #[napi(object)]
@@ -622,6 +809,77 @@ impl Spatio {
             self.db
                 .query_polygon(&namespace, &polygon.inner, limit_or_default(limit)?),
         )
+    }
+
+    /// Store a shape, replacing any shape with the same ID. Shapes and
+    /// objects have separate keyspaces.
+    #[napi]
+    pub fn set_shape(&self, namespace: String, shape_id: String, shape: &Shape) -> Result<()> {
+        self.db
+            .set_shape(&namespace, &shape_id, shape.inner.clone())
+            .map_err(to_js_err)
+    }
+
+    #[napi]
+    pub fn get_shape(&self, namespace: String, shape_id: String) -> Result<Option<Shape>> {
+        let shape = self
+            .db
+            .get_shape(&namespace, &shape_id)
+            .map_err(to_js_err)?;
+        Ok(shape.map(|inner| Shape { inner }))
+    }
+
+    /// Returns whether the shape existed.
+    #[napi]
+    pub fn delete_shape(&self, namespace: String, shape_id: String) -> Result<bool> {
+        self.db
+            .delete_shape(&namespace, &shape_id)
+            .map_err(to_js_err)
+    }
+
+    /// All shapes in `namespace`, sorted by ID.
+    #[napi]
+    pub fn list_shapes(&self, namespace: String) -> Result<Vec<StoredShape>> {
+        let shapes = self.db.list_shapes(&namespace).map_err(to_js_err)?;
+        Ok(shapes
+            .into_iter()
+            .map(|(shape_id, inner)| StoredShape {
+                shape_id,
+                shape: Shape { inner },
+            })
+            .collect())
+    }
+
+    /// IDs of shapes containing `point`, sorted. Altitude is ignored.
+    #[napi]
+    pub fn shapes_containing(
+        &self,
+        namespace: String,
+        point: &Point,
+        limit: Option<f64>,
+    ) -> Result<Vec<String>> {
+        self.db
+            .shapes_containing(&namespace, &point.inner, limit_or_default(limit)?)
+            .map_err(to_js_err)
+    }
+
+    /// Shapes with any part within `meters` of `point`, nearest first.
+    #[napi]
+    pub fn shapes_within(
+        &self,
+        namespace: String,
+        point: &Point,
+        meters: f64,
+        limit: Option<f64>,
+    ) -> Result<Vec<ShapeMatch>> {
+        let matches = self
+            .db
+            .shapes_within(&namespace, &point.inner, meters, limit_or_default(limit)?)
+            .map_err(to_js_err)?;
+        Ok(matches
+            .into_iter()
+            .map(|(shape_id, distance)| ShapeMatch { shape_id, distance })
+            .collect())
     }
 
     #[napi]

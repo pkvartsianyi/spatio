@@ -5,6 +5,7 @@ use crate::reader::Reader;
 use spatio::Spatio;
 use spatio_types::geo::{DistanceMetric, Point, Polygon};
 use spatio_types::point::Point3d;
+use spatio_types::shape::Shape;
 use spatio_types::time::system_time_from_secs;
 use std::sync::Arc;
 use tarpc::context;
@@ -17,6 +18,9 @@ pub const MAX_QUERY_LIMIT: usize = 10_000;
 pub const MAX_TRAJECTORY_POINTS: usize = 10_000;
 pub const MAX_METADATA_BYTES: usize = 64 * 1024;
 pub const MAX_ID_BYTES: usize = 256;
+pub const MAX_SHAPE_VERTICES: usize = 100_000;
+/// Vertices per `list_shapes` page, so a page stays well under the frame limit.
+pub const MAX_LIST_VERTICES: usize = 2 * MAX_SHAPE_VERTICES;
 
 fn check_ids(namespace: &str, id: &str) -> Result<(), String> {
     if namespace.len() > MAX_ID_BYTES || id.len() > MAX_ID_BYTES {
@@ -309,6 +313,93 @@ impl SpatioService for Handler {
         let reader = self.reader.clone();
         self.blocking(move || Ok(reader.stats())).await
     }
+
+    async fn set_shape(
+        self,
+        _: context::Context,
+        namespace: String,
+        id: String,
+        shape: Shape,
+    ) -> Result<(), String> {
+        check_ids(&namespace, &id)?;
+        let vertices = shape.coords().len();
+        if vertices > MAX_SHAPE_VERTICES {
+            return Err(format!(
+                "shape has {vertices} vertices; the limit is {MAX_SHAPE_VERTICES}"
+            ));
+        }
+        let db = self.db.clone();
+        self.blocking(move || {
+            db.set_shape(&namespace, &id, shape)
+                .map_err(|e| e.to_string())
+        })
+        .await
+    }
+
+    async fn get_shape(
+        self,
+        _: context::Context,
+        namespace: String,
+        id: String,
+    ) -> Result<Option<Shape>, String> {
+        let reader = self.reader.clone();
+        self.blocking(move || reader.get_shape(&namespace, &id))
+            .await
+    }
+
+    async fn delete_shape(
+        self,
+        _: context::Context,
+        namespace: String,
+        id: String,
+    ) -> Result<bool, String> {
+        check_ids(&namespace, &id)?;
+        let db = self.db.clone();
+        self.blocking(move || db.delete_shape(&namespace, &id).map_err(|e| e.to_string()))
+            .await
+    }
+
+    async fn list_shapes(
+        self,
+        _: context::Context,
+        namespace: String,
+        after: Option<String>,
+        limit: usize,
+    ) -> Result<Vec<(String, Shape)>, String> {
+        let reader = self.reader.clone();
+        let limit = limit.min(MAX_QUERY_LIMIT);
+        self.blocking(move || {
+            reader.list_shapes(&namespace, after.as_deref(), limit, MAX_LIST_VERTICES)
+        })
+        .await
+    }
+
+    async fn shapes_containing(
+        self,
+        _: context::Context,
+        namespace: String,
+        point: Point3d,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        let reader = self.reader.clone();
+        let limit = limit.min(MAX_QUERY_LIMIT);
+        self.blocking(move || reader.shapes_containing(&namespace, &point, limit))
+            .await
+    }
+
+    async fn shapes_within(
+        self,
+        _: context::Context,
+        namespace: String,
+        point: Point3d,
+        meters: f64,
+        limit: usize,
+    ) -> Result<Vec<(String, f64)>, String> {
+        let reader = self.reader.clone();
+        let limit = limit.min(MAX_QUERY_LIMIT);
+        self.blocking(move || reader.shapes_within(&namespace, &point, meters, limit))
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +423,116 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    fn handler() -> Handler {
+        let db = Arc::new(Spatio::memory().unwrap());
+        Handler::new(db, Arc::new(Semaphore::new(1)))
+    }
+
+    #[tokio::test]
+    async fn set_shape_rejects_oversized_shapes() {
+        let handler = handler();
+        let coords: Vec<(f64, f64)> = (0..=MAX_SHAPE_VERTICES)
+            .map(|i| (i as f64 * 1e-6, 0.0))
+            .collect();
+        let shape = Shape::corridor(spatio_types::geo::LineString::from_coords(&coords), 10.0);
+        let err = handler
+            .clone()
+            .set_shape(context::current(), "ns".into(), "big".into(), shape)
+            .await
+            .unwrap_err();
+        assert!(err.contains("vertices"), "{err}");
+        assert!(
+            handler
+                .get_shape(context::current(), "ns".into(), "big".into())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn shape_writes_reject_oversized_ids() {
+        let handler = handler();
+        let long = "x".repeat(MAX_ID_BYTES + 1);
+        let shape = Shape::circle(Point::new(0.0, 0.0), 100.0);
+        let err = handler
+            .clone()
+            .set_shape(context::current(), "ns".into(), long.clone(), shape.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("at most"), "{err}");
+        assert!(
+            handler
+                .clone()
+                .set_shape(context::current(), long.clone(), "id".into(), shape)
+                .await
+                .is_err()
+        );
+        let err = handler
+            .clone()
+            .delete_shape(context::current(), "ns".into(), long.clone())
+            .await
+            .unwrap_err();
+        assert!(err.contains("at most"), "{err}");
+        assert!(
+            handler
+                .delete_shape(context::current(), long, "id".into())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_shapes_pages_by_count() {
+        let handler = handler();
+        for i in 0..=MAX_QUERY_LIMIT {
+            handler
+                .db
+                .set_shape(
+                    "ns",
+                    &format!("s{i:05}"),
+                    Shape::circle(Point::new(0.0, 0.0), 10.0),
+                )
+                .unwrap();
+        }
+        let page = handler
+            .clone()
+            .list_shapes(context::current(), "ns".into(), None, usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(page.len(), MAX_QUERY_LIMIT);
+        assert_eq!(page[0].0, "s00000");
+        let last = page.last().unwrap().0.clone();
+        let rest = handler
+            .list_shapes(context::current(), "ns".into(), Some(last), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].0, format!("s{MAX_QUERY_LIMIT:05}"));
+    }
+
+    #[tokio::test]
+    async fn list_shapes_pages_by_vertices() {
+        let handler = handler();
+        let coords: Vec<(f64, f64)> = (0..MAX_SHAPE_VERTICES)
+            .map(|i| (i as f64 * 1e-6, 0.0))
+            .collect();
+        let big = Shape::corridor(spatio_types::geo::LineString::from_coords(&coords), 1.0);
+        for id in ["a", "b", "c"] {
+            handler.db.set_shape("ns", id, big.clone()).unwrap();
+        }
+        let page = handler
+            .clone()
+            .list_shapes(context::current(), "ns".into(), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(page.len(), 2);
+        let rest = handler
+            .list_shapes(context::current(), "ns".into(), Some("b".into()), 10)
+            .await
+            .unwrap();
+        assert_eq!(rest.len(), 1);
     }
 }
