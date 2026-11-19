@@ -6,6 +6,8 @@
 //!
 //! - **Point types**: `Point`, `Point3d`, `TemporalPoint`
 //! - **Polygon types**: `Polygon`
+//! - **Line types**: `LineString`, with great-circle distance and intersection
+//! - **Shapes**: `Shape` (polygon, circle, corridor) for stored areas
 //! - **Bounding box types**: `BoundingBox2D`
 //!
 //! All types are serializable with Serde and built on top of the `geo` crate's
@@ -50,6 +52,8 @@
 pub mod bbox;
 pub mod config;
 pub mod geo;
+pub mod line;
 pub mod point;
+pub mod shape;
 pub mod stats;
 pub mod time;
