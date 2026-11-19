@@ -64,6 +64,14 @@ db.queryPolygon(namespace, polygon, limit?)
 db.insertTrajectory(namespace, objectId, [{ point, timestamp }])
 db.queryTrajectory(namespace, objectId, startTime, endTime, limit?)
 
+// Shapes (stored areas, in their own keyspace)
+db.setShape(namespace, shapeId, shape)
+db.getShape(namespace, shapeId)        // Shape or null
+db.deleteShape(namespace, shapeId)     // true if it existed
+db.listShapes(namespace)               // [{ shapeId, shape }] sorted by ID
+db.shapesContaining(namespace, point, limit?)          // [shapeId] sorted
+db.shapesWithin(namespace, point, meters, limit?)      // [{ shapeId, distance }] nearest first
+
 // Analytics
 db.distanceBetween(namespace, id1, id2, 'haversine')
 db.distanceTo(namespace, id, point, 'geodesic')
@@ -71,6 +79,37 @@ db.convexHull(namespace)
 db.boundingBox(namespace)       // { minX, minY, maxX, maxY } or null
 db.stats()
 ```
+
+## Shapes and lines
+
+A `Shape` is a polygon, a circle or a corridor (everything within a distance of
+a line). Distances are in meters; circles, corridors and lines follow great
+circles, while polygon edges are straight in lon/lat, as in GeoJSON.
+
+```ts
+import { LineString, Point, Polygon, Shape, Spatio } from 'spatio-db'
+
+const depot = Shape.circle(new Point(-74.006, 40.712), 500)
+const route = Shape.corridor(new LineString([[-74.0, 40.7], [-73.9, 40.8]]), 50)
+const zone = Shape.polygon(new Polygon([[-74.1, 40.6], [-73.9, 40.6], [-73.9, 40.8], [-74.1, 40.6]]))
+
+depot.kind                       // 'circle'; also center, radiusM, line, halfWidthM, polygon
+depot.contains(point)            // boundary counts
+depot.distanceTo(point)          // 0 inside
+depot.isWithin(point, meters)
+
+const db = Spatio.memory()
+db.setShape('fences', 'depot', depot)
+db.shapesContaining('fences', new Point(-74.006, 40.712))   // ['depot']
+```
+
+`LineString` takes `[lon, lat]` vertices and offers `coords`, `length()`,
+`distanceTo(point)`, `isWithin(point, meters)`, `intersects(other)` and
+`intersections(other)` (a `Point[]`).
+
+Invalid shapes (bad coordinates, a negative radius, a corridor with fewer than
+two vertices, a polygon with fewer than three) are rejected by `setShape`, not
+by the constructors. Shapes are persisted by `Spatio.open` databases.
 
 Distance metrics are `'haversine'`, `'geodesic'`, `'rhumb'` and `'euclidean'`.
 

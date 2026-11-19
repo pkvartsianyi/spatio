@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, it } from 'node:test'
 
-import { Point, Polygon, Spatio } from '../index.js'
+import { LineString, Point, Polygon, Shape, Spatio } from '../index.js'
 
 const ns = 'test'
 const code = (expected: string) => (err: unknown) => (err as { code: string }).code === expected
@@ -173,6 +173,137 @@ describe('Polygon', () => {
   })
 })
 
+describe('LineString', () => {
+  const road = new LineString([[0, 0], [0, 1]])
+
+  it('exposes coordinates and length', () => {
+    assert.deepEqual(road.coords, [[0, 0], [0, 1]])
+    assert.ok(Math.abs(road.length() - 111_195) < 100)
+  })
+
+  it('measures distance to a point', () => {
+    assert.ok(Math.abs(road.distanceTo(new Point(0.001, 0.5)) - 111.2) < 1)
+    assert.ok(road.isWithin(new Point(0.001, 0.5), 200))
+    assert.ok(!road.isWithin(new Point(0.001, 0.5), 100))
+  })
+
+  it('finds intersections', () => {
+    const crossing = new LineString([[-1, 0.5], [1, 0.5]])
+    assert.ok(road.intersects(crossing))
+    const [hit, ...rest] = road.intersections(crossing)
+    assert.equal(rest.length, 0)
+    assert.ok(hit instanceof Point)
+    assert.ok(Math.abs(hit.x) < 1e-9 && Math.abs(hit.y - 0.5) < 1e-3)
+
+    const apart = new LineString([[1, 0], [1, 1]])
+    assert.ok(!road.intersects(apart))
+    assert.deepEqual(road.intersections(apart), [])
+  })
+})
+
+describe('Shape', () => {
+  const square = new Polygon([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+
+  it('builds a polygon', () => {
+    const shape = Shape.polygon(square)
+    assert.equal(shape.kind, 'polygon')
+    assert.deepEqual(shape.polygon?.exterior, square.exterior)
+    assert.equal(shape.center, null)
+    assert.ok(shape.contains(new Point(0.5, 0.5)))
+    assert.ok(shape.contains(new Point(0, 0.5)))
+    assert.equal(shape.distanceTo(new Point(0.5, 0.5)), 0)
+    assert.ok(Math.abs(shape.distanceTo(new Point(1.001, 0.5)) - 111.2) < 1)
+  })
+
+  it('builds a circle', () => {
+    const shape = Shape.circle(new Point(10, 50), 1000)
+    assert.equal(shape.kind, 'circle')
+    assert.deepEqual([shape.center?.x, shape.center?.y, shape.radiusM], [10, 50, 1000])
+    assert.equal(shape.polygon, null)
+    assert.ok(shape.contains(new Point(10, 50.008)))
+    assert.ok(!shape.contains(new Point(10, 50.01)))
+    assert.ok(shape.isWithin(new Point(10, 50.01), 200))
+  })
+
+  it('builds a corridor', () => {
+    const shape = Shape.corridor(new LineString([[0, 0], [0, 1]]), 50)
+    assert.equal(shape.kind, 'corridor')
+    assert.deepEqual(shape.line?.coords, [[0, 0], [0, 1]])
+    assert.equal(shape.halfWidthM, 50)
+    assert.equal(shape.radiusM, null)
+    assert.ok(!shape.contains(new Point(0.001, 0.5)))
+    assert.ok(shape.contains(new Point(0.0001, 0.5)))
+    assert.ok(Math.abs(shape.distanceTo(new Point(0.001, 0.5)) - 61.2) < 1)
+    assert.ok(shape.isWithin(new Point(0.001, 0.5), 70))
+    assert.ok(!shape.isWithin(new Point(0.001, 0.5), 50))
+  })
+})
+
+describe('stored shapes', () => {
+  const depot = Shape.circle(new Point(0, 0), 1000)
+  const route = Shape.corridor(new LineString([[0.02, -1], [0.02, 1]]), 100)
+  const zone = Shape.polygon(new Polygon([[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]]))
+
+  beforeEach(() => {
+    db.setShape(ns, 'depot', depot)
+    db.setShape(ns, 'route', route)
+    db.setShape(ns, 'zone', zone)
+  })
+
+  it('gets and lists shapes', () => {
+    const found = db.getShape(ns, 'depot')
+    assert.ok(found instanceof Shape)
+    assert.equal(found.kind, 'circle')
+    assert.equal(found.radiusM, 1000)
+    assert.equal(db.getShape(ns, 'nope'), null)
+    assert.equal(db.getShape('other', 'depot'), null)
+
+    const listed = db.listShapes(ns)
+    assert.deepEqual(listed.map((s) => s.shapeId), ['depot', 'route', 'zone'])
+    assert.deepEqual(listed.map((s) => s.shape.kind), ['circle', 'corridor', 'polygon'])
+    assert.deepEqual(db.listShapes('other'), [])
+  })
+
+  it('replaces a shape with the same ID', () => {
+    db.setShape(ns, 'depot', Shape.circle(new Point(0, 0), 5))
+    assert.equal(db.getShape(ns, 'depot')?.radiusM, 5)
+    assert.equal(db.listShapes(ns).length, 3)
+  })
+
+  it('keeps shapes apart from objects', () => {
+    db.upsert(ns, 'depot', new Point(5, 5))
+    assert.equal(db.getShape(ns, 'depot')?.kind, 'circle')
+    db.delete(ns, 'depot')
+    assert.ok(db.getShape(ns, 'depot'))
+  })
+
+  it('deletes shapes', () => {
+    assert.equal(db.deleteShape(ns, 'depot'), true)
+    assert.equal(db.deleteShape(ns, 'depot'), false)
+    assert.equal(db.deleteShape('other', 'depot'), false)
+    assert.equal(db.getShape(ns, 'depot'), null)
+  })
+
+  it('shapesContaining', () => {
+    assert.deepEqual(db.shapesContaining(ns, new Point(0, 0, 500)), ['depot', 'zone'])
+    assert.deepEqual(db.shapesContaining(ns, new Point(0.02, 0.5)), ['route', 'zone'])
+    assert.deepEqual(db.shapesContaining(ns, new Point(5, 5)), [])
+    assert.equal(db.shapesContaining(ns, new Point(0, 0), 1).length, 1)
+  })
+
+  it('shapesWithin returns nearest first', () => {
+    const results = db.shapesWithin(ns, new Point(1.01, 0), 5000)
+    assert.deepEqual(results.map((r) => r.shapeId), ['zone'])
+    assert.ok(Math.abs(results[0].distance - 1112) < 5)
+
+    const inside = db.shapesWithin(ns, new Point(0.015, 0), 10_000)
+    assert.deepEqual(inside.map((r) => r.shapeId), ['zone', 'route', 'depot'])
+    assert.equal(inside[0].distance, 0)
+    assert.ok(inside[1].distance > 0 && inside[1].distance < inside[2].distance)
+    assert.equal(db.shapesWithin(ns, new Point(0.015, 0), 10_000, 2).length, 2)
+  })
+})
+
 describe('errors', () => {
   it('rejects non-finite coordinates', () => {
     assert.throws(() => db.upsert(ns, 'd1', new Point(NaN, 0)), code('InvalidInput'))
@@ -202,6 +333,32 @@ describe('errors', () => {
   it('rejects bad config', () => {
     assert.throws(() => Spatio.memory({ bufferCapacity: 0 }), code('InvalidInput'))
     assert.throws(() => Spatio.memory({ bufferCapacity: -1 }), code('InvalidInput'))
+  })
+
+  it('rejects invalid shapes', () => {
+    const shapes = [
+      Shape.circle(new Point(0, 0), -1),
+      Shape.circle(new Point(200, 0), 10),
+      Shape.corridor(new LineString([[0, 0]]), 10),
+      Shape.corridor(new LineString([[0, 0], [0, 1]]), NaN),
+      Shape.polygon(new Polygon([[0, 0], [1, 0], [0, 0]])),
+    ]
+    for (const shape of shapes) {
+      assert.throws(() => db.setShape(ns, 's', shape), code('InvalidInput'))
+    }
+    assert.throws(() => db.setShape(ns, '', Shape.circle(new Point(0, 0), 1)), code('InvalidInput'))
+    assert.equal(db.listShapes(ns).length, 0)
+  })
+
+  it('rejects bad shape queries', () => {
+    assert.throws(() => db.shapesContaining(ns, new Point(0, 100)), code('InvalidInput'))
+    assert.throws(() => db.shapesWithin(ns, new Point(0, 0), -1), code('InvalidInput'))
+    assert.throws(() => db.shapesWithin(ns, new Point(0, 0), 10, -1), code('InvalidInput'))
+    assert.throws(() => db.shapesContaining(ns, new Point(0, 0), 0.5), code('InvalidInput'))
+  })
+
+  it('rejects a non-Shape argument', () => {
+    assert.throws(() => db.setShape(ns, 's', {} as Shape), code('InvalidArg'))
   })
 
   it('rejects circular metadata', () => {
@@ -236,5 +393,34 @@ describe('lifecycle', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('persists shapes across reopen', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'spatio-'))
+    const path = join(dir, 'test.db')
+    try {
+      const first = Spatio.open(path)
+      first.setShape(ns, 'depot', Shape.circle(new Point(1, 2), 300))
+      first.setShape(ns, 'route', Shape.corridor(new LineString([[0, 0], [0, 1]]), 25))
+      first.setShape(ns, 'gone', Shape.polygon(new Polygon([[0, 0], [1, 0], [1, 1], [0, 0]])))
+      assert.equal(first.deleteShape(ns, 'gone'), true)
+      first.close()
+
+      const second = Spatio.open(path)
+      assert.deepEqual(second.listShapes(ns).map((s) => s.shapeId), ['depot', 'route'])
+      const depot = second.getShape(ns, 'depot')
+      assert.deepEqual([depot?.center?.x, depot?.center?.y, depot?.radiusM], [1, 2, 300])
+      assert.deepEqual(second.getShape(ns, 'route')?.line?.coords, [[0, 0], [0, 1]])
+      second.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses shape calls after close', () => {
+    db.close()
+    assert.throws(() => db.setShape(ns, 's', Shape.circle(new Point(0, 0), 1)), code('DatabaseClosed'))
+    assert.throws(() => db.getShape(ns, 's'), code('DatabaseClosed'))
+    assert.throws(() => db.shapesContaining(ns, new Point(0, 0)), code('DatabaseClosed'))
   })
 })

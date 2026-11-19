@@ -1,4 +1,4 @@
-import { Point, Spatio } from '../index.js'
+import { Point, Shape, Spatio } from '../index.js'
 
 const db = Spatio.memory()
 
@@ -9,5 +9,8 @@ db.upsert('cities', 'brooklyn', new Point(-73.9442, 40.6782), { population: 2_60
 for (const { objectId, distance } of db.queryRadius('cities', nyc, 100_000, 10)) {
   console.log(`${objectId}: ${(distance / 1000).toFixed(1)} km`)
 }
+
+db.setShape('zones', 'manhattan', Shape.circle(nyc, 5_000))
+console.log('inside:', db.shapesContaining('zones', new Point(-73.99, 40.73)))
 
 db.close()
